@@ -350,7 +350,7 @@ Combine and Uncombine are Edit menu items (`rack.combine`, `rack.uncombine`, key
 3. `session_set_param` with the container's key and `param` `bypass` switches the bypass (the same as the BYPASS button in its name strip, which `session_pointer` clicks: `session_texts` finds `BYPASS`). With it on, `session_bounce` of a project with sound inside equals the bounce with the container deleted but its cables kept; with it off again it is the bounce you started from.
 4. `session_pointer` with `action` `double_click` on the container's panel (or `click` on the arrow of its title strip) unfolds it in place: `session_screenshot` shows its devices under the panel in a frame, and `session_status` lists the container with `unfolded: true` (a Combine leaves it so). The inner devices have path keys (`container/delay`) for `session_pointer` targets and `session_set_param`. A click on the OPEN button enters it in a view of its own: the breadcrumb, the boundary panels and the inner devices. A device dragged from there to **Project** in the breadcrumb (`session_pointer` `drag` from its plate to the crumb, found with `session_texts`) goes back to the rack after the container; one dragged from the rack onto the container's panel goes in, as does one dropped in the frame of an unfolded container; an inner device dragged out of its frame goes back to the rack.
 
-The first two steps are `crates/mcp/tests/session_combine.rs`; the bounce equalities are `crates/render/tests/combine.rs`.
+The first two steps are `crates/mcp/tests/session_combine.rs`; the bounce equalities are `crates/render/tests/suite/combine.rs`.
 
 ### Recipe: restructure the arrangement
 
@@ -382,7 +382,7 @@ A looped clip, a named clip or a coloured one is listed by `project_inspect` und
 2. Drag the loop handle in the upper right corner of the clip's body to the right with `session_pointer` (`session_screenshot` shows it): the clip grows and its `loop_length` appears in `project_inspect`. An audio clip loops the same way; `session_bounce` it and `analyze_audio` shows the source restarting every repetition.
 3. `session_command` `sequencer.convert_loop` with `arg` `separate` (or `single` for a note or automation clip) removes the loop; `session_bounce` before and after is `bit_identical` under `compare_audio`. `sequencer.loop_instance` frees the repetition under the playhead.
 
-The rules are checked in `crates/model/tests/loop_clips.rs`, `crates/model/tests/audio_flatten.rs` and `crates/render/tests/audio_project.rs`; the pointer gestures are `crates/ui/tests/loop_clips.rs`.
+The rules are checked in `crates/model/tests/loop_clips.rs`, `crates/model/tests/audio_flatten.rs` and `crates/render/tests/suite/audio_project.rs`; the pointer gestures are `crates/ui/tests/loop_clips.rs`.
 
 ### Recipe: guitar tab
 

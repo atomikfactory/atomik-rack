@@ -200,7 +200,7 @@ device-level: the engine has no concept of it, the sums are computed inside the 
 - **Tests.** Check the tables with `ModTables::validate` (the registry does it), that idle slots and a cleared
   slot render the same bits as no slots, that the output is the same bit for bit however the render is cut
   into calls and for every block size and worker count, and the allocation guard (the harness has it).
-  The poly synth's tests are the model; its render test is in `crates/render/tests/mod_matrix.rs`.
+  The poly synth's tests are the model; its render test is in `crates/render/tests/suite/mod_matrix.rs`.
 - **Panel.** The generated front panel skips the slot params (`is_mod_slot_key`). The matrix itself is edited in
   the modal panel the device's right-click menu opens (Modulation Matrix, command `rack.mod_matrix`): it is built
   from the registered tables, so a device that registers `ModTables` gets it with no panel code.

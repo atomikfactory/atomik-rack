@@ -52,12 +52,26 @@ cargo test -p atomik-engine                 # graph, compile, engine, offline
 cargo test -p atomik-mcp                    # the QA server: protocol, tools, headless sessions
 cargo test -p atomik-devices                # the built-in devices
 cargo test -p atomik-render --test e2e      # end-to-end CLI tests and goldens
+cargo test -p atomik-render --test suite fx_demo::   # the tests of one file of the render suite
 ```
 
 Tests are named for what they check, in snake case (`a_panicking_device_is_contained`). Unit tests live in a
 `#[cfg(test)] mod tests` in the same file. Cross-crate tests live in `crates/<crate>/tests/*.rs`.
 Fakes (`ConstantSource`, `ImpulseOnNote`, `Passthrough`, `NoteThru`, `CallLog`, `DropProbe`,
 `Allocator`, `RecordingSink`) are in [crates/testkit/src/fakes.rs](../crates/testkit/src/fakes.rs).
+
+**The render tests are one executable.** Cargo links one test binary per file of `tests/`, and after a
+change in a low-level crate every one of them is linked again, so the integration tests of `atomik-render`
+are folded into `crates/render/tests/suite/`: `main.rs` declares one module per file (and `common`), and
+`cargo test -p atomik-render --test suite` runs them all. Run one file's tests with
+`cargo test -p atomik-render --test suite fx_demo::`, one test with
+`cargo test -p atomik-render --test suite fx_demo::some_test_name`. A test's name is its module path, so
+the same name in two files is two tests. Two files stay their own executable in `tests/`: `e2e.rs` (it runs
+the CLI, and holds the real-time-factor check that `perf.yml` runs alone in release) and
+`plugin_sandbox_bounce.rs` (plugin processes, and a plugin that starts late on purpose). `tests/golden/`
+and `tests/fixtures/` stay where they are. The suite installs the allocation guard once, in `main.rs`. A
+test that writes to the temporary folder gives its folder the prefix of its own file (the process id is
+shared by every test of the suite), and a new file is added by a `mod` line in `main.rs`.
 
 ## Allocation guard (HI-1)
 
@@ -70,15 +84,17 @@ section is active.
   `atomik-midi-io`, `atomik-plugin-sandbox` and `atomik-testkit` install it in their `lib.rs`, and
   almost every integration-test file of the engine does. In `atomik-render`, the tests that bounce a project
   through `render_doc` or `render_doc_in` take the helpers of
-  [crates/render/tests/common/mod.rs](../crates/render/tests/common/mod.rs) (`render_guarded`,
+  [crates/render/tests/suite/common/mod.rs](../crates/render/tests/suite/common/mod.rs) (`render_guarded`,
   `render_guarded_in`): the bounce loop runs every `Engine::render` call through the guard that
   `atomik_render::plugin_pass::with_render_guard` sets, so the whole project render path of the test is under
   `assert_no_alloc`. The guard sees only the test's own thread, not the engine's workers. Some of the
   in-process render tests still render without it (QA-server tests, plugin tests, and bounces through the project
   file, the CLI, freeze, stems and export, which the seam does not wrap yet). Every one of them is listed with its
-  reason in `crates/testkit/tests/guard_inventory.rs`, which scans `crates/*/tests/*.rs` for render calls and fails
-  when a file renders without the guard and has no entry, when an entry no longer applies (the file gained the
-  guard, stopped rendering or went away), and when a render test installs the guard but never opens a section.
+  reason in `crates/testkit/tests/guard_inventory.rs`, which scans `crates/*/tests/*.rs` and
+  `tests/suite/*.rs` for render calls and fails when a file renders without the guard and has no entry,
+  when an entry no longer applies (the file gained the guard, stopped rendering or went away), and when a
+  render test installs the guard but never opens a section. The render suite installs the guard once in
+  `main.rs`: a file of it counts as guarded when it opens a section of its own.
 - **Guard a section** with `atomik_testkit::no_alloc::assert_no_alloc(|| ...)`. The call panics with
   `HI-1 violated: N heap operation(s) inside a no-alloc section` if the closure allocated,
   reallocated or freed memory on this thread. It panics with a different message if the guard was
@@ -96,7 +112,7 @@ Where the guard is used:
 - **Offline renders.** Use `render_offline_with(.., |f| assert_no_alloc(f))` to guard every inner
   `render` of a whole offline run. Examples are in
   [crates/engine/tests/determinism.rs](../crates/engine/tests/determinism.rs) and
-  [crates/render/tests/alloc.rs](../crates/render/tests/alloc.rs).
+  [crates/render/tests/suite/alloc.rs](../crates/render/tests/suite/alloc.rs).
 - **Device tests.** These use `DeviceHarness`
   ([crates/testkit/src/harness.rs](../crates/testkit/src/harness.rs)), which guards every `process`
   call. Wrap `set_param` and `reset` yourself (see
@@ -114,7 +130,7 @@ error and must not panic or allocate beyond what the input can account for
 (`crates/audio-file/tests/bounded.rs` runs a WAV header that claims two billion samples under a
 counting allocator; the `robustness.rs` files of `audio-file`, `midi-io` and `model` run 400 to
 1 000 cases each on committed fixtures; `crates/model/src/read_limit.rs` tests the size cap of
-project files; `crates/render/tests/audio_nan.rs` bounces a bundle whose asset holds NaN).
+project files; `crates/render/tests/suite/audio_nan.rs` bounces a bundle whose asset holds NaN).
 
 The other is coverage-guided fuzzing with `cargo-fuzz`, in [fuzz/](../fuzz). It needs a nightly
 toolchain, so the crate is its own workspace and no normal build or test touches it. Targets, in
@@ -171,10 +187,10 @@ A few tests keep the documents honest; each one names what to update when it fai
 | `render_note_at_frame_lands_at_frame` (proptest) | [crates/engine/tests/notes.rs](../crates/engine/tests/notes.rs) | A note at frame f produces an impulse at exactly frame f, for any host block |
 | `render_offline_note_at_frame_lands_at_frame` (proptest) | [crates/engine/tests/offline.rs](../crates/engine/tests/offline.rs) | The same through `render_offline` |
 | `notes_across_ramps_land_on_the_closed_form_frames`, `ramped_notes_do_not_depend_on_the_host_block` | [crates/engine/tests/tempo_ramp.rs](../crates/engine/tests/tempo_ramp.rs) | Notes across tempo ramps land at the frames of the log formula `60 / PPQ * L / (b1 - b0) * ln(b(x) / b0)`, which the test writes out itself (it does not call `atomik_core`), and the same events come out at host blocks 1, 63, 64, 333 and 4096 |
-| `clips_start_and_end_at_the_closed_form_frames_across_ramps`, `a_ramped_bounce_is_the_same_at_any_host_block` | [crates/render/tests/tempo_ramp.rs](../crates/render/tests/tempo_ramp.rs) | The same oracle for the audio clips of a bounce, and byte-identical bounces at several host blocks |
+| `clips_start_and_end_at_the_closed_form_frames_across_ramps`, `a_ramped_bounce_is_the_same_at_any_host_block` | [crates/render/tests/suite/tempo_ramp.rs](../crates/render/tests/suite/tempo_ramp.rs) | The same oracle for the audio clips of a bounce, and byte-identical bounces at several host blocks |
 | `the_live_path_plays_a_ramped_project_exactly_like_the_bounce` | [crates/app/src/app_core_tempo_tests.rs](../crates/app/src/app_core_tempo_tests.rs) | The drum demo under a ramping tempo map and a changing meter, played live through the app, is the bounce bit for bit at host blocks 64, 480 and 512 |
 | `cli_block_size_does_not_change_output` | [crates/render/tests/e2e.rs](../crates/render/tests/e2e.rs) | `--block 1` and `--block 4096` produce byte-identical WAV files (f32), and `--block 100` and `--block 63` do too (24-bit) |
-| `every_example_project_is_bit_identical_across_blocks_and_workers` | [crates/render/tests/determinism_examples.rs](../crates/render/tests/determinism_examples.rs) | Every example project (plugin demos excluded) bounces to the same bits at host blocks 64, 333 and 512 with 0 and 2 workers |
+| `every_example_project_is_bit_identical_across_blocks_and_workers` | [crates/render/tests/suite/determinism_examples.rs](../crates/render/tests/suite/determinism_examples.rs) | Every example project (plugin demos excluded) bounces to the same bits at host blocks 64, 333 and 512 with 0 and 2 workers |
 | `process_is_deterministic_for_a_seed` | [crates/devices/src/poly_synth.rs](../crates/devices/src/poly_synth.rs) | The synth's noise and sample & hold are reproducible for a seed |
 
 `crates/model/tests/doc_sequences.rs` is the whole-document property test: random runs of the song,
@@ -204,10 +220,10 @@ two of the saved-file corpus (below):
 |---|---|---|---|
 | `slice-demo.f32.sha256` | `golden_hash_matches` ([e2e.rs](../crates/render/tests/e2e.rs)) | **Windows x86-64 only** (the test is `#[cfg]`-gated) | exact bytes |
 | `slice-demo.fingerprint.json` | `golden_fingerprint_matches` ([e2e.rs](../crates/render/tests/e2e.rs)) | all | ±0.5 dB per window |
-| `demo-project.f32.sha256` | `golden_hash_matches` ([project.rs](../crates/render/tests/project.rs)) | **Windows x86-64 only** | exact bytes |
-| `demo-project.fingerprint.json` | `golden_fingerprint_matches` ([project.rs](../crates/render/tests/project.rs)) | all | ±0.5 dB per window |
-| `guitar-amp.fingerprint.json` | `fingerprint_matches_the_golden_within_half_a_decibel` ([guitar_amp_demo.rs](../crates/render/tests/guitar_amp_demo.rs)) | all | ±0.5 dB per window |
-| `corpus.fingerprint.json` | `every_corpus_file_sounds_as_pinned` ([format_corpus_bounce.rs](../crates/render/tests/format_corpus_bounce.rs)) | all | ±0.5 dB per second |
+| `demo-project.f32.sha256` | `golden_hash_matches` ([project.rs](../crates/render/tests/suite/project.rs)) | **Windows x86-64 only** | exact bytes |
+| `demo-project.fingerprint.json` | `golden_fingerprint_matches` ([project.rs](../crates/render/tests/suite/project.rs)) | all | ±0.5 dB per window |
+| `guitar-amp.fingerprint.json` | `fingerprint_matches_the_golden_within_half_a_decibel` ([guitar_amp_demo.rs](../crates/render/tests/suite/guitar_amp_demo.rs)) | all | ±0.5 dB per window |
+| `corpus.fingerprint.json` | `every_corpus_file_sounds_as_pinned` ([format_corpus_bounce.rs](../crates/render/tests/suite/format_corpus_bounce.rs)) | all | ±0.5 dB per second |
 | `corpus.f32.sha256.json` | `every_corpus_file_hashes_as_pinned_on_windows` (same file) | **Windows x86-64 only** | exact bytes |
 
 **Why there is a fingerprint.** The devices use transcendental functions (`sin`, `tan`, `tanh`,
@@ -228,7 +244,7 @@ ATOMIK_UPDATE_GOLDEN=1 cargo test -p atomik-render --test e2e golden
 This rewrites both files. Use Windows x86-64 because that is the only platform that checks the hash.
 Review the diff of the fingerprint: large changes in level should be explainable by your change.
 The corpus goldens regenerate the same way with
-`ATOMIK_UPDATE_GOLDEN=1 cargo test -p atomik-render --test format_corpus_bounce` (run the test file
+`ATOMIK_UPDATE_GOLDEN=1 cargo test -p atomik-render --test suite format_corpus_bounce::` (run the module
 alone, then run it again without the variable). A corpus file whose fingerprint moves although no
 sound was meant to change points at a reader bug, not at a golden to regenerate.
 
@@ -455,7 +471,7 @@ libraries.
   both to bounce identically across blocks and workers), `vst3_host.rs` holds the VST3 specifics
   (proxies, buses, parameter queues, `IMidiMapping`, the state sections, restarts, the editor, edits
   made in it), `midi_proxies.rs` the controller stand-ins left out of the table and the slow plugin that keeps
-  its full one. `render/tests/plugin_demo_vst3.rs` does the same for a whole project
+  its full one. `render/tests/suite/plugin_demo_vst3.rs` does the same for a whole project
   (`examples/projects/plugin-demo-vst3` against its all-CLAP twin). `model/tests/plugin_pinned.rs` counts every way a
   document can name a plugin param, and `app_core_plugins_proxies_tests.rs` follows a used stand-in through the
   plugin going live, a save, a load and a rescan.
@@ -506,7 +522,7 @@ libraries.
   plugins installed on your machine); no golden hash is ever taken over a real plugin.
 - **Quick runs.** `cargo test -p atomik-plugin-host`, `-p atomik-plugin-clap`,
   `-p atomik-plugin-scan`, `-p atomik-plugin-vst3`,
-  `cargo test -p atomik-render --test plugin_demo --test plugin_demo_vst3`,
+  `cargo test -p atomik-render --test suite plugin_demo`,
   `cargo test -p atomik-app --lib -- plugin stress`.
 
 ## Key scripts and the workflow tests
@@ -580,9 +596,9 @@ block; the example project opens as it is), `shell_console_tests.rs` (the one-ti
 through the shell), `shell_create_tests.rs` (a new project as key scripts on three operating
 systems, the ninth effect), `cli.rs` (the start document) and `crates/app/tests/smoke.rs` (the app
 starts with the starter project and paints it); in `atomik-render`,
-`crates/render/tests/master_demo.rs` generates and checks `examples/projects/master-demo`
+`crates/render/tests/suite/master_demo.rs` generates and checks `examples/projects/master-demo`
 (regenerate with
-`ATOMIK_UPDATE_GOLDEN=1 cargo test -p atomik-render --test master_demo regenerate`).
+`ATOMIK_UPDATE_GOLDEN=1 cargo test -p atomik-render --test suite master_demo::regenerate`).
 
 ## Markers and ranges
 
@@ -655,9 +671,9 @@ the live twins of the `character-demo` bounce (host blocks 64, 480 and 512; a pr
 the classes made through the app; undo, redo and an engine restart; a class change driven by a song
 lane, stepped one batch per frame like the bounce loop). A live twin must start from a cold engine:
 devices keep free-running state, so an engine that rendered idle frames before Play no longer equals
-a bounce bit for bit. In `atomik-render`, `tests/character_demo.rs` generates and checks the example
-project (`ATOMIK_UPDATE_GOLDEN=1 cargo test -p atomik-render --test character_demo regenerate`;
-determinism across host blocks 64, 333, 480, 512 and workers 0, 2, 3) and `tests/character_pdc.rs`
+a bounce bit for bit. In `atomik-render`, `tests/suite/character_demo.rs` generates and checks the example
+project (`ATOMIK_UPDATE_GOLDEN=1 cargo test -p atomik-render --test suite character_demo::regenerate`;
+determinism across host blocks 64, 333, 480, 512 and workers 0, 2, 3) and `tests/suite/character_pdc.rs`
 aligns identical clicks through a Character in both latency classes and across a class change in the
 middle of the song (the regression test of the bounce that did not follow the engine's latency
 epoch). `--stress-character` is tested in `stress.rs` (structure, preset cycle, class changes under
@@ -682,14 +698,14 @@ under the allocation guard, and `qa_devices.rs` runs random params. The app half
 UI path too) and the UI half `crates/ui/tests/guitar_amp_panel.rs` plus the panel goldens in
 `fx_panels.rs`.
 
-`crates/render/tests/guitar_amp_demo.rs` bounces a synthesised guitar (Karplus-Strong plucks and a
+`crates/render/tests/suite/guitar_amp_demo.rs` bounces a synthesised guitar (Karplus-Strong plucks and a
 faint hum, generated by the test with IEEE arithmetic only, so no audio file is committed) through
 each setup with the engine's host input: it checks the level match, bit-identical output at every
 host block size under the allocation guard, that the setups differ, the gate, the delay and reverb
 tail and the stereo width, and a fingerprint (`golden/guitar-amp.fingerprint.json`, the RMS per half
 second, ±0.5 dB on every platform). After an intentional change to the sound, listen to the five
 renders and regenerate with
-`ATOMIK_UPDATE_GOLDEN=1 cargo test -p atomik-render --test guitar_amp_demo fingerprint`. `fx_pdc.rs`
+`ATOMIK_UPDATE_GOLDEN=1 cargo test -p atomik-render --test suite guitar_amp_demo::fingerprint`. `fx_pdc.rs`
 checks that the amp's 35 frames of latency are compensated.
 
 ## QA with the MCP server
@@ -792,7 +808,7 @@ Hand checks, not automated (they need another program or a real window):
 `crates/model/tests/player_stack.rs` covers `CreatePlayer` (cables, the entry, the rack column, one
 undo step, the plain add), the second player, deleting players with and without bridging, pasting a
 track, the stale entry and format 31 (round trip, version 30 files, refusals).
-`crates/render/tests/player_stack.rs` checks the engine input (notes to the entry, automation with
+`crates/render/tests/suite/player_stack.rs` checks the engine input (notes to the entry, automation with
 the instrument, two tracks at one player), that a bounce and a freeze through a stack equal the
 edited clip bit for bit at blocks 64, 333, 512 and 1000 and workers 0 to 3, and that a stale entry
 plays the track's own device. The app tests cover the live keyboard, the audition, the song the
@@ -843,7 +859,7 @@ colours and folds into one step, and project format 22 (canonical round trip, a 
 `tests/golden/organised_project.json`, a version 21 file loading unchanged, every new field unknown
 before 22, bad folders, parents, loops, empty folders, split blocks and comments refused with their
 JSON path, and save and load after each step of a command sequence).
-`crates/render/tests/organise.rs` bounces a song before and after folders, colours, comments, folds
+`crates/render/tests/suite/organise.rs` bounces a song before and after folders, colours, comments, folds
 and moves, at any block size and worker count and through a saved project, and checks that muting a
 folder's tracks in one batch is muting each track. `crates/ui/tests/organise.rs` drives the
 arrangement (shift-click selection and Group Tracks from headers or clips, the folder row's place,
@@ -891,7 +907,7 @@ fields, bad fields with their JSON path). `crates/engine/src/audio.rs` and
 shapes, the gain block against the model's reference, reverse (including a region that starts past
 the asset end), envelopes, equal-power and linear crossfades by closed form, and that a streamed
 asset plays reverse, envelope and crossfade bit for bit like the memory asset at two block sizes
-with the asset streamed, in memory, and mixed. `crates/render/tests/audio_editing.rs` bounces every
+with the asset streamed, in memory, and mixed. `crates/render/tests/suite/audio_editing.rs` bounces every
 fade shape against the model's regions, an equal-power crossfade (and that it is click-free where a
 hard cut jumps), reverse through the console, clip gain with an envelope (no steps), strip silence
 keeping the sound in place, and one song with every edit at any host block and worker count and
@@ -942,7 +958,7 @@ monotone), markers (straight between, source tempo outside, the inverse), a spli
 where it was (right half and markers), the render jobs on regions (the real-time fallback fields, a
 cut region's `clip_pos`), audible jobs only, transposition without warp, `bpm_for_beats`,
 `estimate_bpm`, and `quantize_audio` (hits land on the grid at strength 1, half way at 0.5, unmoved
-at 0, the ends pinned, tempo-map aware, every refusal). `crates/render/tests/warp.rs` bounces: a
+at 0, the ends pinned, tempo-map aware, every refusal). `crates/render/tests/suite/warp.rs` bounces: a
 loop squeezed to the song tempo keeping its pitch (Beats and Tonal) with silence after the clip,
 Repitch changing pitch by the tempo ratio, a +12 transposition keeping the length, clicks staying on
 the beats across a tempo change, a bounce bit-identical across runs, host blocks and workers, warp
@@ -1001,7 +1017,7 @@ loses it; the same seed gives the same bits and each channel has its own stream;
 negative lag-1 correlation of its error where plain TPDF has none; a clipped sample does not run
 away). `crates/render/src/wav.rs` covers the 16-bit writer (header, round trip within the dither, no
 dither when asked, seeded bytes, 24-bit not dithered and equal to `pcm24_from_f32`, float untouched,
-and the files read back by `atomik-audio-file`). `crates/render/tests/export.rs` is the proof of the
+and the files read back by `atomik-audio-file`). `crates/render/tests/suite/export.rs` is the proof of the
 range and the format on the demo project: the song export without a tail is the first End frames of
 the bounce **bit for bit**, with a tail it never ends before the End and ends where the output falls
 under the floor or at the cap, a muted song gets no tail, a loop is exactly the frames between the
@@ -1055,7 +1071,7 @@ effect fed by it, every other device in its place), the referenced asset while f
 history, Unfreeze and Keep Audio and the rendered track as one step, a relink of the render, and
 project format 25 (a byte-exact round trip, a version 24 file loading and saving with only the
 version line changed and refusing `frozen`, bad objects with their JSON path).
-`crates/render/tests/freeze.rs` renders real devices: the project bounced with a track frozen equals
+`crates/render/tests/suite/freeze.rs` renders real devices: the project bounced with a track frozen equals
 the unfrozen bounce bit for bit (instrument alone), the freeze render is the same for any block size
 and worker count, a tail is kept while it is audible and a dry track has none, a freeze through one
 and two effects bounces within 2e-4 of the unfrozen project, the frozen devices are not in the
@@ -1189,7 +1205,7 @@ through bit for bit (noise, every param at its extremes, non-finite input), with
 allocation, to push the input into the tap, and the phase meter for the reference tone (a stereo 1
 kHz sine at -23 dBFS reads -23 LUFS within 0.15 dB, momentary, short-term and integrated), the true
 peak of a quarter-rate sine, the holds, the reset edge and loudness off.
-`crates/render/tests/meter_probe.rs` probes a rendered project (values, scope frames, block and
+`crates/render/tests/suite/meter_probe.rs` probes a rendered project (values, scope frames, block and
 worker independence) and checks that a project with the meters bounces bit for bit like the project
 without them. `crates/ui/tests/analyser_maths.rs` and `analyser_panels.rs` cover the axes, the
 goniometer mapping, the texts, the feed and its repaint rule, bypass and the goldens of both panels;
@@ -1260,7 +1276,7 @@ its group and coming back by undo, Clear Solos and Clear Mutes, the solo and mut
 sixteen combinations of own and group flags, for a member and a bystander, against the strip's
 rule), the effective level, and format 26 (round trip in a stable text, every refusal with its JSON
 path, members in any order, and the version 25 file that loads and saves unchanged).
-`crates/render/tests/vca.rs` bounces: a group at -6 dB equals its members' faders at -6 dB, a group
+`crates/render/tests/suite/vca.rs` bounces: a group at -6 dB equals its members' faders at -6 dB, a group
 at 0 dB, no group, and a version 25 file are bit for bit the plain project, a group's mute and solo
 equal the members' own bit for bit, solo beats the mutes, and the result is the same at every block
 size and worker count. `crates/app/src/app_core_console_tests.rs` checks what reaches the engine
@@ -1342,7 +1358,7 @@ lossless, an edit stays with the side it was made on, END and recall keep the li
 snapshot taking the place of the compared one, undo restoring the slot) and project format 27 (round
 trip, stable text, the compare slot not saved, a version 26 file loading unchanged, a snapshot
 naming what does not exist, bad snapshots refused with their JSON path).
-`crates/render/tests/snapshots.rs` bounces: a recalled snapshot is bit for bit the bounce of the mix
+`crates/render/tests/suite/snapshots.rs` bounces: a recalled snapshot is bit for bit the bounce of the mix
 set by hand (also after undo and after a save and load), a compare flip bounces as either side, a
 scoped recall as those controls by hand, and a project without snapshots, with snapshots it does not
 recall or saved as version 26 is bit for bit the plain project.
@@ -1400,7 +1416,7 @@ covers the index (every param, the track of an instrument, its strip, a containe
 device, the VCA), the queries by device, track, param, key and unit, the path form with `>`, the
 rule that every word must match, the fuzzy match, a prefix beating a substring, stable ordering, the
 bounded results and a signature that follows renames and structure and not values.
-`crates/render/tests/macros.rs` is the audio proof: a lane on a macro renders **bit for bit** like
+`crates/render/tests/suite/macros.rs` is the audio proof: a lane on a macro renders **bit for bit** like
 the hand-made lane on the target (plain, narrowed, inverted and reversed ranges), a static macro
 value like the param set to the mapped value, a bank without assignments, an assignment that is
 removed or undone and a version 28 file like the project without them, and the render is the same
@@ -1499,7 +1515,7 @@ per mapped control, outlines while learning, nothing extra without marks), the r
 panel's edits, and `crates/app/src/settings_tabs_tests.rs` the Surfaces tab.
 `crates/mcp/tests/midi.rs` drives learn, mappings, presets and the surface through the server and
 checks with bounces that a mapping never changes a render. **Determinism:**
-`crates/render/tests/midi_maps.rs` bounces a project with mappings of every kind bit for bit like
+`crates/render/tests/suite/midi_maps.rs` bounces a project with mappings of every kind bit for bit like
 the same project without them (any block size and worker count, after save and load, after clear and
 undo), and a version 27 file as before.
 
@@ -1740,7 +1756,7 @@ an effect (the track, a second lane, undo, redo), the refusals (internal and unk
 lanes, solo, arm, `AddTrack`), automation clips and flattening, removal of the track and of the
 device, moving and colouring, mute and solo through `effective_tracks`, `DuplicateTrack`, and
 project format 34 (the round trip byte for byte, a version 33 file, a track on a device without
-notes before 34, and the malformed shapes). `crates/render/tests/automation_only.rs` bounces a fader
+notes before 34, and the malformed shapes). `crates/render/tests/suite/automation_only.rs` bounces a fader
 lane and an effect lane (the sound changes, bit-identical across block sizes and workers), a flat
 lane against the param set to its value, a mute and a solo elsewhere.
 `crates/ui/tests/automation_track.rs` covers the header row (mute only, the first lane's mode and
@@ -1773,7 +1789,7 @@ runs the menu actions, Edit > Copy, Cut and Paste on a focused row, a paste acro
 imported as a take and a take opened in the piano roll; `workspace_tests.rs` checks the clipboard follows the
 routed song and `shell_midi_tests.rs` the dialog request. The take keys and the new menu rows are in
 `crates/ui/tests/takes.rs`.
-`crates/render/tests/takes.rs` bounces an audio comp (the tone of each segment, sample-exact inside
+`crates/render/tests/suite/takes.rs` bounces an audio comp (the tone of each segment, sample-exact inside
 a segment, no click at the splices where the comp fades while the same cuts as plain clips jump) and
 a note comp (the pitch of each bar), and checks that a comp bounces like its flattened group, after
 undo, after a save and load, and at any host block and worker count. `crates/mcp/tests/stateless.rs`
@@ -1802,7 +1818,7 @@ arrangement and in the roll and the roll's QUANT and `...` buttons (the panel's 
 applied without opening it, one undo step, a collision keeping both notes), the panel opening and
 closing, settings kept between openings, APPLY on selected clips and on selected notes of the roll
 as one undo step, EXTRACT choosing the new groove and DELETE; the MCP tests cover the inspection and
-the panel through `session_command`; `crates/render/tests/groove.rs` bounces swung, grooved and
+the panel through `session_command`; `crates/render/tests/suite/groove.rs` bounces swung, grooved and
 humanized songs (closed-form onset frames, the same bytes as hand-placed notes, any block and any
 worker count) and, for the live groove, a groove on a track that changes the bounce and gives the
 original bytes back when removed, the same bytes as notes written at the moved ticks, any block
@@ -2132,7 +2148,7 @@ dialog tests cover the per-input switch, `record_tests.rs` the capture (held not
 wraps), `crates/model/tests/note_expression.rs` the data (file round trip, an older project unchanged, flattening
 with offset, loop, mutes and hiding, joins, layering, one undo step to clear), `crates/engine/tests/song_expression.rs`
 the player (frames, the note's end, seeks, block sizes, no allocation), the three instruments their own tests, and
-`crates/render/tests/note_expression.rs` a bounce whose pitch follows a curve at every block size.
+`crates/render/tests/suite/note_expression.rs` a bounce whose pitch follows a curve at every block size.
 `crates/app/src/midi_file_tests.rs` writes and reads an MPE track.
 
 Editing and sending: `crates/model/src/expression_edit.rs` tests the pure steps (add,
@@ -2206,7 +2222,7 @@ Hand checks, not automated (they need a MIDI device and your ears):
 - Wire CV 1 from a Mod Source LFO: the synth's mod wheel (CC 1) follows it without flooding the
   port at a fast rate.
 - Bounce the project: it contains no MIDI and renders as without the device
-  (`crates/render/tests/midi_out_bounce.rs` checks the bits for several block sizes and workers).
+  (`crates/render/tests/suite/midi_out_bounce.rs` checks the bits for several block sizes and workers).
 
 ## MIDI clock
 
@@ -2256,7 +2272,7 @@ Hand checks, not automated (they need MIDI hardware):
 `crates/model/tests/combine.rs` covers the commands on the document: combine then uncombine gives
 back the original (compared as saved text) for random selections of up to eight devices, every
 refusal names its cause and leaves the document unchanged, and a track, a console channel and an FX
-return follow the container. `crates/render/tests/combine.rs` bounces a project before and after a
+return follow the container. `crates/render/tests/suite/combine.rs` bounces a project before and after a
 combine bit for bit, on instrument and effect selections and across host blocks, and bounces a
 bypassed container without its inside. `crates/app/src/app_core_combine_tests.rs` proves the live
 render equals the bounce through combine, undo, redo, uncombine and the bypass switch.

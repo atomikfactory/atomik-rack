@@ -57,7 +57,7 @@ atomik-render examples/projects/plugin-demo-vst3/plugin-demo-vst3.atomik -o demo
 ```
 
 Without opening the app first, the cache of the built test plugins can be written for the bounce
-(`ATOMIK_PLUGIN_CACHE_OUT=cache.json cargo test -p atomik-render --test plugin_demo_vst3 regenerate`,
+(`ATOMIK_PLUGIN_CACHE_OUT=cache.json cargo test -p atomik-render --test suite plugin_demo_vst3::regenerate`,
 then `--plugin-cache cache.json`).
 
 `atomik-render` refuses a project with plugins unless `--allow-plugins` is given, reads the same
@@ -85,5 +85,5 @@ countries.
 ## Regenerate
 
 ```text
-ATOMIK_UPDATE_GOLDEN=1 cargo test -p atomik-render --test plugin_demo_vst3 regenerate
+ATOMIK_UPDATE_GOLDEN=1 cargo test -p atomik-render --test suite plugin_demo_vst3::regenerate
 ```

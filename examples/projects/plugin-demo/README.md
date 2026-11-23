@@ -47,7 +47,7 @@ atomik-render examples/projects/plugin-demo/plugin-demo.atomik -o demo.wav --all
 ```
 
 Without opening the app first, the cache of the built test plugins can be written for the bounce
-(`ATOMIK_PLUGIN_CACHE_OUT=cache.json cargo test -p atomik-render --test plugin_demo regenerate`, then
+(`ATOMIK_PLUGIN_CACHE_OUT=cache.json cargo test -p atomik-render --test suite plugin_demo::regenerate`, then
 `--plugin-cache cache.json`).
 
 `atomik-render` refuses a project with plugins unless `--allow-plugins` is given, reads the same
@@ -60,5 +60,5 @@ runs, `--block` sizes and `--workers`. With a plugin missing, the bounce fails n
 ## Regenerate
 
 ```text
-ATOMIK_UPDATE_GOLDEN=1 cargo test -p atomik-render --test plugin_demo regenerate
+ATOMIK_UPDATE_GOLDEN=1 cargo test -p atomik-render --test suite plugin_demo::regenerate
 ```

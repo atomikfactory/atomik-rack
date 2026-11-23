@@ -25,4 +25,4 @@ Press Space to play four bars (Am F C G). Things to try:
   next to return 1 selects Hall.
 
 Regenerate the file after an intentional change with
-`ATOMIK_UPDATE_GOLDEN=1 cargo test -p atomik-render --test master_demo regenerate`.
+`ATOMIK_UPDATE_GOLDEN=1 cargo test -p atomik-render --test suite master_demo::regenerate`.

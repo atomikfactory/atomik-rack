@@ -1,11 +1,11 @@
 //! Which integration-test files render audio in-process without the allocation guard.
 //!
-//! Every file of `crates/*/tests/*.rs` that calls a render entry point (see [`RENDER_CALLS`]) must
-//! install the guard (`atomik_testkit::install_alloc_guard!`), and bounce through
-//! `render_guarded` (in `crates/render/tests/common`) or an `assert_no_alloc` section, or it must
-//! be on [`WITHOUT_GUARD`] with the reason it cannot yet. The list only shrinks: the test fails
-//! when a listed file gains the guard, no longer renders, or is gone, and when a new file renders
-//! without the guard and without an entry. See `docs/TESTING.md`, "Allocation guard".
+//! Every file of `crates/*/tests/*.rs` (and `tests/suite/*.rs`) that calls a render entry point
+//! (see [`RENDER_CALLS`]) must install the guard (`atomik_testkit::install_alloc_guard!`), and
+//! bounce through `render_guarded` (in `crates/render/tests/suite/common`) or an `assert_no_alloc`
+//! section, or it must be on [`WITHOUT_GUARD`] with the reason it cannot yet. The list only shrinks:
+//! the test fails when a listed file gains the guard, no longer renders, or is gone, and when a new
+//! file renders without the guard and without an entry. See `docs/TESTING.md`, "Allocation guard".
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -85,22 +85,41 @@ fn crates_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../crates")
 }
 
-/// Every `crates/<crate>/tests/<file>.rs` as `crate/file.rs`, with its source, sorted.
+/// Every `crates/<crate>/tests/<file>.rs` as `crate/file.rs`, with its source, sorted. A crate
+/// that folds its tests into one executable keeps the files in `tests/suite/`, which are listed
+/// the same way. The suite installs the guard once, in `suite/main.rs`: a file of it counts as
+/// having the guard when it opens a no-alloc section of its own (`assert_no_alloc` or
+/// `render_guarded`), which is what installing it in the file meant.
 fn test_files() -> Vec<(String, String)> {
     let mut out = Vec::new();
     for krate in fs::read_dir(crates_dir()).unwrap().flatten() {
         let tests = krate.path().join("tests");
-        let Ok(entries) = fs::read_dir(&tests) else {
-            continue;
-        };
-        for file in entries.flatten().map(|e| e.path()) {
-            if file.extension().is_some_and(|e| e == "rs") {
+        let suite = tests.join("suite");
+        let suite_guard =
+            fs::read_to_string(suite.join("main.rs")).is_ok_and(|s| s.contains(GUARD));
+        for (dir, in_suite) in [(&tests, false), (&suite, true)] {
+            let Ok(entries) = fs::read_dir(dir) else {
+                continue;
+            };
+            for file in entries.flatten().map(|e| e.path()) {
+                if file.extension().is_none_or(|e| e != "rs") || file.ends_with("suite/main.rs") {
+                    continue;
+                }
                 let name = format!(
                     "{}/{}",
                     krate.file_name().to_string_lossy(),
                     file.file_name().unwrap().to_string_lossy()
                 );
-                out.push((name, fs::read_to_string(&file).unwrap()));
+                let mut src = fs::read_to_string(&file).unwrap();
+                if in_suite
+                    && suite_guard
+                    && (src.contains("assert_no_alloc") || src.contains("render_guarded"))
+                {
+                    src.push_str(
+                        "\n// install_alloc_guard!: installed once in tests/suite/main.rs\n",
+                    );
+                }
+                out.push((name, src));
             }
         }
     }

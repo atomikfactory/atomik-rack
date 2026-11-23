@@ -845,7 +845,7 @@ sound moved. The views show an overlay instead
 - **Why the UI evaluates it.** The model flattens a lane with the code the engine's own input comes
   from (`flatten_automation`: clip offsets, loops, muted clips) and `automation_value_at` is the
   player's rule for a point list (held outside the points, linear or step between);
-  `atomik_engine::lane_value` is exported and `crates/render/tests/automation_shown.rs` pins the two
+  `atomik_engine::lane_value` is exported and `crates/render/tests/suite/automation_shown.rs` pins the two
   bit for bit over a lane with an offset and a loop. The tempo map needs no part in it: the tick is
   the one the engine published. Nothing is added to the audio thread (no new publish, no
   allocation), and a stopped transport shows the value at the playhead, which a publish from the
@@ -900,7 +900,7 @@ track, goes with the device when the device is removed (`Planner`), and is copie
   `SocketId(0)` for its Notes socket, as a macro target's lane already gets (`push_macro_lane`); the
   engine maps lanes by device and param, so it needed no change and a lane plays live and in a
   bounce like an instrument's, bit-identical across block sizes and workers
-  (`crates/render/tests/automation_only.rs`).
+  (`crates/render/tests/suite/automation_only.rs`).
 - **File.** Project format 34: the loader takes a track on a device without a Notes input only from
   version 34, with `"automation"` lanes only (at least one, params the device has) and no `"solo"`,
   `"armed"`, `"no_chase"`, `"notes_to"` or `"frozen"` (refused). The writer is unchanged, so a
@@ -2367,7 +2367,7 @@ learns nothing new.
   at the markers' source frames, in the clip's span of the file) as one step. `Command::RenameAsset`
   (an `Edit::AssetName`) renames the pool asset from the editor's title. The time map multiplies
   before it divides, so markers on the natural line bounce bit for bit like a warped clip without
-  markers (`render/tests/warp.rs`; the repitch engine needs the markers on whole output frames,
+  markers (`render/tests/suite/warp.rs`; the repitch engine needs the markers on whole output frames,
   which a beat position is). **Transients and the speaker.** Entering Slice, opening a clip in it
   and the SENS buttons emit `UiAction::DetectTransients`; `AppCore::detect_transients` reads the
   span of the file the clip plays (mono mix, at most 300 s, through `for_each_chunk` so a streamed
@@ -2406,7 +2406,7 @@ learns nothing new.
   omitted for the default. A version 23 file loads with no warp and refuses the field.
 - **Determinism.** The stretch maths uses only IEEE `+ - * /`, `sqrt` and the deterministic
   trigonometry, so a bounce of a warped project is bit-identical across block sizes, worker counts
-  and runs (`crates/render/tests/warp.rs`), and a project that does not warp is untouched to the bit
+  and runs (`crates/render/tests/suite/warp.rs`), and a project that does not warp is untouched to the bit
   (the version 22 fixture of audio editing keeps its SHA-256).
 
 ### 2.19 Freeze and bounce in place
@@ -2487,7 +2487,7 @@ the project bounce (2.7) with one tap on the rack; neither changes the engine or
   is unchanged), `Frozen::clip` plays the file from its first frame and the player reports the
   delay (`internal.latency`), so the engine's delay compensation aligns the other tracks to the
   frozen track as it did to the live chain and the mix is the unfrozen one (the null tests in
-  [render/tests/freeze.rs](../crates/render/tests/freeze.rs)); Unfreeze and Keep Audio uses
+  [render/tests/suite/freeze.rs](../crates/render/tests/suite/freeze.rs)); Unfreeze and Keep Audio uses
   `Frozen::aligned`. A render made before this has offset 0 and keeps its timing. For bounce in place
   the other clips of the track are removed from the rendered copy of the document. `RenderControl`
   (a cancel flag read once per 64-frame batch, a progress callback) can stop a render, which then
@@ -2532,7 +2532,7 @@ the project bounce (2.7) with one tap on the rack; neither changes the engine or
   from its version 24 file in the version line alone. On load the frozen effects must be the first
   of the insert chain of the channel the track plays through.
 - **Determinism and limits.** The render is deterministic and independent of the block size and the
-  workers (`render/tests/freeze.rs`), and a project bounced with a track frozen equals the unfrozen
+  workers (`render/tests/suite/freeze.rs`), and a project bounced with a track frozen equals the unfrozen
   bounce bit for bit when the chain has no latency (the tail is cut at -90 dBFS, so a chain with a
   long tail differs by less than that); a chain with latency gives the unfrozen bounce earlier by
   that latency. Not frozen: sends, the channel strip's fader, pan and output, effects after the
@@ -3315,7 +3315,7 @@ of this is saved in the project.
   back for frame `n` of the batch, with the delay at least `BATCH` frames, so the samples that come back
   were written by earlier batches whatever the host block size and however the batches are spread over
   workers: a bounce is bit-identical at every block size and worker count
-  (`crates/render/tests/feedback.rs`). It reports no latency, so the delay compensation leaves a loop
+  (`crates/render/tests/suite/feedback.rs`). It reports no latency, so the delay compensation leaves a loop
   alone, and what enters the line is clamped to plus or minus 16 so a loop with gain stays finite.
 - **Summing inputs.** A socket with `Direction::SummingInput` accepts many cables. Contributions are
   summed as a left fold in ascending source-endpoint order, fixed at routing compile, so the sum is
@@ -3669,7 +3669,7 @@ tracks, and a group can also **follow** a folder (below).
   target through the same 5 ms smoother as the fader, so there is no zipper noise, and the fader CV
   rides on top of it. A bounce sets the non-default feeds in `console_options`, so it plays what the
   console plays. Nothing runs when no group exists: the three params stay at their defaults and the
-  strip is bit-identical to one before the feature (`crates/render/tests/vca.rs`).
+  strip is bit-identical to one before the feature (`crates/render/tests/suite/vca.rs`).
 - **File.** Project format 26:
   `"console"."vcas": [{"id", "name", "color"?, "level_db"?, "mute"?, "solo"?, "members"}]`, omitted
   when empty (a project without groups differs from its version 25 file in the version line alone)
@@ -3972,7 +3972,7 @@ bounce of a project that has none are untouched.
 [app_core_surface.rs](../crates/app/src/app_core_surface.rs) (the control surface),
 [crates/ui/src/midi_maps_panel.rs](../crates/ui/src/midi_maps_panel.rs) (the panel). Neither a
 mapping nor a surface is sound: both only decide which commands the hardware issues, so the routing,
-the plan and the bounce of a project are untouched (`crates/render/tests/midi_maps.rs` proves a
+the plan and the bounce of a project are untouched (`crates/render/tests/suite/midi_maps.rs` proves a
 project with mappings of every kind bounces bit for bit like the same project without them).
 
 ```
@@ -4075,7 +4075,7 @@ project with mappings of every kind bounces bit for bit like the same project wi
   consume list and forgets the takeover state). Ids are `max + 1`, at most 512 mappings; a command
   that changes nothing is refused. Project format 28 saves `"midi_maps"` after `"console"`, omitted
   when empty (a project without mappings differs from its version 27 file in the version line alone,
-  which `crates/model/tests/midi_maps.rs` and `crates/render/tests/midi_maps.rs` check for text and
+  which `crates/model/tests/midi_maps.rs` and `crates/render/tests/suite/midi_maps.rs` check for text and
   for the bounce).
 - **Views.** The rack and the console take a `MidiMarks` set (`set_midi_marks`): a small dot on
   every mapped knob, fader, switch and VCA strip, an outline on each while MIDI Learn is on and in
@@ -4192,7 +4192,7 @@ fast forward move a bar and the jog wheel a sixteenth per detent.
 [crates/devices/src/macro_bank.rs](../crates/devices/src/macro_bank.rs) (the device),
 [crates/mcp/src/macro_tools.rs](../crates/mcp/src/macro_tools.rs) (the tools). A project that uses
 none of it has no `"macros"` field, no extra device and no expansion work, and renders bit for bit
-as before (`crates/render/tests/macros.rs`).
+as before (`crates/render/tests/suite/macros.rs`).
 
 - **A bank is a device.** `atomik.macro-bank` (`MACRO_BANK_TYPE`; the model never depends on the
   device crate) is an inert Utility with the params `macro1` to `macro8` (0..1) and one Notes input
@@ -4289,7 +4289,7 @@ as before (`crates/render/tests/macros.rs`).
   `"macros": {"assigns"?: [{"id", "bank", "macro" (1 to 8), "device", "param", "min", "max", "invert"?}], "names"?: [{"bank", "macro", "name"}]}`
   after `"midi_maps"`, omitted when empty (a project without macros differs from its version 28 file
   in the version line alone, which `crates/model/tests/macros.rs` and
-  `crates/render/tests/macros.rs` check for text and for the bounce). The loader names the JSON path
+  `crates/render/tests/suite/macros.rs` check for text and for the bounce). The loader names the JSON path
   of a repeated id, a second assignment of one param, a macro outside 1 to 8 and a bad name; it does
   not check the references. Plugin param rows a macro drives are written with the layout like those
   a lane uses. An assignment may also carry `"curve"` (`"exp"` or `"log"`, written only when not linear)
@@ -4305,7 +4305,7 @@ a lane of its
   exact; a bent segment is cut into `BEND_PARTS` straight pieces; a jump stays a jump, the segment
   before it ending one tick early), and `song_input_with_warps` plays the result in the target's own
   track while `expand_bank_lane` leaves out a target with such a lane, so a bounce and the live song
-  agree (`crates/render/tests/macros.rs`, `app_core_macros_tests.rs`). Following the selection shows
+  agree (`crates/render/tests/suite/macros.rs`, `app_core_macros_tests.rs`). Following the selection shows
   the param's own lane once it has one. The knob shows the macro's value, not the sum, while the song
   plays.
 - **Automation follows the selection.** The workflow preference `follow_selection` (View menu, the
@@ -4934,7 +4934,7 @@ so PDC, multicore levels, summing order, seeds and hot edits work on the exact f
   an inner cable `boundary:cv1 -> synth:cutoff_cv_in` are spliced by the same backward trace as the
   audio sockets into the flat cable `source -> synth:cutoff_cv_in`, so the engine sees the patch
   one would have built without a container, bit for bit
-  ([render/tests/container_modulation.rs](../crates/render/tests/container_modulation.rs) bounces
+  ([render/tests/suite/container_modulation.rs](../crates/render/tests/suite/container_modulation.rs) bounces
   both, and a property test in [model/tests/container_modulation.rs](../crates/model/tests/container_modulation.rs)
   compares the flat cables of random patches). One boundary CV fans out to any number of inner
   inputs; an uncabled one is a silent edge; a bypassed container passes none. CV is not
@@ -5017,7 +5017,7 @@ so PDC, multicore levels, summing order, seeds and hot edits work on the exact f
   latency (a compressor look-ahead) is compensated by the existing PDC on the flat graph at summing
   inputs; parallel inner paths that meet in a plain input are compensated only with return
   alignment on, as at the rack level.
-- **Tests as proof.** The expansion theorem (`render/tests/container_demo.rs`): the container bounce
+- **Tests as proof.** The expansion theorem (`render/tests/suite/container_demo.rs`): the container bounce
   is bit-identical to a hand-built flat twin across host blocks and worker counts;
   `engine/tests/flat_container.rs` does the same for hand-built flat graphs with PDC and 264
   devices; `app` tests prove live equals bounce through edits, undo, redo and an engine restart.
@@ -5528,7 +5528,7 @@ take the app down; Settings > Plugins can switch back to running plugins inside 
   guard, PDC from a reported and a changed latency, thread-check per worker count, a restart in the
   middle of a render), `plugin-clap/tests/{process,lifecycle,state,gui,leak,crash,hang}.rs` against
   the real backend and the test plugins, `plugin-scan/tests/scanner.rs` and `scanner_robust.rs` (real child processes),
-  `render/tests/plugin_demo.rs`, `plugin_demo_vst3.rs` and the app's `app_core_plugins*_tests.rs`
+  `render/tests/suite/plugin_demo.rs`, `plugin_demo_vst3.rs` and the app's `app_core_plugins*_tests.rs`
   (live equals the realtime bounce, including a saved latency and a latency that moves mid-song in
   both formats, stand-ins, one instance per frame, engine restart keeps instances, journal and
   snapshots, `LayoutChanged` and relink rebuilds), `--stress-plugins` and the 200-add-and-remove and
@@ -6193,8 +6193,8 @@ change (version 9), no change to the routing plan, summing order, PDC or stages.
   `show_console_devices`: both are ignored now (the console devices are always in the rack, there
   is no switch and no notice).
 - **Example.** `examples/projects/master-demo` (starter, Lead and Bass, a reverb on send and return
-  1, a master send level), generated by `render/tests/master_demo.rs`.
-- **Tests.** `render/tests/old_projects_4m.rs` pins that every committed example project is still
+  1, a master send level), generated by `render/tests/suite/master_demo.rs`.
+- **Tests.** `render/tests/suite/old_projects_4m.rs` pins that every committed example project is still
   format 9 and saves back byte for byte, and that Open creates a master only in a file that had one.
 
 ## 6i. Factory devices: `atomik.character`
@@ -6441,7 +6441,7 @@ Device::process                              AppCore::feed_device_scopes
 - **Real-time safety and determinism.** The audio path is a copy, 128 relaxed stores and one release
   store (`process_is_allocation_free_for_every_registered_device` covers both devices; the engine's
   `scope_tap.rs` renders under the allocation guard); the output does not depend on any param, so a
-  bounce with the devices equals a bounce without them to the bit (`render/tests/meter_probe.rs`),
+  bounce with the devices equals a bounce without them to the bit (`render/tests/suite/meter_probe.rs`),
   and every project saved before they existed loads and bounces unchanged: nothing new is persisted
   (the devices are ordinary devices with ordinary params, and the project format is unchanged).
 - **Not covered.** Plugin devices have no tap; a console channel strip has no meter panel of this
@@ -6875,7 +6875,7 @@ items are ordinary project texts, plus one small new file type.
   new one back in its place (the engine rebuilds the whole inside either way, and the cables and the
   track stay). The device keeps its key, name, column, colour, cables, track and console channel, so
   it sounds and bounces exactly like a device created from the same patch
-  (`crates/render/tests/device_patch_bounce.rs`). The type must match, console devices have no
+  (`crates/render/tests/suite/device_patch_bounce.rs`). The type must match, console devices have no
   patches, a frozen device is refused by `freeze::guard`, every sample of the patch must be in the
   pool (the app registers them before the command, as for a paste, and adopts the audio from the
   item's bundle), and a patch that changes nothing is rejected. `ResetDevice` applies
@@ -8137,7 +8137,7 @@ Tests (the counting allocator is described in [TESTING.md](TESTING.md#allocation
 
 - `render_is_allocation_free`, `allocating_device_is_caught_by_guard`:
   [engine/tests/alloc.rs](../crates/engine/tests/alloc.rs); the real demo in
-  [render/tests/alloc.rs](../crates/render/tests/alloc.rs); every device in
+  [render/tests/suite/alloc.rs](../crates/render/tests/suite/alloc.rs); every device in
   `process_is_allocation_free_for_every_registered_device`
   ([devices/src/lib.rs](../crates/devices/src/lib.rs)).
 - Workers: `multicore_alloc.rs` and `multicore_alloc_bites.rs` in
@@ -8188,7 +8188,7 @@ Tests: `render_any_host_block_is_bit_identical`
 ([render/tests](../crates/render/tests)), and for the sampler
 `the_bounce_is_bit_identical_across_host_blocks_and_worker_counts` and
 `voice_stealing_and_layering_are_deterministic`
-([sampler_demo.rs](../crates/render/tests/sampler_demo.rs)). Sampler voice stealing orders by a
+([sampler_demo.rs](../crates/render/tests/suite/sampler_demo.rs)). Sampler voice stealing orders by a
 per-device start counter, and the sample reader uses only IEEE arithmetic and `sin_quarter`.
 
 ### Fault containment (needs `panic = "unwind"`)

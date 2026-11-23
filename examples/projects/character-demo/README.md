@@ -32,4 +32,4 @@ Press Space to play. Things to try:
   rack) from 0 to 100 %: at 0 the sweep stands still, at 100 % the notes move it.
 
 Regenerate the file after an intentional change with
-`ATOMIK_UPDATE_GOLDEN=1 cargo test -p atomik-render --test character_demo regenerate`.
+`ATOMIK_UPDATE_GOLDEN=1 cargo test -p atomik-render --test suite character_demo::regenerate`.
