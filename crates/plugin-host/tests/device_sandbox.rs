@@ -146,3 +146,49 @@ fn a_start_a_plugin_in_its_own_process_refuses_fails_the_device_once_like_an_in_
     assert_eq!(meters(&h)[2], 3.0, "failed, not crashed");
     assert_eq!(meters(&h)[6], 0.0, "not a bad block");
 }
+
+// ----- a failure the message ring refused ---------------------------------------------------------
+
+/// Posts `n` messages from a thread inside a plugin's `process`, which fill the ring.
+fn fill_the_ring(messenger: atomik_plugin_host::HostMessenger, n: usize) {
+    std::thread::spawn(move || {
+        let _audio = atomik_plugin_host::AudioThreadGuard::enter();
+        for _ in 0..n {
+            messenger.post(PluginMessage::GuiClosed);
+        }
+    })
+    .join()
+    .unwrap();
+}
+
+#[test]
+fn a_failure_the_full_ring_refused_is_said_again_until_it_is_taken() {
+    let (probe, shared) = Probe::new();
+    shared.set_status(ProcessStatus::StartFailed);
+    let (mut h, r) = harness(rig("sb.failed-refused", &fx_layout(), Box::new(probe)));
+    fill_the_ring(r.manager.messenger(), atomik_plugin_host::MESSAGE_CAPACITY);
+    *h.input_mut("in_l") = [0.75; BATCH];
+    // The device fails on this batch and the ring has no room for the message.
+    h.process();
+    h.process();
+    assert_eq!(meters(&h)[2], 3.0, "failed");
+    assert!(r.manager.dropped_messages() >= 1, "the ring refused it");
+    let first = drain_messages(&r.manager);
+    assert_eq!(first.len(), atomik_plugin_host::MESSAGE_CAPACITY);
+    assert!(
+        first.iter().all(|m| *m == PluginMessage::GuiClosed),
+        "no failure yet"
+    );
+    // The consumer made room: the next batch says it.
+    h.process();
+    assert_eq!(
+        drain_messages(&r.manager),
+        vec![PluginMessage::Failed {
+            reason: "the plugin could not start processing"
+        }]
+    );
+    // And once only.
+    h.process();
+    h.process();
+    assert!(drain_messages(&r.manager).is_empty());
+}

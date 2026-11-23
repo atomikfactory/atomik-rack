@@ -317,6 +317,8 @@ fn thread_safe_host_callbacks_from_any_thread_arrive_as_events_on_the_main_threa
     assert_eq!(
         events,
         vec![
+            // A flag comes before the messages that carry data.
+            ManagerEvent::StateDirty(id),
             ManagerEvent::GuiResize {
                 instance: id,
                 w: 420,
@@ -325,7 +327,6 @@ fn thread_safe_host_callbacks_from_any_thread_arrive_as_events_on_the_main_threa
             ManagerEvent::GuiRequestShow(id),
             ManagerEvent::GuiRequestHide(id),
             ManagerEvent::GuiClosed(id),
-            ManagerEvent::StateDirty(id),
             ManagerEvent::Log {
                 instance: id,
                 level: LogLevel::Warning,

@@ -164,8 +164,10 @@ fn a_full_edit_ring_drops_and_counts_but_the_app_still_hears_the_edit() {
     let (hub, m) = hub();
     let (producer, _consumer) = rtrb::RingBuffer::new(1);
     hub.set_edit_sink(Some(producer));
-    for _ in 0..3 {
-        hub.edit(1, 0.5);
+    // Three params, so that the app's message queue keeps all three (a change of the same param
+    // as the last one replaces it).
+    for id in 1..=3 {
+        hub.edit(id, 0.5);
     }
     assert_eq!(hub.edits_dropped.load(Ordering::Relaxed), 2);
     assert_eq!(drain(&m).len(), 3);

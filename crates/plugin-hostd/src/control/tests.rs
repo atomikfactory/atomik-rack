@@ -210,7 +210,7 @@ impl Rig {
 }
 
 #[test]
-fn a_tick_polls_the_plugin_and_forwards_what_it_posted_in_order() {
+fn a_tick_polls_the_plugin_and_forwards_what_it_posted_flags_first() {
     let mut r = rig_with(
         vec![
             PluginMessage::StateDirty,
@@ -234,13 +234,14 @@ fn a_tick_polls_the_plugin_and_forwards_what_it_posted_in_order() {
     assert_eq!(
         r.sink.frames(),
         vec![
+            // The flags first, in their own order; the messages that carry data after them.
             FromChild::StateDirty,
+            FromChild::LatencyChanged,
             FromChild::ParamEdit {
                 param: 3,
                 value: 0.5,
                 phase: WirePhase::Change
             },
-            FromChild::LatencyChanged,
         ]
     );
     r.control.on_event(Event::Tick, &mut r.windows);
@@ -569,11 +570,11 @@ fn what_the_plugin_posted_goes_out_before_the_reply_of_the_next_call() {
     assert_eq!(
         r.sink.frames(),
         vec![
-            FromChild::LatencyChanged,
             FromChild::StateDirty,
+            FromChild::LatencyChanged,
             FromChild::Latency { id: 5, frames: 0 }
         ],
-        "notifications first, in the order they were posted, then the answer"
+        "notifications first (the flags in their fixed order), then the answer"
     );
 }
 

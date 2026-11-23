@@ -82,9 +82,27 @@ fn every_notification_becomes_the_matching_plugin_message_in_order() {
             text: "hot".to_string(),
         },
     ];
-    for expected in want {
-        assert_eq!(next_message(&r.manager), expected);
-    }
+    // The child's notifications are routed by the reader thread as they come, and a flag takes
+    // the first place among whatever is waiting: the messages that carry data keep their order,
+    // the flags come in their own fixed order.
+    let got: Vec<_> = (0..want.len()).map(|_| next_message(&r.manager)).collect();
+    let is_flag = |m: &PluginMessage| {
+        matches!(
+            m,
+            PluginMessage::StateDirty
+                | PluginMessage::LatencyChanged
+                | PluginMessage::RescanParams
+                | PluginMessage::RequestRestart
+        )
+    };
+    let data = |all: &[PluginMessage]| -> Vec<PluginMessage> {
+        all.iter().filter(|m| !is_flag(m)).cloned().collect()
+    };
+    let flags = |all: &[PluginMessage]| -> Vec<PluginMessage> {
+        all.iter().filter(|m| is_flag(m)).cloned().collect()
+    };
+    assert_eq!(data(&got), data(&want));
+    assert_eq!(flags(&got), flags(&want));
 }
 
 #[test]

@@ -258,6 +258,9 @@ pub struct PluginDevice {
     sample_rate: f64,
     activation_rate: f64,
     restart_posted: bool,
+    /// A failure the message ring refused: tried again on the next batches until it is taken
+    /// (the app learns of a failed device from this message alone).
+    unsent_failure: Option<&'static str>,
     run_mode: RunMode,
 
     note_ids: [i32; 128],
@@ -478,6 +481,7 @@ impl PluginDevice {
             sample_rate: activation_rate,
             activation_rate,
             restart_posted: false,
+            unsent_failure: None,
             run_mode: RunMode::Realtime,
             mpe_send: false,
             mpe_changed: false,
@@ -599,7 +603,26 @@ impl PluginDevice {
     fn fail(&mut self, reason: &'static str) {
         self.failed = true;
         self.state = DeviceState::Failed;
-        self.messenger.post(PluginMessage::Failed { reason });
+        self.tell_failure(reason);
+    }
+
+    /// Tells the app the device failed; when the ring has no room the reason is kept and
+    /// [`PluginDevice::retry_failure`] says it on a following batch.
+    fn tell_failure(&mut self, reason: &'static str) {
+        self.unsent_failure = if self.messenger.post(PluginMessage::Failed { reason }) {
+            None
+        } else {
+            Some(reason)
+        };
+    }
+
+    /// Tries again a failure the ring refused (a plain field and one post: nothing allocates).
+    fn retry_failure(&mut self) {
+        if let Some(reason) = self.unsent_failure
+            && self.messenger.post(PluginMessage::Failed { reason })
+        {
+            self.unsent_failure = None;
+        }
     }
 
     /// One bad block: it is counted, its output is the fallback, and the device fails when this
@@ -618,7 +641,7 @@ impl PluginDevice {
     fn fail_lost(&mut self) {
         self.failed = true;
         self.state = DeviceState::Crashed;
-        self.messenger.post(PluginMessage::Failed { reason: LOST });
+        self.tell_failure(LOST);
     }
 
     /// The plugin starts afresh (a new processor, a reset, the end of a bypass): what the sleep rule
@@ -652,6 +675,7 @@ impl PluginDevice {
             match self.to_manager.push(processor) {
                 Ok(()) => {
                     self.failed = false;
+                    self.unsent_failure = None;
                     self.bad_run = 0;
                     self.sleeping = false;
                     self.state = DeviceState::Restarting;
@@ -664,6 +688,7 @@ impl PluginDevice {
             self.processor = Some(processor);
             self.started = false;
             self.failed = false;
+            self.unsent_failure = None;
             self.bad_run = 0;
             // A new processor starts afresh: no ramp back from a failed one.
             self.episode_bad = false;
@@ -1517,6 +1542,8 @@ impl Device for PluginDevice {
         if self.started
             && let Some(p) = self.processor.as_mut()
         {
+            // A plugin's `reset` is an audio-thread call: what it posts takes the audio road.
+            let _audio = AudioThreadGuard::enter();
             p.reset();
         }
     }
@@ -1554,6 +1581,7 @@ impl Device for PluginDevice {
 
     fn process(&mut self, ctx: &mut ProcessContext<'_>) {
         let _audio = AudioThreadGuard::enter();
+        self.retry_failure();
         self.service_handshake();
         let powered = self.slot.powered();
         let bypassed = self.bypass || !powered;
