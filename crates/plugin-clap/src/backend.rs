@@ -131,7 +131,7 @@ impl ClapBackend {
         }
         // SAFETY: loading a plugin library runs its code; this is the point of hosting. The
         // app only loads files the scanner process already loaded without a crash.
-        let entry = unsafe { PluginEntry::load(path) }.map_err(|e| match e {
+        let entry = unsafe { load_entry(path) }.map_err(|e| match e {
             clack_host::entry::PluginEntryError::LibraryLoadingError(_)
             | clack_host::entry::PluginEntryError::ResolveFailed
             | clack_host::entry::PluginEntryError::NullEntryPointer => {
@@ -142,6 +142,43 @@ impl ClapBackend {
         entries.insert(path.to_path_buf(), entry.clone());
         Ok(entry)
     }
+}
+
+/// Loads the entry of the plugin file at `path`.
+///
+/// On Windows the library is opened with the altered search path, as plugin hosts do (and the VST3
+/// loader here does): the folder of the plugin's own file is searched first for the libraries it
+/// depends on, so a plugin that ships support libraries beside it loads. The hosting crate's own
+/// loader uses the plain load, which looks in the application's folder and the system's. The
+/// library is handed to the hosting crate, which does the rest as it does for its own load. Other
+/// platforms load through the hosting crate unchanged.
+///
+/// # Safety
+/// Loading a plugin library runs its code.
+unsafe fn load_entry(path: &Path) -> Result<PluginEntry, clack_host::entry::PluginEntryError> {
+    #[cfg(windows)]
+    {
+        // The altered search path needs a full path (the call's contract); a relative one takes
+        // the hosting crate's load as before.
+        if path.is_absolute() {
+            use clack_host::entry::{LibraryEntry, PluginEntryError};
+            use libloading_08::os::windows::{
+                LOAD_WITH_ALTERED_SEARCH_PATH, Library as WinLibrary,
+            };
+            // The plugin's path, as the hosting crate gives it to the entry's `init`.
+            let bundle_path = CString::new(path.to_string_lossy().into_owned())?;
+            // SAFETY: see the function's contract.
+            let raw = unsafe { WinLibrary::load_with_flags(path, LOAD_WITH_ALTERED_SEARCH_PATH) }
+                .map_err(PluginEntryError::LibraryLoadingError)?;
+            // SAFETY: `clap_entry` is the symbol every CLAP library exports, as the hosting
+            // crate's own loader assumes.
+            let library = unsafe { LibraryEntry::load_from_library(raw.into()) }?;
+            // SAFETY: see the function's contract.
+            return unsafe { PluginEntry::load_from(library, &bundle_path) };
+        }
+    }
+    // SAFETY: see the function's contract.
+    unsafe { PluginEntry::load(path) }
 }
 
 impl PluginBackend for ClapBackend {

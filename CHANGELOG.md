@@ -498,6 +498,10 @@ may break APIs and the patch and project formats.
   with the switch off; the parameter and a project that has it on are unchanged, and the switch is no longer offered
   on the panel of a VST3 plugin. A project with such a device now renders the instrument's notes where it rendered
   silence.
+- **A CLAP plugin that ships support libraries beside it loads on Windows.** The CLAP library was opened with the
+  plain library load, which does not look in the plugin's own folder for the libraries it depends on, so such a
+  plugin failed to load and a scan listed it as failed. It is now opened with the folder of its file searched first,
+  as a VST3 plugin already was. Other platforms are unchanged.
 
 ## [0.5.0-rc.1] - 2026-11-18
 
