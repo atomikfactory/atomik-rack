@@ -658,3 +658,67 @@ after the first two with the old code again gave 8.667 ms and 1.517 ms idle for 
 for the first runs): compare the two sides of a row, not one row with another. The block form keeps about 10.6 KB of
 buffers per oversampler built for 64-sample batches (2.0 KB before): passes of at most 64 base-rate samples keep the
 working space the same for any `max_block`, and 32-sample passes measured about 15 % slower.
+
+## No library call to round a number on the delay line reads (2026-11-23)
+
+A release build for baseline x86-64 has no SSE4.1, so `f32::floor` and `f64::floor` are calls into the C runtime
+there, and the per-sample paths made one or several each. The whole-part split of a delay line (`DelayLine::read`,
+`ModDelay::read`) now answers a delay of 1 to 2^23 samples with a shift of its bits and sends every other value to the
+library expression, so no output bit changes (the tests compare against the old bodies bit for bit, and the split
+against all 2^32 `f32` bit patterns). On `aarch64`, or with `sse4.1`, it is the library expression itself. Release
+profile with debug info, same machine as above; the two bench executables (`before` is the branch below this item,
+`after` this item) were built once each and run in turn, three runs of each side, so the machine's drift hits both
+sides alike. Rows are `cargo bench -p atomik-devices --bench process` (median of 21 runs of 256 batches) and
+`cargo bench -p atomik-dsp --bench blocks`.
+
+Delay lines (`DelayLine::read`, `ModDelay::read`):
+
+| row | before, runs | after, runs |
+|---|---|---|
+| device reverb | 4.164 ms, 4.123 ms, 4.144 ms | 4.219 ms, 3.681 ms, 3.693 ms (-11 %) |
+| device space-reverb | 4.199 ms, 4.187 ms, 4.220 ms | 3.774 ms, 3.767 ms, 4.159 ms (-10 %) |
+| device granular | 4.890 ms, 4.913 ms, 4.917 ms | 4.475 ms, 4.421 ms, 4.440 ms (-10 %) |
+| device rotary-speaker | 2.672 ms, 2.682 ms, 2.674 ms | 2.522 ms, 2.525 ms, 2.534 ms (-6 %) |
+| device modulation | 1.856 ms, 1.854 ms, 1.848 ms | 1.810 ms, 1.800 ms, 1.800 ms (-3 %) |
+| device stereo-delay | 480.2 us, 479.7 us, 480.7 us | 472.0 us, 485.9 us, 473.3 us (within noise) |
+| device echo | 1.047 ms, 1.048 ms, 1.044 ms | 1.067 ms, 1.061 ms, 1.065 ms (within noise) |
+| device feedback | 170.2 us, 171.8 us, 169.7 us | 176.0 us, 175.8 us, 175.6 us (+3 %, see below) |
+| device character | 5.293 ms, 5.315 ms, 5.319 ms | 5.257 ms, 5.111 ms, 5.244 ms (within noise) |
+| dsp chorus-stereo | 305.0 us, 302.7 us, 304.4 us | 294.6 us, 297.7 us, 301.5 us (within noise) |
+
+The reverbs read about twenty delay lines per sample, each at its own delay, and gain a tenth; the granular device
+and the rotary speaker gain through the lines they read. A first form of the split (a rounding add and a compare)
+cost 7 to 9 % on the stereo delay and the rotary speaker: a branch on whether the sum had rounded up is taken at
+random for a delay with a random fraction. The shipped form has no float comparison and no such branch. The feedback
+device reads one fixed delay per batch, which the old code computed once ahead of the loop; the new form is a few
+integer operations a read and costs it 3 % (about 6 us of 170 us). `Echo`, the stereo delay and the character
+device read a delay line too and did not move beyond the noise.
+
+The other per-sample sites that call `floor` were tried with the same kind of replacement for the phase wrap `p -
+p.floor()` (a few comparisons for the three ranges a phase lives in, the library expression for the rest, no output
+bit changed) and **left as they are**, because no row moved beyond its run-to-run noise: the sine of the stage blocks
+(`sin_cycles`) and the phase wraps and operator waves of the FM synth, the wavetable reads and the oscillator phase
+wraps of the wavetable synth, and the organ's scanner, the rotary speaker's angle, the semi modular's FM oscillator,
+the drum machine's sine, the ring modulator and the modulation source's shapes. Before is again the delay line change,
+five runs each for the FM synth and wavetable synth rows, three for the others:
+
+| row | before, runs | after, runs |
+|---|---|---|
+| fm-synth, chord | 7.146 ms, 7.082 ms, 7.130 ms, 7.095 ms, 7.078 ms | 7.024 ms, 6.994 ms, 7.032 ms, 7.041 ms, 7.548 ms (did not move) |
+| fm-synth, idle | 1.241 ms, 1.252 ms, 1.271 ms, 1.280 ms, 1.302 ms | 1.250 ms, 1.242 ms, 1.278 ms, 1.258 ms, 1.276 ms (did not move) |
+| dsp chorus-stereo | 301.9 us, 297.4 us, 297.6 us | 288.2 us, 289.7 us, 291.6 us (-3 %, under the noise bar) |
+| wavetable-synth, chord | 4.258 ms, 4.411 ms, 4.255 ms, 4.259 ms, 4.261 ms | 4.327 ms, 4.415 ms, 4.361 ms, 4.427 ms, 4.408 ms (+3 %, kept off) |
+| wavetable-synth, idle | 1.247 ms, 1.280 ms, 1.248 ms, 1.270 ms, 1.264 ms | 1.299 ms, 1.264 ms, 1.246 ms, 1.235 ms, 1.238 ms (did not move) |
+| organ, chord | 2.696 ms, 2.659 ms, 2.993 ms | 3.231 ms, 2.632 ms, 2.642 ms (did not move) |
+| rotary-speaker | 2.543 ms, 2.527 ms, 2.520 ms | 2.533 ms, 2.525 ms, 2.553 ms (did not move) |
+| semi-modular | 3.224 ms, 2.514 ms, 2.484 ms | 2.613 ms, 2.481 ms, 2.491 ms (did not move) |
+| drum-machine | 647.0 us, 640.2 us, 640.6 us | 643.1 us, 636.3 us, 647.4 us (did not move) |
+| mod-source | 1.136 ms, 1.119 ms, 1.127 ms | 1.186 ms, 1.184 ms, 1.667 ms (noise, the third run an outlier) |
+| modulation | 1.810 ms, 1.801 ms, 1.808 ms | 1.811 ms, 1.829 ms, 1.983 ms (did not move) |
+The library `floor` of this machine is cheap (a call into the C runtime that runs the rounding instruction), so what a
+replacement saves is the call overhead and the registers a call spills: it shows only where a read is a short chain
+repeated many times, as in a delay line, and not behind a sine series or a Hermite read. A form of the phase wrap that
+used a truncating conversion or a rounding add (and no comparison on the range) measured slower than the call in a
+loop of dependent wraps (about 11 and 7 ns against 5 ns). The disassembly of the bench executables carries no symbols
+(the debug information is in a separate file the tool does not read), so the calls that remain were not counted: of
+the one function compiled on its own for a look, the shift form has no call on the path of a delay in range.

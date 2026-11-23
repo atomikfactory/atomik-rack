@@ -44,9 +44,8 @@ impl ModDelay {
         } else {
             delay.clamp(2.0, max)
         };
-        let whole = d.floor();
+        let (whole, i) = crate::floor::split_floor(d);
         let t = d - whole;
-        let i = whole as usize;
         let len = self.buf.len();
         // Ages i-1..=i+2 are all within 1..len-1.
         let at = |age: usize| self.buf[(self.write + len - age) % len];
@@ -110,5 +109,64 @@ mod tests {
         assert_eq!(d.read(5.5), 0.0);
         d.write(1e-30);
         assert_eq!(d.read(2.0).to_bits(), 0);
+    }
+
+    /// `ModDelay::read` as it was when it called `floor`.
+    fn read_with_floor(line: &ModDelay, delay: f32) -> f32 {
+        let max = line.max_delay() as f32;
+        let d = if delay.is_nan() {
+            2.0
+        } else {
+            delay.clamp(2.0, max)
+        };
+        let whole = d.floor();
+        let t = d - whole;
+        let i = whole as usize;
+        let len = line.buf.len();
+        let at = |age: usize| line.buf[(line.write + len - age) % len];
+        hermite4(at(i - 1), at(i), at(i + 1), at(i + 2), t)
+    }
+
+    #[test]
+    fn mod_delay_read_gives_the_bits_it_gave_with_floor() {
+        for max in [1usize, 4, 9, 100, 4_800, 100_000] {
+            let mut line = ModDelay::new(max);
+            let mut state = 7u32;
+            for _ in 0..3_000 {
+                state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+                line.write((state >> 8) as f32 / (1u32 << 24) as f32 - 0.5);
+            }
+            let m = line.max_delay() as f32;
+            let mut delays = vec![
+                f32::NAN,
+                f32::INFINITY,
+                f32::NEG_INFINITY,
+                f32::MAX,
+                -1.0,
+                -0.0,
+                0.0,
+                0.5,
+                1.0,
+                1.999_999_8,
+                2.0,
+                2.000_000_2,
+                2.5,
+                m - 0.5,
+                m,
+                m + 0.5,
+                m * 3.0,
+            ];
+            for _ in 0..2_000 {
+                state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+                delays.push(1.5 + (state >> 8) as f32 / (1u32 << 24) as f32 * m);
+            }
+            for d in delays {
+                assert_eq!(
+                    line.read(d).to_bits(),
+                    read_with_floor(&line, d).to_bits(),
+                    "max {max} delay {d:e}"
+                );
+            }
+        }
     }
 }

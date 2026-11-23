@@ -40,6 +40,7 @@ pub mod echo;
 pub mod energy;
 mod fader;
 mod fdn;
+mod floor;
 pub mod fm;
 pub mod grain;
 pub mod harmony;

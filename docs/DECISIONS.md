@@ -2105,3 +2105,28 @@ information natively, with a note id); removing the parameter for such a plugin 
 saved with the value would no longer match); greying the switch out (a control that cannot work is better absent).
 
 **Status.** Default (not yet confirmed). Decided by: none yet.
+
+## BO. A delay line splits its delay without the library `floor` where the target has no rounding instruction
+
+**Question.** A release build for baseline x86-64 has no SSE4.1, so `f32::floor` is a call into the C runtime there,
+and every read of a delay line made one (a reverb reads about twenty lines per sample). On `aarch64`, or with `sse4.1`
+enabled, `floor` is one instruction, and integer arithmetic in its place would be slower than what exists. The build
+flags are not to change (the program must still start on any x86-64).
+
+**Decision.** `DelayLine::read` and `ModDelay::read` split the delay into its whole part and the index of it with
+`split_floor`, which gives the same bits as `floor` and a cast for every `f32`. It picks by `cfg(target_arch)` and
+`cfg(target_feature)`, in one place and not at the call sites: with an instruction (`aarch64`, or `sse4.1`) it is the
+expression itself, so the platform behaves as it did. Elsewhere a delay between 1 and 2^23 samples is cut out of its
+bits by a shift (the integer is the floor, and converts back exactly) and every other value goes to the expression.
+Both forms give the same bits, so a project renders identically on every platform, and the tests run the form for the
+targets without the instruction on every platform (against the old bodies and against the expression, bit for bit;
+once by hand against all 2^32 `f32` bit patterns).
+
+**Rejected.** Building with `target-cpu` or `sse4.1` (excludes older machines); a truncating conversion or a rounding
+add and compare (measured: the first costs a saturating cast, the second a branch taken at random for a random
+fraction); the same code on every platform (slower on `aarch64`); the same replacement for the phase wraps of the
+oscillators (`p - p.floor()`: measured on the FM synth, the wavetable synth, the organ, the rotary speaker, the semi
+modular and the drum machine, none moved beyond the noise, see `perf/BASELINE.md`, so they keep the library call).
+
+**Status.** Default (not yet confirmed). Decided by: none yet.
+
