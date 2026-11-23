@@ -557,6 +557,7 @@ fn a_ready_creation_that_is_cancelled_ends_its_plugin_across_polls() {
 #[test]
 fn one_poll_asks_every_instance_before_it_polls_any_of_them() {
     let (mut m, stats) = manager();
+    stats.record_polls(true);
     let mut kept = Vec::new();
     let mut ids = Vec::new();
     for _ in 0..3 {

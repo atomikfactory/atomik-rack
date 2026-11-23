@@ -903,6 +903,8 @@ pub struct NullStats {
     /// Every `begin_poll` and `poll` of the null instances, in order (see
     /// [`NullStats::poll_log`]).
     poll_log: Mutex<Vec<(usize, bool)>>,
+    /// The poll log is filled only while this is set (see [`NullStats::record_polls`]).
+    record_polls: AtomicBool,
     /// The most bytes a null instance hands over (0: no limit; see
     /// [`NullStats::set_state_limit`]).
     state_limit: AtomicU64,
@@ -1049,6 +1051,10 @@ impl NullStats {
     /// Synchronous state captures the null instances served.
     pub fn sync_captures(&self) -> usize {
         self.sync_captures.load(Ordering::Relaxed)
+    }
+    /// Turns the poll log on or off (off by default: nothing is locked or kept per poll).
+    pub fn record_polls(&self, on: bool) {
+        self.record_polls.store(on, Ordering::Relaxed);
     }
     /// What the manager asked of the null instances' main-thread work, in order: `(n, true)` is
     /// the [`PluginInstance::begin_poll`] and `(n, false)` the [`PluginInstance::poll`] of the
@@ -1350,6 +1356,17 @@ impl Drop for NullInstance {
 }
 
 impl NullInstance {
+    /// Notes a `begin_poll` (`true`) or a `poll` of this instance when the log is on.
+    fn log_poll(&self, begin: bool) {
+        if self.stats.record_polls.load(Ordering::Relaxed) {
+            self.stats
+                .poll_log
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .push((self.ordinal, begin));
+        }
+    }
+
     /// The error of a call made while the null plugin is set not to respond (see
     /// [`NullStats::set_not_responding`]).
     fn stuck_error(&self, what: &str) -> Result<(), BackendError> {
@@ -1728,19 +1745,11 @@ impl PluginInstance for NullInstance {
     }
 
     fn begin_poll(&mut self) {
-        self.stats
-            .poll_log
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .push((self.ordinal, true));
+        self.log_poll(true);
     }
 
     fn poll(&mut self) {
-        self.stats
-            .poll_log
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .push((self.ordinal, false));
+        self.log_poll(false);
         self.take_own_edit();
     }
 
