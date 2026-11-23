@@ -2029,3 +2029,24 @@ the others, but it hides a bug); keeping the proxies alive and clearing them at 
 outlive its removal); a second proxy per half.
 
 **Status.** Default (not yet confirmed). Decided by: none yet.
+
+## BL. A bounce flushes every sandboxed plugin after every batch, and the flushes are waited for together
+
+**Question.** A bounce polls the plugin manager after every 64-frame batch, and each sandboxed plugin answers a `Flush`
+that carries every notification it queued, one plugin after the other. Could the round trip be skipped for a plugin that
+has posted nothing, or at least shared?
+
+**Decision.** Every sandboxed plugin is still flushed after every batch, as the sync point that makes a restart, a
+latency change or a dirty state land on the same batch in every run. What changes is the waiting: `PluginManager::poll`
+first sends the request to every instance (`PluginInstance::begin_poll`) and each instance takes its answer in its own
+`poll`, so the plugin processes flush at the same time. A request that another call abandoned in between is simply sent
+again by `poll`, as before.
+
+**Why no "nothing to flush" flag.** What a plugin posts from its own main thread is not tied to a batch: it may do so
+at any moment, so a flag read on the parent side would race with it and a bounce would depend on timing. The round trip
+is the only thing that makes the notifications of a batch visible before the next one.
+
+**Rejected.** Skipping the flush when the plugin reported nothing since the last one; flushing every few batches (a
+restart would land on another batch than in a live run).
+
+**Status.** Default (not yet confirmed). Decided by: none yet.

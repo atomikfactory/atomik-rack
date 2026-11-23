@@ -44,6 +44,14 @@ pub(crate) struct RemoteInstance {
     latency: u32,
     /// Activated for an offline bounce: `poll` flushes the child's notifications.
     offline_active: bool,
+    /// The id of the `Flush` that [`PluginInstance::begin_poll`] sent and `poll` has not taken
+    /// the answer of yet. The instance's own record: the link is asked only whether that
+    /// request is still the pending one.
+    flush_out: Option<u64>,
+    /// The id of the `CaptureState` that [`PluginInstance::begin_capture_state`] sent and
+    /// [`PluginInstance::capture_state`] has not collected, so that a collect never takes the
+    /// answer of another request.
+    capture_out: Option<u64>,
     /// The end of the running audio callback's plugin budget, which a live batch may wait for.
     callback: Arc<CallbackDeadline>,
     /// Where the processor records its live waits (tests).
@@ -227,6 +235,8 @@ impl RemoteInstance {
             has_gui,
             latency,
             offline_active: false,
+            flush_out: None,
+            capture_out: None,
             callback: Arc::clone(CallbackDeadline::shared()),
             #[cfg(test)]
             trace: None,
@@ -592,6 +602,7 @@ impl PluginInstance for RemoteInstance {
         }
         // A failure shows again when the state is collected.
         let _ = self.link.begin_call(|id| ToChild::CaptureState { id });
+        self.capture_out = self.link.begun();
     }
 
     fn capture_state(&mut self) -> Result<PluginStateBlob, BackendError> {
@@ -599,7 +610,11 @@ impl PluginInstance for RemoteInstance {
         // A background request that is out is waited for, not repeated.
         let reply = match self.link.finish_background("CaptureState", timeout) {
             Some(reply) => reply?,
-            None => match self.link.finish_call("CaptureState", timeout) {
+            None => match self
+                .capture_out
+                .take()
+                .and_then(|id| self.link.finish_call_of(id, "CaptureState", timeout))
+            {
                 Some(reply) => reply?,
                 None => self.link.call(
                     "CaptureState",
@@ -829,18 +844,41 @@ impl PluginInstance for RemoteInstance {
         // could not do itself (it may not lock): ending a child it declared dead.
         self.link.shared().finish_audio_death();
         self.service_soft();
+        let begun = self.flush_out.take();
         if self.offline_active && !self.link.is_lost() {
             // The child forwards notifications on a timer; a bounce must not depend on it. The
             // reader posts every notification before it delivers a reply, so when the Flush is
-            // answered they are all in the messenger.
+            // answered they are all in the messenger. The answer of the `Flush` that `begin_poll`
+            // sent is taken here, waiting up to the same timeout counted from now; when there is
+            // none (or another call abandoned it) the flush is made and waited for now.
             let call = self.timeouts().call;
-            let _ = self
-                .link
-                .call("Flush", call, |id| ToChild::Flush { id }, None);
+            let taken = begun.and_then(|id| self.link.finish_call_of(id, "Flush", call));
+            if taken.is_none() {
+                let _ = self
+                    .link
+                    .call("Flush", call, |id| ToChild::Flush { id }, None);
+            }
         }
         // The param edits the reader held back go to the messenger now, just before the manager
         // drains it.
         self.link.shared().flush_edits();
+    }
+
+    fn begin_poll(&mut self) {
+        if !self.offline_active || self.link.is_lost() {
+            return;
+        }
+        if self.flush_out.is_some() && self.flush_out == self.link.begun() {
+            // The one that is out answers the next `poll`.
+            return;
+        }
+        // A failure (a lost link, a held or stuck call) sends nothing: `poll` then does what it
+        // always did.
+        self.flush_out = self
+            .link
+            .begin_call(|id| ToChild::Flush { id })
+            .ok()
+            .and_then(|()| self.link.begun());
     }
 
     fn has_gui(&self) -> bool {

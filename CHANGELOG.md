@@ -232,6 +232,13 @@ may break APIs and the patch and project formats.
   window that is uncovered or gains the focus, a frame that was not shown, the first paint and screenshots are never
   held back, a lone window keeps painting in step with its monitor as before, and the periodic activity line now
   also says how many paints were held back per window.
+- **A bounce waits for its sandboxed plugins together, not one after the other.** After every batch an offline render
+  asks each plugin in its own process for its notifications (a restart it wants, a latency change, a dirty state):
+  the requests of all plugins now go out first and their answers are collected afterwards, so a project with ten
+  such plugins no longer pays ten round trips per batch in a row (a 60 s bounce of ten test plugins in ten
+  processes falls from about 59 s to about 42 s). Every plugin is still asked after every batch, so a restart or a
+  latency change lands on the same batch as before and the rendered file is the same bytes. A live project is
+  unchanged.
 
 ### Fixed
 - **Dropping an instrument above its mix channel.** An instrument dragged to the place above its own mix channel

@@ -1986,6 +1986,15 @@ impl PluginManager {
         // polls, so that a project with dozens of plugins waits for none of its slow ones.
         self.advance_leaving();
         let ids: Vec<InstanceId> = self.instances.keys().copied().collect();
+        // Every instance is asked first for what its poll waits for (an offline render's flush
+        // of a plugin in another process), so the waits overlap. Only this instance's own link
+        // is touched by its `poll_one`, so nothing runs between an instance's ask and its poll
+        // that could abandon the request.
+        for id in &ids {
+            if let Some(m) = self.instances.get_mut(id) {
+                m.instance.begin_poll();
+            }
+        }
         for id in ids {
             self.poll_one(id, &mut events);
         }

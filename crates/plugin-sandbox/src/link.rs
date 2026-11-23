@@ -1089,6 +1089,8 @@ pub(crate) struct Link {
     waited_out: bool,
     /// A request sent by [`Link::begin_call`] whose answer [`Link::finish_call`] has not taken.
     pending: bool,
+    /// The id of the request `pending` is about (meaningless while `pending` is false).
+    pending_id: u64,
     /// A request sent by [`Link::begin_held_call`] whose answer may take minutes: until
     /// [`Link::poll_reply`] has it, every other call fails at once without being sent, so it
     /// neither abandons that request nor counts as a miss of a busy child.
@@ -1207,6 +1209,7 @@ impl Link {
             killed_at: None,
             waited_out: false,
             pending: false,
+            pending_id: 0,
             held: None,
             vitals: None,
         };
@@ -1497,7 +1500,33 @@ impl Link {
         self.shared.expect(Expect::Id(id));
         self.send(&make(id), blob)?;
         self.pending = true;
+        self.pending_id = id;
         Ok(())
+    }
+
+    /// The id of the request [`Link::begin_call`] sent and nothing has taken or abandoned since,
+    /// if there is one. A caller that keeps the id of its own request can tell, before it
+    /// finishes, whether the request that is pending is still its own.
+    pub fn begun(&self) -> Option<u64> {
+        self.pending.then_some(self.pending_id)
+    }
+
+    /// [`Link::finish_call`] for the request `id` that [`Link::begun`] named: `None` (nothing is
+    /// waited for or taken) when that request is no longer the pending one, because another
+    /// call abandoned it or put its own in its place.
+    pub fn finish_call_of(
+        &mut self,
+        id: u64,
+        what: &str,
+        timeout: Duration,
+    ) -> Option<Result<Reply, BackendError>> {
+        if let Some(e) = self.busy(what) {
+            return Some(Err(e));
+        }
+        if self.begun() != Some(id) {
+            return None;
+        }
+        self.finish_call(what, timeout)
     }
 
     /// The answer to the request [`Link::begin_call`] sent, waiting up to `timeout` for it like

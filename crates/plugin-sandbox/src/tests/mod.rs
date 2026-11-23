@@ -2,6 +2,7 @@
 
 mod background;
 mod budget;
+mod flush_ahead;
 mod loading;
 mod lost;
 mod no_alloc;

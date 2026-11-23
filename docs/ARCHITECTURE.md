@@ -5309,7 +5309,11 @@ take the app down; Settings > Plugins can switch back to running plugins inside 
     exactly one reply; plugin callbacks come back as notifications and reach the instance's
     `HostMessenger` on a reader thread. The child sends every pending notification before each
     reply, and a bounce asks for a `Flush` after every batch, so a callback reaches the host before
-    the next batch exactly as in process (a bounce counts in batches, never in time). Main-thread
+    the next batch exactly as in process (a bounce counts in batches, never in time). The manager
+    sends every instance's `Flush` first (`PluginInstance::begin_poll`, in `PluginManager::poll`)
+    and each instance takes its answer in its own `poll`, so the children flush at the same time and
+    a batch waits for the slowest one, not for the sum; an instance remembers the id of the request
+    it sent and falls back to the blocking call when another call abandoned it. Main-thread
     calls have timeouts. The ones that matter (10 s create, activate and state; 2 s deactivate and
     flush) kill the child when they are not answered, unless it shows a sign of life (below). The
     cosmetic ones (param text, default pins, layout changes, the list of presets, the param values,
