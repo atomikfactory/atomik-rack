@@ -455,6 +455,22 @@ may break APIs and the patch and project formats.
   refused is said again on the next blocks. A VST3 plugin's own parameter writes are reported only for the parameters
   the app shows, only when the value moved, and at most about once every 20 ms, instead of every parameter in every
   block.
+- **Removing a VST3 plugin whose controller is a class of its own now leaves nothing of it behind.** The host joined
+  the two halves through proxies that each kept the other half alive, and at removal it asked each half to
+  disconnect with nothing, which a plugin written the usual way ignores, so every removal left the whole plugin
+  (threads, handles, memory) in the process: it stayed until the app closed when plugins are not sandboxed, when
+  they share a process, and in a scan. Each half is now disconnected with the proxy it was connected with and both
+  proxies are cut whatever the plugin answers, after the plugin was deactivated and before its controller and then
+  its component are terminated. A proxy no longer releases a plugin object while it holds its own lock, so a
+  plugin that talks while it is released cannot hang the app.
+- **A VST3 plugin that cannot be used is torn down, and a controller that refuses to start fails the plugin.** A
+  component that initialised and then turned out not to be an audio processor was dropped without being
+  terminated. A separate controller whose initialisation failed was used anyway (its parameters, state and editor)
+  and terminated: the plugin is now refused with "the plugin's controller refused to initialise", which the plugin
+  list shows as the reason it is unsupported and a project shows on the missing device, and the controller is
+  released without being terminated. A factory that answers the controller class with the component's own object is
+  one object: initialised and terminated once, with no second initialisation and no proxies. A factory that
+  implements the host-context interface now gets the host context once, before anything is created from it.
 
 ## [0.5.0-rc.1] - 2026-11-18
 

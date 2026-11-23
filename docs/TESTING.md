@@ -436,8 +436,15 @@ libraries.
   split gain, a mono effect, a 5.1-only effect the host refuses, plugins that stand a parameter for
   every controller and channel (one answers `IMidiMapping` slowly), plugins that fail to initialise,
   set up, start or process, one that returns NaN, plugins that ask for restarts from inside setup or
-  after every block, one that retitles a param), `vst3-bad`, `vst3-hang`, `vst3-crash`,
-  `vst3-leak`. `atomik_plugin_host::testing::vst3_test_plugin("atomik-test-vst3")` builds a library
+  after every block, one that retitles a param, and five strict ones: a split plugin that lets go of its peer
+  only for the object it was connected with and never in `terminate` (alone and talking to its peer from inside
+  `disconnect` and `terminate`), a component that is not an audio processor, a controller that refuses to
+  initialise and a plugin whose factory answers the controller class with the component's own object; the factory
+  of this library refuses the host context), `vst3-bad`, `vst3-hang`, `vst3-crash`, `vst3-leak`. The shell's
+  process-wide counters (`atomik_test_counter`) also count `initialize` and `terminate` per half, controller
+  objects created and destroyed, what `disconnect` received against the peer it stored, the order of the teardown
+  calls, `setHostContext` calls and `createInstance` calls that came before one; `plugin-vst3/tests/teardown.rs`
+  reads them. `atomik_plugin_host::testing::vst3_test_plugin("atomik-test-vst3")` builds a library
   and installs it as a `.vst3` **bundle** with the layout of the running OS. The shell announces a
   latency change itself (`restartComponent(kLatencyChanged)`), like the CLAP effect asks for a
   restart, so a test must not announce it by hand.

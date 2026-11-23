@@ -5472,7 +5472,15 @@ take the app down; Settings > Plugins can switch back to running plugins inside 
   per scan and per instance with a half-second budget; units as modules), `IMidiMapping` and note-expression support;
   `instance.rs` is the main-thread half (component and controller created and connected through two
   proxies so neither holds the other, the controller brought in step with the component's state, the
-  host `IComponentHandler`, the editor `IPlugView` with an `IPlugFrame` that is also an `IRunLoop`);
+  host `IComponentHandler`, the editor `IPlugView` with an `IPlugFrame` that is also an `IRunLoop`).
+  The life cycle is by the book: the factory gets `setHostContext` once, before anything is created from it, and
+  the module keeps that context for as long as it holds the factory; from the moment the component initialised
+  every way out of `create` terminates it (a separate controller that initialised first), a controller that is a
+  class of its own and refuses to initialise fails the plugin (released without `terminate`), and a controller
+  class the factory answers with the component's own object is a single-object plugin (no second `initialize`,
+  no proxies, one `terminate`). Teardown is the editor closed and the handler detached, `setActive(0)` when
+  active, each half `disconnect`ed with the proxy it was connected with, both proxies cut (they hold the plugin
+  halves strongly, so only the host can break the ring), the controller terminated, then the component;
   `processor.rs` is the audio half (fixed-capacity `IParameterChanges` and `IEventList`,
   `silenceFlags` per channel, `ProcessContext` from the batch transport, host note ids, pitch bend
   and CCs through `IMidiMapping`, per-note expressions, output notes back as `notes_out`). Params

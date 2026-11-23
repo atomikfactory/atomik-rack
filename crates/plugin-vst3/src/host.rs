@@ -640,6 +640,13 @@ impl IRunLoopTrait for PlugFrame {
 
 /// Sits between component and controller: each half gets a proxy that forwards to the other, so
 /// neither holds the other directly (the VST3 hosting rule that lets either side be torn down).
+///
+/// A proxy holds a strong reference to its destination, so the two proxies and the two halves
+/// form a ring that only the host can break: at teardown the instance asks each half to
+/// disconnect from the proxy it was connected with, then clears both destinations
+/// ([`ConnectionProxy::set_destination`] with `None`), whatever the plugin did in `disconnect`.
+/// A destination is never released while the proxy's mutex is held: releasing it can run plugin
+/// code, and that code may call `notify` on this very proxy.
 pub(crate) struct ConnectionProxy {
     dst: Mutex<Option<ComPtr<IConnectionPoint>>>,
 }
@@ -655,9 +662,11 @@ impl ConnectionProxy {
         })
     }
 
-    /// Sets the destination without going through the interface.
+    /// Sets the destination without going through the interface. The old destination is released
+    /// after the lock is.
     pub(crate) fn set_destination(&self, dst: Option<ComPtr<IConnectionPoint>>) {
-        *lock(&self.dst) = dst;
+        let old = std::mem::replace(&mut *lock(&self.dst), dst);
+        drop(old);
     }
 }
 
@@ -667,12 +676,12 @@ impl IConnectionPointTrait for ConnectionProxy {
         let Some(o) = (unsafe { ComRef::from_raw(other) }) else {
             return kInvalidArgument;
         };
-        *lock(&self.dst) = Some(o.to_com_ptr());
+        self.set_destination(Some(o.to_com_ptr()));
         kResultOk
     }
 
     unsafe fn disconnect(&self, _other: *mut IConnectionPoint) -> tresult {
-        *lock(&self.dst) = None;
+        self.set_destination(None);
         kResultOk
     }
 

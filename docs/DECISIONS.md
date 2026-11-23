@@ -1990,3 +1990,42 @@ from its audio thread still use the small ring (they can be shed there).
 thread (the audio thread would lock); counting each flag (the app does not need it).
 
 **Status.** Default (not yet confirmed). Decided by: none yet.
+
+## BK. A VST3 plugin is brought up and taken down by the book
+
+**Question.** A VST3 plugin whose controller is a class of its own is joined to its component through two proxies that
+each hold their destination strongly, and the host disconnected both halves with null before it terminated them. A
+plugin written the usual way ignores a null, so the ring kept both halves alive for ever; a component that initialised
+and was then found not to be an audio processor was never terminated; a controller that refused to initialise was used
+anyway; and the factory never got the host context it may ask for.
+
+**Decision.** `disconnect` is called on each half with the proxy that half was connected with, never with null, and
+both proxies are then cut (their destinations cleared) whatever the plugin answered; the order of teardown is
+deactivate, disconnect, terminate the controller (when it is a class of its own), terminate the component. A separate
+controller whose `initialize` does not return ok fails the plugin with an honest error (the controller is released
+without `terminate`, the component is terminated) instead of the plugin going on without a working controller. When the
+factory answers the controller class with the component's own object (compared as the `FUnknown` of each) the plugin is
+a single object: one `initialize`, no proxies, one `terminate`. A factory that implements `IPluginFactory3` gets
+`setHostContext` once, before anything is created from it, and the module keeps the context for as long as it keeps the
+factory (the factory first, then the context, then the module's exit function, then the library). Every way out of
+`create` after the component initialised terminates it, by a guard that is dropped armed.
+
+**Why `disconnect` gets the proxy.** A plugin lets go of its peer in `disconnect(other)` only when `other` is the object
+it stored (the reference hosting code does the same and a plugin may answer `kResultFalse` otherwise). The proxies hold
+their destinations strongly, so component -> proxy -> controller -> proxy -> component is a ring that keeps both halves
+alive for ever when the plugin ignores a null. Cutting the proxies after the call breaks the ring on the host's side
+whatever the plugin does (nothing at all, or an error): the plugin never has to cooperate to be freed. A proxy takes a
+destination out under its lock and releases it after the lock, because a release can run plugin code that calls `notify`
+on the same proxy.
+
+**Why a refusing controller fails the plugin.** A plugin with no parameters, no controller state and no editor is worse
+than an honest error, and the format's reference hosting code fails the plugin too. The error is
+`BackendError::Unsupported`: an instantiate (opening a project, adding the plugin) returns it, and a scan lists the
+class as unsupported with the same reason, so it is never offered. A controller class the factory cannot create at all
+is unchanged: the plugin loads without a controller.
+
+**Rejected.** Disconnecting with null and also with the proxy (a null is meaningless to a strict plugin and harmless to
+the others, but it hides a bug); keeping the proxies alive and clearing them at the next instance (a plugin would
+outlive its removal); a second proxy per half.
+
+**Status.** Default (not yet confirmed). Decided by: none yet.
