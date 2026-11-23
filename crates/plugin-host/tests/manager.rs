@@ -1173,3 +1173,22 @@ fn a_slow_restart_does_not_end_the_burst_it_belongs_to() {
     assert_eq!(stats.activated(), 1 + RESTART_BURST as usize, "{events:?}");
     assert_eq!(warnings(&events), 1, "said once: {events:?}");
 }
+
+#[test]
+fn a_poll_with_nothing_to_report_allocates_nothing_once_it_has_run() {
+    let (mut m, _stats) = manager();
+    let handles: Vec<_> = (0..8)
+        .map(|i| {
+            m.instantiate(&request(if i % 2 == 0 { "null.fx" } else { "null.fx2" }))
+                .unwrap()
+        })
+        .collect();
+    assert_eq!(m.instance_count(), 8);
+    let _ = m.poll();
+    // The list of ids the poll walks is kept: the second poll does not build it again (and
+    // nothing else a poll does with the null backend allocates when it has nothing to report).
+    let events = atomik_testkit::no_alloc::assert_no_alloc(|| m.poll());
+    assert!(events.is_empty());
+    drop(events);
+    drop(handles);
+}

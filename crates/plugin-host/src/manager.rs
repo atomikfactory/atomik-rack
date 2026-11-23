@@ -675,6 +675,9 @@ pub struct PluginManager {
     /// The params each plugin lists beyond what it reports (see
     /// [`PluginManager::set_pinned_params`]).
     pins: BTreeMap<PluginRef, Arc<Vec<PluginParamInfo>>>,
+    /// The instance ids one [`PluginManager::poll`] walks: kept between polls so that a frame
+    /// does not allocate the list again.
+    poll_ids: Vec<InstanceId>,
 }
 
 /// `layout` as the rack lists it: what the plugin reports plus the `pins` (see
@@ -741,6 +744,7 @@ impl PluginManager {
             next_ticket: 1,
             leaving: Vec::new(),
             pins: BTreeMap::new(),
+            poll_ids: Vec::new(),
         }
     }
 
@@ -1985,7 +1989,9 @@ impl PluginManager {
         // The instances that ended are deactivated and their processes end together, across
         // polls, so that a project with dozens of plugins waits for none of its slow ones.
         self.advance_leaving();
-        let ids: Vec<InstanceId> = self.instances.keys().copied().collect();
+        let mut ids = std::mem::take(&mut self.poll_ids);
+        ids.clear();
+        ids.extend(self.instances.keys().copied());
         // Every instance is asked first for what its poll waits for (an offline render's flush
         // of a plugin in another process), so the waits overlap. Only this instance's own link
         // is touched by its `poll_one`, so nothing runs between an instance's ask and its poll
@@ -1995,9 +2001,10 @@ impl PluginManager {
                 m.instance.begin_poll();
             }
         }
-        for id in ids {
+        for &id in &ids {
             self.poll_one(id, &mut events);
         }
+        self.poll_ids = ids;
         events
     }
 

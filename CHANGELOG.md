@@ -246,6 +246,8 @@ may break APIs and the patch and project formats.
 - **A scan no longer builds an editor view for every plugin.** Creating a VST3 plugin built an editor view and dropped
   it only to learn whether the plugin has one, and a scan creates every plugin of every file. The question is now put
   to the plugin once, the first time the app wants the answer (or when the editor is opened, which settles it).
+- **The plugin manager's frame poll no longer builds its list of instances every frame.** The list is kept and
+  reused; with nothing to report a poll now allocates nothing.
 
 ### Fixed
 - **Dropping an instrument above its mix channel.** An instrument dragged to the place above its own mix channel
