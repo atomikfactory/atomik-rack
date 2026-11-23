@@ -489,10 +489,12 @@ impl ControllerCore {
     pub fn create_view(&self, name: *const c_char) -> *mut IPlugView {
         // SAFETY: the host passes a NUL-terminated name or null.
         let name = unsafe { crate::util::cstr_text(name) };
+        let shared = self.shared();
+        bump(counter::VIEW_ASKS);
+        shared.add(probe::VIEW_ASKS, 1);
         if !self.info.gui || name != "editor" {
             return std::ptr::null_mut();
         }
-        let shared = self.shared();
         shared.add(probe::VIEWS_CREATED, 1);
         let view = ComWrapper::new(View {
             shared: Arc::clone(&shared),

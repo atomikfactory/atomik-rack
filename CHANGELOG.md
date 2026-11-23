@@ -243,6 +243,9 @@ may break APIs and the patch and project formats.
   mirrored to the plugin's controller so an open editor follows it. An automated parameter used to cost one
   controller call per event, hundreds a frame; the controller now hears each parameter once per frame, with the
   latest value. A state saved or a plugin deactivated still applies everything first.
+- **A scan no longer builds an editor view for every plugin.** Creating a VST3 plugin built an editor view and dropped
+  it only to learn whether the plugin has one, and a scan creates every plugin of every file. The question is now put
+  to the plugin once, the first time the app wants the answer (or when the editor is opened, which settles it).
 
 ### Fixed
 - **Dropping an instrument above its mix channel.** An instrument dragged to the place above its own mix channel

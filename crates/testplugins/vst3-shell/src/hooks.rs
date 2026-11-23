@@ -61,6 +61,8 @@ pub mod counter {
     pub const SEQ_TERMINATE_COMPONENT: u32 = 21;
     /// Messages a plugin sent from inside `disconnect` or `terminate` that the peer accepted.
     pub const TEARDOWN_MESSAGES_DELIVERED: u32 = 22;
+    /// `createView` calls on any controller (a plugin without an editor answers them, too).
+    pub const VIEW_ASKS: u32 = 23;
     /// Number of counters.
     pub const COUNT: usize = 24;
 }
@@ -163,8 +165,10 @@ pub mod probe {
     /// Non-zero: the value written for the parameter `k` in the block `n` (the number of
     /// `process` calls so far) is `((n + k) % 997) / 997`.
     pub const OUT_RAMP: u32 = 51;
+    /// `IEditController::createView` calls on this instance.
+    pub const VIEW_ASKS: u32 = 52;
     /// Number of probe slots.
-    pub const COUNT: usize = 52;
+    pub const COUNT: usize = 53;
 }
 
 /// Commands of `atomik_test_command`.

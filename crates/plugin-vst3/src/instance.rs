@@ -141,7 +141,9 @@ pub(crate) struct Vst3Instance {
     activated_latency: u32,
     active: bool,
     gui_open: bool,
-    has_view: bool,
+    /// Whether the controller has an editor view: asked of the plugin once, the first time it is
+    /// needed (an opened editor answers it too), so a scan builds no view.
+    has_view: std::cell::Cell<Option<bool>>,
     pub(crate) preset_roots: Option<Vec<std::path::PathBuf>>,
     _module: Arc<Module>,
 }
@@ -296,7 +298,7 @@ impl Vst3Instance {
             activated_latency: 0,
             active: false,
             gui_open: false,
-            has_view: false,
+            has_view: std::cell::Cell::new(None),
             preset_roots: None,
             _module: Arc::clone(module),
         };
@@ -306,10 +308,6 @@ impl Vst3Instance {
             .map_err(BackendError::Unsupported)?;
         instance.hub.set_steps(read.steps.clone());
         instance.read = read;
-        instance.has_view = instance
-            .controller
-            .as_ref()
-            .is_some_and(|c| make_view(c).is_some());
         Ok(instance)
     }
 
@@ -732,8 +730,11 @@ impl HostInstance for Vst3Instance {
             .controller
             .as_ref()
             .ok_or_else(|| BackendError::Unsupported("the plugin has no editor".to_string()))?;
-        let view = make_view(controller)
-            .ok_or_else(|| BackendError::Unsupported("the plugin has no editor".to_string()))?;
+        let view = make_view(controller);
+        // Whatever the plugin answered is what `has_gui` says from now on.
+        self.has_view.set(Some(view.is_some()));
+        let view =
+            view.ok_or_else(|| BackendError::Unsupported("the plugin has no editor".to_string()))?;
         let (kind, handle): (&[u8], *mut c_void) = match parent {
             NativeParent::Win32(hwnd) => (b"HWND\0", hwnd as *mut c_void),
             NativeParent::Cocoa(v) => (b"NSView\0", v as *mut c_void),
@@ -830,7 +831,17 @@ impl HostInstance for Vst3Instance {
     }
 
     fn has_gui(&self) -> bool {
-        self.has_view
+        // The probe builds a view and drops it again: done once, when the answer is first wanted
+        // (a scan never wants it).
+        if let Some(known) = self.has_view.get() {
+            return known;
+        }
+        let known = self
+            .controller
+            .as_ref()
+            .is_some_and(|c| make_view(c).is_some());
+        self.has_view.set(Some(known));
+        known
     }
 
     fn take_layout_changed(&mut self) -> bool {

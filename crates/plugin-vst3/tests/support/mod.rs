@@ -75,6 +75,7 @@ pub mod probe {
     pub const CTRL_SET_PARAMS: u32 = 45;
     pub const LAST_SET_ID: u32 = 46;
     pub const LAST_SET_VALUE: u32 = 47;
+    pub const VIEW_ASKS: u32 = 52;
 }
 
 /// Commands of the VST3 test library's `atomik_test_command`.
@@ -130,6 +131,8 @@ pub mod counter {
     pub const SEQ_TERMINATE_COMPONENT: u32 = 21;
     /// Messages sent from inside `disconnect` or `terminate` that the peer accepted.
     pub const TEARDOWN_MESSAGES_DELIVERED: u32 = 22;
+    /// `createView` calls on any controller of the library.
+    pub const VIEW_ASKS: u32 = 23;
 }
 
 // SAFETY: these are the signatures of the exported test hooks.
