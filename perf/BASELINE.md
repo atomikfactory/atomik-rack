@@ -593,10 +593,11 @@ slowest process, and the ten processes share one machine.
 
 ## Idle instruments and shortcuts in the FM synth and the organ (2026-11-23)
 
-`cargo bench -p atomik-devices --bench process -- <device>` on the machine above, release profile with debug info,
-nothing else running: median of 256 batches, two runs each. The `idle` rows are the same rig without notes (every input
-cabled with noise); the other rows hold a three-note chord. **before** is the tree without these changes, **after** the
-tree with them. A row that did not move says so.
+`cargo bench -p atomik-devices --bench process -- <device>` on the machine above, release profile with debug info:
+median of 256 batches, two runs each. The `idle` rows are the same rig without notes (every input cabled with
+noise); the other rows hold a three-note chord. **before** is the tree without the change of the row, **after** the
+tree with it. A row that did not move says so. The machine was quiet for every row but the last, which was taken
+later with other software running: compare the two sides of a row, not one row with another.
 
 | row | before, runs | after, runs |
 |---|---|---|
@@ -611,10 +612,9 @@ tree with them. A row that did not move says so.
 | fm-synth, chord, key scale of zero without `exp2` (on top of the row above) | 8.215 ms, 8.367 ms | 8.269 ms, 8.511 ms (did not move) |
 
 The LFO that an idle instrument no longer evaluates is 64 sine calls a batch, about 0.3 us on this machine: 85 to
-100 us of the 256 batches, which is a quarter of an idle sampler or granular synth and a tenth of the other three. What
-remains of an idle poly, FM and wavetable synth is outside this item (the output stage runs for every sample). The
-organ's scanner was three quarters of an idle organ. In the default FM patch two of the four operators have level 0, and
-the sine series of an operator is the largest part of a voice sample: skipping the silent ones takes 38 % off the chord. The key scale shortcut is four `exp2` calls per voice every 16 samples against four sine series
-a sample: it is below what the bench resolves, and it is the last row of the table above only because the machine
-was busier for it (the two rows around it were taken with the other software on the machine running: compare a row only
-with the row next to it, which is why before and after were taken one after the other).
+100 us of the 256 batches, a quarter of an idle sampler or granular synth and a tenth of the other three. What
+remains of an idle poly, FM and wavetable synth is not touched here (their output stage runs for every sample).
+The organ's scanner was three quarters of an idle organ. In the default FM patch two of the four operators have
+level 0, and the sine series of an operator is the largest part of a voice sample: skipping the silent ones takes
+38 % off the chord. The key scale shortcut saves four `exp2` calls per voice every 16 samples, against four sine
+series per sample: it is below what the bench resolves.
