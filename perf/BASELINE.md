@@ -618,3 +618,43 @@ The organ's scanner was three quarters of an idle organ. In the default FM patch
 level 0, and the sine series of an operator is the largest part of a voice sample: skipping the silent ones takes
 38 % off the chord. The key scale shortcut saves four `exp2` calls per voice every 16 samples, against four sine
 series per sample: it is below what the bench resolves.
+
+## The oversampler filters a block at a time (2026-11-23)
+
+The halfband stages of `atomik_dsp::oversample::Oversampler` used to run sample by sample, the stages of a 4x or 8x
+chain interleaved, each output reading its taps through an index table and a masked ring buffer. They now run a
+stage at a time over a linear history, the taps as the outer loop and the samples as the inner one, so a tap is a
+multiply-add over contiguous slices that the compiler vectorises. Every output receives the same additions in the
+same order as before: no output bit changes (the tests compare against the old form bit for bit). Release profile with
+debug info, same machine as above, two runs of each side; **before** is `main`, **after** the branch. The `dsp` rows
+are `cargo bench -p atomik-dsp --bench blocks` (median of 21 runs of 4096 samples fed in 64-sample batches, a hard
+clip between up and down; `up` is the up half alone at 4x, which is how the true-peak detectors use it), the `device`
+rows `cargo bench -p atomik-devices --bench process` (median of 256 batches).
+
+| row | before, runs | after, runs |
+|---|---|---|
+| dsp 2x round trip | 161.6 us, 175.9 us | 53.0 us, 55.6 us |
+| dsp 4x round trip | 291.5 us, 296.5 us | 88.1 us, 89.1 us |
+| dsp 8x round trip | 580.4 us, 501.0 us | 133.8 us, 169.7 us |
+| dsp 4x up | 161.5 us, 166.4 us | 41.0 us, 42.5 us |
+| device distortion | 3.032 ms, 2.919 ms | 1.606 ms, 1.425 ms |
+| device saturation | 2.535 ms, 2.967 ms | 1.945 ms, 1.979 ms |
+| device clipper | 1.878 ms, 1.834 ms | 1.302 ms, 1.332 ms |
+| device mastering | 6.098 ms, 7.526 ms | 4.598 ms, 4.938 ms |
+| device loudness-meter | 1.770 ms, 1.721 ms | 992 us, 874 us |
+| device phase-meter | 1.690 ms, 1.679 ms | 1.048 ms, 1.008 ms |
+| device spectrum | 1.637 ms, 1.645 ms | 962 us, 895 us |
+| device guitar-amp | 11.972 ms, 11.286 ms | 11.498 ms, 11.508 ms (did not move) |
+| device character | 6.074 ms, 6.475 ms | 6.251 ms, 6.218 ms (did not move) |
+| device fm-synth, chord | 7.265 ms, 7.821 ms | 8.686 ms, 8.629 ms (did not move, see below) |
+
+The primitive is 3.0 to 3.9 times faster (the 8x second run of the after column is an outlier: the other four runs
+of that row lie between 133 and 142 us). The devices that run a plain curve between the stages gain 23 to 51 %
+(saturation the least, distortion the most), the three meters that hold a true-peak detector 38 to 49 % and the
+mastering device 25 to 34 % (its limiter is one of several stages). The guitar amp, where
+the clip stages at four times the rate are most of the cost, and the character device did not move. The FM synth
+bench patch has its oversampling off (the default), so the row cannot move; a third pair of runs taken straight
+after the first two with the old code again gave 8.667 ms and 1.517 ms idle for it (the machine was busier than
+for the first runs): compare the two sides of a row, not one row with another. The block form keeps about 10.6 KB of
+buffers per oversampler built for 64-sample batches (2.0 KB before): passes of at most 64 base-rate samples keep the
+working space the same for any `max_block`, and 32-sample passes measured about 15 % slower.

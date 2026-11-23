@@ -1930,7 +1930,10 @@ Mono 1x / 2x / 4x / 8x polyphase halfband oversampler, shared with the planned l
 halfband stages (centre tap 0.5, Kaiser-windowed sinc with the coefficients computed in `new` from
 IEEE `+ − × ÷ sqrt` only, so they are identical on every platform): stage 1 (base ⇄ 2x) 59 taps,
 stage 2 (2x ⇄ 4x) 23 taps padded to 25 so the delay is a whole number of base samples.
-Allocation-free after `Oversampler::new(max_block)`. Latency (up and down, base samples): 2x **29**,
+Allocation-free after `Oversampler::new(max_block)`. A block goes through one stage at a time, in passes of at
+most 64 base-rate samples over a linear history, with the taps as the outer loop; every output gets the additions of
+the same products in the same order as a sample-by-sample filter, so the bits do not depend on how the stream is cut
+into blocks. Latency (up and down, base samples): 2x **29**,
 4x **35**, 8x **37** (a third stage, 4x to 8x, of 15 taps padded to 17: two base samples), 1x 0
 (measured as the impulse delay; the response is symmetric). Measured: passband
 deviation below 0.0005 dB (2x) and 0.0011 dB up to 0.4 fs; image and alias rejection at least 90 dB

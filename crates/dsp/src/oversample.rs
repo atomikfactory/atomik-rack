@@ -22,6 +22,16 @@
 //! * **4x** cascades stage 1 then stage 2 going up, and stage 2 then stage 1 coming down.
 //! * **8x** adds stage 3 after stage 2 going up and before it coming down.
 //!
+//! # How the sums run
+//!
+//! A block goes through one stage at a time, in passes of at most 64 base-rate samples, over a
+//! linear history (the last 32 samples of the stage, then the block). The taps are the outer loop
+//! and the samples of the pass the inner one, so a tap is one multiply-add over contiguous
+//! slices, which the compiler turns into vector code. Each output still receives the additions
+//! of the same products in the same tap order, starting from `+0.0`, as the sample-by-sample
+//! form did (the tests compare against that form bit for bit), so the result does not depend
+//! on how the caller cuts the stream into blocks.
+//!
 //! # Latency (base-rate samples, up + down)
 //!
 //! A stage with filter centre delay `c` (high-rate samples) delays a round trip by `c` samples of
@@ -138,24 +148,78 @@ fn halfband_taps(kmax: usize, c: usize, beta: f64) -> [f64; 2 * MAX_C + 1] {
     h
 }
 
-/// Polyphase interpolator by 2 (input history, two output phases).
+/// Samples of history kept in front of every stage's block: at least the largest tap delay (29).
+const HIST: usize = 32;
+/// Base-rate samples a pass handles at most. A longer block is cut into passes of this size, so
+/// the working buffers do not grow with `max_block` and stay in the first-level cache.
+const CHUNK: usize = 64;
+
+// How the block form keeps the bits of the per-sample form it replaced.
+//
+// Every output sample is `acc = 0.0; acc += coef[t] * x[..]` for the taps `t` in the order of
+// `idx` / `coef`. Here the taps are the outer loop and the samples of the block the inner one:
+// the running sum of every output starts at `+0.0` and each tap, the first included, adds its
+// `coef * x` to it. An output therefore receives exactly the same additions of the same products
+// in the same tap order, and the outputs do not depend on each other. Splitting a block anywhere
+// (the passes of `CHUNK`, the calls of the caller) cannot change a bit, because the history in
+// front of a block is the same samples the ring held. Nothing is fused or reassociated, and no
+// sum is taken in another order.
+
+/// `out[j] += c * src[j]` for every `j`: one tap over a block (equal lengths, so no bounds check
+/// is left in the loop and it vectorises; each lane is the scalar `+` of a scalar `*`).
+#[inline(always)]
+fn add_scaled(out: &mut [f32], c: f32, src: &[f32]) {
+    debug_assert_eq!(out.len(), src.len());
+    for (o, &s) in out.iter_mut().zip(src) {
+        *o += c * s;
+    }
+}
+
+/// Outputs a tile of `fir` keeps in registers while it runs through the taps.
+const TILE: usize = 16;
+
+/// `out[j] = 0.0 + c0 * src0[j] + c1 * src1[j] + ...` over the taps `(c, src)` in the order the
+/// iterator gives them, every term added in turn to a running sum that starts at `+0.0`.
+#[inline(always)]
+fn fir<'a, I>(out: &mut [f32], taps: I)
+where
+    I: Iterator<Item = (f32, &'a [f32])> + Clone,
+{
+    let main = out.len() - out.len() % TILE;
+    for (j, tile) in out[..main].as_chunks_mut::<TILE>().0.iter_mut().enumerate() {
+        let mut acc = [0.0f32; TILE];
+        for (c, src) in taps.clone() {
+            for (a, &v) in acc.iter_mut().zip(&src[j * TILE..(j + 1) * TILE]) {
+                *a += c * v;
+            }
+        }
+        *tile = acc;
+    }
+    let tail = &mut out[main..];
+    tail.fill(0.0);
+    for (c, src) in taps {
+        add_scaled(tail, c, &src[main..]);
+    }
+}
+
+/// Polyphase interpolator by 2: the input history is the first `HIST` samples of `lin`, the
+/// block follows it.
 #[derive(Debug, Clone)]
 struct HalfbandUp {
-    hist: [f32; 32],
-    pos: usize,
     n: [usize; 2],
     idx: [[u8; MAX_TAPS]; 2],
     coef: [[f32; MAX_TAPS]; 2],
+    lin: Vec<f32>,
 }
 
 impl HalfbandUp {
-    fn new(h: &[f64; 2 * MAX_C + 1], c: usize) -> Self {
+    /// A stage for blocks of up to `cap` input samples.
+    fn new(h: &[f64; 2 * MAX_C + 1], c: usize, cap: usize) -> Self {
         let mut s = Self {
-            hist: [0.0; 32],
-            pos: 0,
             n: [0; 2],
             idx: [[0; MAX_TAPS]; 2],
             coef: [[0.0; MAX_TAPS]; 2],
+            lin: vec![0.0; HIST + cap],
         };
         for (k, &v) in h.iter().enumerate().take(2 * c + 1) {
             if v != 0.0 {
@@ -171,45 +235,58 @@ impl HalfbandUp {
     }
 
     fn reset(&mut self) {
-        self.hist = [0.0; 32];
-        self.pos = 0;
+        self.lin[..HIST].fill(0.0);
     }
 
-    #[inline]
-    fn process(&mut self, x: f32) -> [f32; 2] {
-        self.pos = (self.pos + 1) & 31;
-        self.hist[self.pos] = x;
-        let mut z = [0.0f32; 2];
-        for (q, out) in z.iter_mut().enumerate() {
-            let mut acc = 0.0f32;
-            for t in 0..self.n[q] {
-                let i = usize::from(self.idx[q][t]);
-                acc += self.coef[q][t] * self.hist[(self.pos + 32 - i) & 31];
-            }
-            *out = acc;
+    /// The `m` input samples of the pass are in `lin[HIST..HIST + m]`. Writes the two output
+    /// phases interleaved to `dst[..2 * m]`, using `scratch[..2 * m]`, and keeps the last `HIST`
+    /// samples for the next pass.
+    fn run(&mut self, m: usize, scratch: &mut [f32], dst: &mut [f32]) {
+        let (p0, rest) = scratch.split_at_mut(m);
+        let phases = [p0, &mut rest[..m]];
+        for (q, out) in phases.into_iter().enumerate() {
+            let lin = &self.lin;
+            let taps = self.idx[q].iter().zip(&self.coef[q]).take(self.n[q]);
+            fir(
+                out,
+                taps.map(|(&i, &c)| (c, &lin[HIST - usize::from(i)..][..m])),
+            );
         }
-        z
+        let (p0, p1) = (&scratch[..m], &scratch[m..2 * m]);
+        for ((d, &a), &b) in dst[..2 * m]
+            .as_chunks_mut::<2>()
+            .0
+            .iter_mut()
+            .zip(p0)
+            .zip(p1)
+        {
+            d[0] = a;
+            d[1] = b;
+        }
+        self.lin.copy_within(m..m + HIST, 0);
     }
 }
 
-/// Polyphase decimator by 2.
+/// Polyphase decimator by 2: the two input phases (the even samples `a`, the odd samples `b`)
+/// each keep `HIST` samples of history in front of the block.
 #[derive(Debug, Clone)]
 struct HalfbandDown {
-    hist: [f32; 64],
-    pos: usize,
     n: usize,
     idx: [u8; MAX_TAPS],
     coef: [f32; MAX_TAPS],
+    lin_a: Vec<f32>,
+    lin_b: Vec<f32>,
 }
 
 impl HalfbandDown {
-    fn new(h: &[f64; 2 * MAX_C + 1], c: usize) -> Self {
+    /// A stage for blocks of up to `cap` output samples.
+    fn new(h: &[f64; 2 * MAX_C + 1], c: usize, cap: usize) -> Self {
         let mut s = Self {
-            hist: [0.0; 64],
-            pos: 0,
             n: 0,
             idx: [0; MAX_TAPS],
             coef: [0.0; MAX_TAPS],
+            lin_a: vec![0.0; HIST + cap],
+            lin_b: vec![0.0; HIST + cap],
         };
         for (k, &v) in h.iter().enumerate().take(2 * c + 1) {
             if v != 0.0 {
@@ -222,26 +299,41 @@ impl HalfbandDown {
     }
 
     fn reset(&mut self) {
-        self.hist = [0.0; 64];
-        self.pos = 0;
+        self.lin_a[..HIST].fill(0.0);
+        self.lin_b[..HIST].fill(0.0);
     }
 
-    /// Consumes two high-rate samples (`a` first, the even phase) and returns one output.
-    #[inline]
-    fn process(&mut self, a: f32, b: f32) -> f32 {
-        self.pos = (self.pos + 1) & 63;
-        self.hist[self.pos] = a;
-        let mut acc = 0.0f32;
-        for t in 0..self.n {
-            acc += self.coef[t] * self.hist[(self.pos + 64 - usize::from(self.idx[t])) & 63];
+    /// Filters `src` (`2 * out.len()` high-rate samples, the even one of each pair first) into
+    /// `out`. Output `j` has the even sample `a_j` as its newest: tap `k` reads the sample `k`
+    /// places back, which is `a[j - k / 2]` for an even `k` and `b[j - (k + 1) / 2]` for an odd
+    /// one (the centre tap of the padded stages is the only one that changes phase, and the
+    /// taps are visited in their own order).
+    fn run(&mut self, src: &[f32], out: &mut [f32]) {
+        let m = out.len();
+        debug_assert_eq!(src.len(), 2 * m);
+        let (a, b) = (
+            &mut self.lin_a[HIST..HIST + m],
+            &mut self.lin_b[HIST..HIST + m],
+        );
+        for ((x, y), pair) in a.iter_mut().zip(b.iter_mut()).zip(src.as_chunks::<2>().0) {
+            *x = pair[0];
+            *y = pair[1];
         }
-        self.pos = (self.pos + 1) & 63;
-        self.hist[self.pos] = b;
-        acc
+        let taps = self.idx.iter().zip(&self.coef).take(self.n);
+        fir(
+            out,
+            taps.map(|(&k, &c)| {
+                let k = usize::from(k);
+                let lin = if k & 1 == 0 { &self.lin_a } else { &self.lin_b };
+                (c, &lin[HIST - ((k + 1) >> 1)..][..m])
+            }),
+        );
+        self.lin_a.copy_within(m..m + HIST, 0);
+        self.lin_b.copy_within(m..m + HIST, 0);
     }
 }
 
-/// Mono 1x/2x/4x oversampler (see the module docs).
+/// Mono 1x/2x/4x/8x oversampler (see the module docs).
 #[derive(Debug, Clone)]
 pub struct Oversampler {
     factor: OversampleFactor,
@@ -253,6 +345,8 @@ pub struct Oversampler {
     down3: HalfbandDown,
     max_block: usize,
     buf: Vec<f32>,
+    /// Working space of a pass: the phases of an up stage, the output of a down stage.
+    scratch: Vec<f32>,
 }
 
 impl Oversampler {
@@ -260,19 +354,21 @@ impl Oversampler {
     /// (non-real-time). The default factor is 4x.
     pub fn new(max_block: usize) -> Self {
         let max_block = max_block.max(1);
+        let cap = max_block.min(CHUNK);
         let h1 = halfband_taps(29, 29, 9.0);
         let h2 = halfband_taps(11, 12, 9.0);
         let h3 = halfband_taps(7, 8, 9.0);
         Self {
             factor: OversampleFactor::X4,
-            up1: HalfbandUp::new(&h1, 29),
-            up2: HalfbandUp::new(&h2, 12),
-            up3: HalfbandUp::new(&h3, 8),
-            down1: HalfbandDown::new(&h1, 29),
-            down2: HalfbandDown::new(&h2, 12),
-            down3: HalfbandDown::new(&h3, 8),
+            up1: HalfbandUp::new(&h1, 29, cap),
+            up2: HalfbandUp::new(&h2, 12, 2 * cap),
+            up3: HalfbandUp::new(&h3, 8, 4 * cap),
+            down1: HalfbandDown::new(&h1, 29, cap),
+            down2: HalfbandDown::new(&h2, 12, 2 * cap),
+            down3: HalfbandDown::new(&h3, 8, 4 * cap),
             max_block,
             buf: vec![0.0; max_block * 8],
+            scratch: vec![0.0; cap * 8],
         }
     }
 
@@ -315,42 +411,40 @@ impl Oversampler {
     /// processing. Call [`Oversampler::downsample`] with an output of the same length afterwards.
     pub fn upsample(&mut self, input: &[f32]) -> &mut [f32] {
         let n = input.len().min(self.max_block);
-        match self.factor {
-            OversampleFactor::X1 => {
-                self.buf[..n].copy_from_slice(&input[..n]);
-                &mut self.buf[..n]
-            }
-            OversampleFactor::X2 => {
-                for (i, &x) in input[..n].iter().enumerate() {
-                    let z = self.up1.process(x);
-                    self.buf[2 * i] = z[0];
-                    self.buf[2 * i + 1] = z[1];
+        let ratio = self.factor.ratio();
+        let Self {
+            factor,
+            up1,
+            up2,
+            up3,
+            buf,
+            scratch,
+            ..
+        } = self;
+        if *factor == OversampleFactor::X1 {
+            buf[..n].copy_from_slice(&input[..n]);
+            return &mut buf[..n];
+        }
+        for (x, dst) in input[..n]
+            .chunks(CHUNK)
+            .zip(buf[..n * ratio].chunks_mut(CHUNK * ratio))
+        {
+            let m = x.len();
+            up1.lin[HIST..HIST + m].copy_from_slice(x);
+            match *factor {
+                OversampleFactor::X1 | OversampleFactor::X2 => up1.run(m, scratch, dst),
+                OversampleFactor::X4 => {
+                    up1.run(m, scratch, &mut up2.lin[HIST..HIST + 2 * m]);
+                    up2.run(2 * m, scratch, dst);
                 }
-                &mut self.buf[..2 * n]
-            }
-            OversampleFactor::X4 => {
-                for (i, &x) in input[..n].iter().enumerate() {
-                    let z = self.up1.process(x);
-                    let a = self.up2.process(z[0]);
-                    let b = self.up2.process(z[1]);
-                    self.buf[4 * i..4 * i + 4].copy_from_slice(&[a[0], a[1], b[0], b[1]]);
+                OversampleFactor::X8 => {
+                    up1.run(m, scratch, &mut up2.lin[HIST..HIST + 2 * m]);
+                    up2.run(2 * m, scratch, &mut up3.lin[HIST..HIST + 4 * m]);
+                    up3.run(4 * m, scratch, dst);
                 }
-                &mut self.buf[..4 * n]
-            }
-            OversampleFactor::X8 => {
-                for (i, &x) in input[..n].iter().enumerate() {
-                    let z = self.up1.process(x);
-                    let a = self.up2.process(z[0]);
-                    let b = self.up2.process(z[1]);
-                    for (j, q) in [a[0], a[1], b[0], b[1]].into_iter().enumerate() {
-                        let w = self.up3.process(q);
-                        self.buf[8 * i + 2 * j] = w[0];
-                        self.buf[8 * i + 2 * j + 1] = w[1];
-                    }
-                }
-                &mut self.buf[..8 * n]
             }
         }
+        &mut buf[..n * ratio]
     }
 
     /// Filters and decimates the internal buffer (as left by the caller after
@@ -358,31 +452,37 @@ impl Oversampler {
     /// the matching `upsample` call.
     pub fn downsample(&mut self, output: &mut [f32]) {
         let n = output.len().min(self.max_block);
-        match self.factor {
-            OversampleFactor::X1 => output[..n].copy_from_slice(&self.buf[..n]),
-            OversampleFactor::X2 => {
-                for (i, y) in output[..n].iter_mut().enumerate() {
-                    *y = self.down1.process(self.buf[2 * i], self.buf[2 * i + 1]);
+        let ratio = self.factor.ratio();
+        let Self {
+            factor,
+            down1,
+            down2,
+            down3,
+            buf,
+            scratch,
+            ..
+        } = self;
+        if *factor == OversampleFactor::X1 {
+            output[..n].copy_from_slice(&buf[..n]);
+            return;
+        }
+        let half = scratch.len() / 2;
+        let (s4, s2) = scratch.split_at_mut(half);
+        for (y, src) in output[..n]
+            .chunks_mut(CHUNK)
+            .zip(buf[..n * ratio].chunks(CHUNK * ratio))
+        {
+            let m = y.len();
+            match *factor {
+                OversampleFactor::X1 | OversampleFactor::X2 => down1.run(src, y),
+                OversampleFactor::X4 => {
+                    down2.run(src, &mut s2[..2 * m]);
+                    down1.run(&s2[..2 * m], y);
                 }
-            }
-            OversampleFactor::X4 => {
-                for (i, y) in output[..n].iter_mut().enumerate() {
-                    let b = &self.buf[4 * i..4 * i + 4];
-                    let a0 = self.down2.process(b[0], b[1]);
-                    let a1 = self.down2.process(b[2], b[3]);
-                    *y = self.down1.process(a0, a1);
-                }
-            }
-            OversampleFactor::X8 => {
-                for (i, y) in output[..n].iter_mut().enumerate() {
-                    let b = &self.buf[8 * i..8 * i + 8];
-                    let m0 = self.down3.process(b[0], b[1]);
-                    let m1 = self.down3.process(b[2], b[3]);
-                    let m2 = self.down3.process(b[4], b[5]);
-                    let m3 = self.down3.process(b[6], b[7]);
-                    let a0 = self.down2.process(m0, m1);
-                    let a1 = self.down2.process(m2, m3);
-                    *y = self.down1.process(a0, a1);
+                OversampleFactor::X8 => {
+                    down3.run(src, &mut s4[..4 * m]);
+                    down2.run(&s4[..4 * m], &mut s2[..2 * m]);
+                    down1.run(&s2[..2 * m], y);
                 }
             }
         }
@@ -658,5 +758,606 @@ mod tests {
         a.set_factor(OversampleFactor::X4);
         let yd = run(&mut a, &x);
         assert!(ya.iter().zip(&yd).all(|(p, q)| p.to_bits() == q.to_bits()));
+    }
+
+    // ---- The per-sample form the block form replaced, kept as the reference ----
+
+    /// The oversampler as it was before the block form: every sample through a ring buffer, the
+    /// stages interleaved sample by sample. Its arithmetic is unchanged; the block form has to
+    /// give the same bits for every input, factor and block length.
+    mod reference {
+        use super::{MAX_C, MAX_TAPS, OversampleFactor, halfband_taps};
+
+        #[derive(Clone)]
+        struct Up {
+            hist: [f32; 32],
+            pos: usize,
+            n: [usize; 2],
+            idx: [[u8; MAX_TAPS]; 2],
+            coef: [[f32; MAX_TAPS]; 2],
+        }
+
+        impl Up {
+            fn new(h: &[f64; 2 * MAX_C + 1], c: usize) -> Self {
+                let mut s = Self {
+                    hist: [0.0; 32],
+                    pos: 0,
+                    n: [0; 2],
+                    idx: [[0; MAX_TAPS]; 2],
+                    coef: [[0.0; MAX_TAPS]; 2],
+                };
+                for (k, &v) in h.iter().enumerate().take(2 * c + 1) {
+                    if v != 0.0 {
+                        let q = k % 2;
+                        let i = (k - q) / 2;
+                        let t = s.n[q];
+                        s.idx[q][t] = i as u8;
+                        s.coef[q][t] = (2.0 * v) as f32;
+                        s.n[q] += 1;
+                    }
+                }
+                s
+            }
+
+            fn reset(&mut self) {
+                self.hist = [0.0; 32];
+                self.pos = 0;
+            }
+
+            fn process(&mut self, x: f32) -> [f32; 2] {
+                self.pos = (self.pos + 1) & 31;
+                self.hist[self.pos] = x;
+                let mut z = [0.0f32; 2];
+                for (q, out) in z.iter_mut().enumerate() {
+                    let mut acc = 0.0f32;
+                    for t in 0..self.n[q] {
+                        let i = usize::from(self.idx[q][t]);
+                        acc += self.coef[q][t] * self.hist[(self.pos + 32 - i) & 31];
+                    }
+                    *out = acc;
+                }
+                z
+            }
+        }
+
+        #[derive(Clone)]
+        struct Down {
+            hist: [f32; 64],
+            pos: usize,
+            n: usize,
+            idx: [u8; MAX_TAPS],
+            coef: [f32; MAX_TAPS],
+        }
+
+        impl Down {
+            fn new(h: &[f64; 2 * MAX_C + 1], c: usize) -> Self {
+                let mut s = Self {
+                    hist: [0.0; 64],
+                    pos: 0,
+                    n: 0,
+                    idx: [0; MAX_TAPS],
+                    coef: [0.0; MAX_TAPS],
+                };
+                for (k, &v) in h.iter().enumerate().take(2 * c + 1) {
+                    if v != 0.0 {
+                        s.idx[s.n] = k as u8;
+                        s.coef[s.n] = v as f32;
+                        s.n += 1;
+                    }
+                }
+                s
+            }
+
+            fn reset(&mut self) {
+                self.hist = [0.0; 64];
+                self.pos = 0;
+            }
+
+            fn process(&mut self, a: f32, b: f32) -> f32 {
+                self.pos = (self.pos + 1) & 63;
+                self.hist[self.pos] = a;
+                let mut acc = 0.0f32;
+                for t in 0..self.n {
+                    acc +=
+                        self.coef[t] * self.hist[(self.pos + 64 - usize::from(self.idx[t])) & 63];
+                }
+                self.pos = (self.pos + 1) & 63;
+                self.hist[self.pos] = b;
+                acc
+            }
+        }
+
+        #[derive(Clone)]
+        pub struct Oversampler {
+            factor: OversampleFactor,
+            up1: Up,
+            up2: Up,
+            up3: Up,
+            down1: Down,
+            down2: Down,
+            down3: Down,
+            max_block: usize,
+            buf: Vec<f32>,
+        }
+
+        impl Oversampler {
+            pub fn new(max_block: usize) -> Self {
+                let max_block = max_block.max(1);
+                let h1 = halfband_taps(29, 29, 9.0);
+                let h2 = halfband_taps(11, 12, 9.0);
+                let h3 = halfband_taps(7, 8, 9.0);
+                Self {
+                    factor: OversampleFactor::X4,
+                    up1: Up::new(&h1, 29),
+                    up2: Up::new(&h2, 12),
+                    up3: Up::new(&h3, 8),
+                    down1: Down::new(&h1, 29),
+                    down2: Down::new(&h2, 12),
+                    down3: Down::new(&h3, 8),
+                    max_block,
+                    buf: vec![0.0; max_block * 8],
+                }
+            }
+
+            pub fn set_factor(&mut self, factor: OversampleFactor) {
+                if factor != self.factor {
+                    self.factor = factor;
+                    self.reset();
+                }
+            }
+
+            pub fn reset(&mut self) {
+                self.up1.reset();
+                self.up2.reset();
+                self.up3.reset();
+                self.down1.reset();
+                self.down2.reset();
+                self.down3.reset();
+                self.buf.fill(0.0);
+            }
+
+            pub fn upsample(&mut self, input: &[f32]) -> &mut [f32] {
+                let n = input.len().min(self.max_block);
+                match self.factor {
+                    OversampleFactor::X1 => {
+                        self.buf[..n].copy_from_slice(&input[..n]);
+                        &mut self.buf[..n]
+                    }
+                    OversampleFactor::X2 => {
+                        for (i, &x) in input[..n].iter().enumerate() {
+                            let z = self.up1.process(x);
+                            self.buf[2 * i] = z[0];
+                            self.buf[2 * i + 1] = z[1];
+                        }
+                        &mut self.buf[..2 * n]
+                    }
+                    OversampleFactor::X4 => {
+                        for (i, &x) in input[..n].iter().enumerate() {
+                            let z = self.up1.process(x);
+                            let a = self.up2.process(z[0]);
+                            let b = self.up2.process(z[1]);
+                            self.buf[4 * i..4 * i + 4].copy_from_slice(&[a[0], a[1], b[0], b[1]]);
+                        }
+                        &mut self.buf[..4 * n]
+                    }
+                    OversampleFactor::X8 => {
+                        for (i, &x) in input[..n].iter().enumerate() {
+                            let z = self.up1.process(x);
+                            let a = self.up2.process(z[0]);
+                            let b = self.up2.process(z[1]);
+                            for (j, q) in [a[0], a[1], b[0], b[1]].into_iter().enumerate() {
+                                let w = self.up3.process(q);
+                                self.buf[8 * i + 2 * j] = w[0];
+                                self.buf[8 * i + 2 * j + 1] = w[1];
+                            }
+                        }
+                        &mut self.buf[..8 * n]
+                    }
+                }
+            }
+
+            pub fn downsample(&mut self, output: &mut [f32]) {
+                let n = output.len().min(self.max_block);
+                match self.factor {
+                    OversampleFactor::X1 => output[..n].copy_from_slice(&self.buf[..n]),
+                    OversampleFactor::X2 => {
+                        for (i, y) in output[..n].iter_mut().enumerate() {
+                            *y = self.down1.process(self.buf[2 * i], self.buf[2 * i + 1]);
+                        }
+                    }
+                    OversampleFactor::X4 => {
+                        for (i, y) in output[..n].iter_mut().enumerate() {
+                            let b = &self.buf[4 * i..4 * i + 4];
+                            let a0 = self.down2.process(b[0], b[1]);
+                            let a1 = self.down2.process(b[2], b[3]);
+                            *y = self.down1.process(a0, a1);
+                        }
+                    }
+                    OversampleFactor::X8 => {
+                        for (i, y) in output[..n].iter_mut().enumerate() {
+                            let b = &self.buf[8 * i..8 * i + 8];
+                            let m0 = self.down3.process(b[0], b[1]);
+                            let m1 = self.down3.process(b[2], b[3]);
+                            let m2 = self.down3.process(b[4], b[5]);
+                            let m3 = self.down3.process(b[6], b[7]);
+                            let a0 = self.down2.process(m0, m1);
+                            let a1 = self.down2.process(m2, m3);
+                            *y = self.down1.process(a0, a1);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // ---- Bit-for-bit comparison against the reference ----
+
+    /// A tiny deterministic generator (no dependency, the same on every platform).
+    struct Rng(u32);
+
+    impl Rng {
+        fn next(&mut self) -> u32 {
+            self.0 = self.0.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            self.0 >> 8
+        }
+
+        /// In `-1.0..1.0`.
+        fn unit(&mut self) -> f32 {
+            self.next() as f32 / (1u32 << 23) as f32 - 1.0
+        }
+
+        fn below(&mut self, n: usize) -> usize {
+            self.next() as usize % n
+        }
+    }
+
+    /// Samples per segment of the test stream; the stream holds `SEGMENTS` of them.
+    const SEG: usize = 700;
+    const SEGMENTS: usize = 8;
+
+    /// A deterministic stream of `SEGMENTS * SEG * scale` samples: noise; zeros between bursts,
+    /// with `-0.0` and exact zeros among them; impulses and short `-0.0` runs; values near
+    /// `f32::MAX / 64`; subnormals; a mix of everything; long runs of `-0.0`; noise again.
+    fn stream(seed: u32, scale: usize) -> Vec<f32> {
+        let mut r = Rng(seed);
+        let mut out = Vec::with_capacity(SEGMENTS * SEG * scale);
+        for kind in 0..SEGMENTS {
+            let mut burst_left = 0usize;
+            for i in 0..SEG * scale {
+                let v = match kind {
+                    0 => 0.9 * r.unit(),
+                    1 => {
+                        // Runs of zeros (both signs) between bursts of noise.
+                        if burst_left == 0 && r.below(150) == 0 {
+                            burst_left = 5 + r.below(60);
+                        }
+                        if burst_left > 0 {
+                            burst_left -= 1;
+                            0.5 * r.unit()
+                        } else if r.below(3) == 0 {
+                            -0.0
+                        } else {
+                            0.0
+                        }
+                    }
+                    2 => match i % 97 {
+                        0 => 1.0,
+                        1 => -1.0,
+                        50..=60 => -0.0,
+                        _ => 0.0,
+                    },
+                    3 => {
+                        if r.below(4) == 0 {
+                            0.0
+                        } else {
+                            r.unit() * (f32::MAX / 64.0)
+                        }
+                    }
+                    4 => match r.below(5) {
+                        0 => 0.0,
+                        1 => f32::from_bits(1 + r.next() % 0x7f_ffff),
+                        2 => -f32::from_bits(1 + r.next() % 0x7f_ffff),
+                        3 => r.unit() * 1.0e-30,
+                        _ => f32::MIN_POSITIVE * r.unit(),
+                    },
+                    5 => match r.below(6) {
+                        0 => 0.0,
+                        1 => -0.0,
+                        2 => r.unit() * (f32::MAX / 64.0),
+                        3 => f32::from_bits(r.next() % 0x7f_ffff),
+                        _ => r.unit(),
+                    },
+                    6 => {
+                        // Long runs of `-0.0` (every product is `-0.0`) between single samples.
+                        if i % 300 == 299 { 0.25 } else { -0.0 }
+                    }
+                    _ => 0.3 * r.unit(),
+                };
+                out.push(v);
+            }
+        }
+        out
+    }
+
+    /// Block lengths for a stream of at least `total` samples at a given `max_block`: 0, 1, 2, 3,
+    /// every length up to 64 (and up to `max_block`), then a seeded run of random lengths that
+    /// reach past `max_block` now and then (the extra is ignored).
+    fn block_lengths(max_block: usize, total: usize, seed: u32) -> Vec<usize> {
+        let mut r = Rng(seed);
+        let mut lens = vec![0, 1, 2, 3, 0, 0, 1];
+        lens.extend(0..=64.min(max_block));
+        let mut sum: usize = lens.iter().map(|&l| l.min(max_block)).sum();
+        while sum < total {
+            let l = match r.below(8) {
+                0 => 0,
+                1 => max_block + r.below(4),
+                2 => 1 + r.below(3),
+                _ => r.below(max_block + 1),
+            };
+            sum += l.min(max_block);
+            lens.push(l);
+        }
+        lens
+    }
+
+    fn bits(v: &[f32]) -> Vec<u32> {
+        v.iter().map(|x| x.to_bits()).collect()
+    }
+
+    #[derive(Clone, Copy, Debug)]
+    enum Mode {
+        /// `upsample` alone, the result compared.
+        Up,
+        /// `downsample` alone, the buffer filled by the test.
+        Down,
+        /// Both, the buffer edited in between.
+        RoundTrip,
+    }
+
+    /// What happens to both oversamplers in the middle of the stream.
+    #[derive(Clone, Copy, Debug)]
+    enum Event {
+        Nothing,
+        /// Every 23rd block the factor changes (and so the state is cleared).
+        FactorChanges,
+        /// Every 29th block `reset` is called.
+        Resets,
+        /// At every 31st block a clone is made, and the clone continues beside the original.
+        Clones,
+    }
+
+    const FACTORS: [OversampleFactor; 3] = [
+        OversampleFactor::X2,
+        OversampleFactor::X4,
+        OversampleFactor::X8,
+    ];
+
+    /// A cheap non-linearity the caller of the real thing might apply to the buffer. It keeps
+    /// every value finite.
+    fn edit(v: &mut [f32]) {
+        for x in v {
+            *x = (*x * 1.5).clamp(-1.0, 1.0) * 0.75 + *x * 0.125;
+        }
+    }
+
+    /// Runs the new oversampler and the reference on the same stream and the same blocks and
+    /// asserts that every output bit, of the upsampled buffer and of the downsampled output, is
+    /// the same. After a `Clones` event the clone follows the same blocks and must agree too.
+    fn compare(factor: OversampleFactor, max_block: usize, mode: Mode, event: Event, seed: u32) {
+        let ctx = format!("{factor:?} max_block {max_block} {mode:?} {event:?}");
+        let x = stream(seed, 1);
+        let hi_stream = stream(seed ^ 0x55aa, 8);
+        let lens = block_lengths(max_block, x.len(), seed);
+        let mut new = Oversampler::new(max_block);
+        let mut old = reference::Oversampler::new(max_block);
+        new.set_factor(factor);
+        old.set_factor(factor);
+        let mut twin: Option<Oversampler> = None;
+        let (mut at, mut at_hi) = (0usize, 0usize);
+        for (b, &len) in lens.iter().enumerate() {
+            let used = len.min(max_block);
+            if at + used > x.len() {
+                break;
+            }
+            match event {
+                Event::FactorChanges if b % 23 == 22 => {
+                    let f = [
+                        OversampleFactor::X2,
+                        OversampleFactor::X4,
+                        OversampleFactor::X8,
+                        OversampleFactor::X1,
+                    ][(b / 23) % 4];
+                    new.set_factor(f);
+                    old.set_factor(f);
+                    twin = None;
+                }
+                Event::Resets if b % 29 == 28 => {
+                    new.reset();
+                    old.reset();
+                    twin = None;
+                }
+                Event::Clones if b % 31 == 30 => twin = Some(new.clone()),
+                _ => {}
+            }
+            let r = new.factor().ratio();
+            let input = &x[at..(at + len).min(x.len())];
+            let (mut out_new, mut out_old, mut out_twin) =
+                (vec![0.0f32; len], vec![0.0f32; len], vec![0.0f32; len]);
+            let at_block = format!("{ctx}: block {b} len {len}");
+            match mode {
+                Mode::Up => {
+                    let want = old.upsample(input).to_vec();
+                    assert_eq!(bits(new.upsample(input)), bits(&want), "{at_block}");
+                    if let Some(t) = twin.as_mut() {
+                        assert_eq!(bits(t.upsample(input)), bits(&want), "{at_block}: clone");
+                    }
+                }
+                Mode::Down => {
+                    let fill = &hi_stream[at_hi..at_hi + used * r];
+                    at_hi += used * r;
+                    // The test fills the buffer itself; the up filters only see zeros.
+                    let zeros = vec![0.0f32; len];
+                    new.upsample(&zeros).copy_from_slice(fill);
+                    old.upsample(&zeros).copy_from_slice(fill);
+                    new.downsample(&mut out_new);
+                    old.downsample(&mut out_old);
+                    assert_eq!(bits(&out_new), bits(&out_old), "{at_block}");
+                    if let Some(t) = twin.as_mut() {
+                        t.upsample(&zeros).copy_from_slice(fill);
+                        t.downsample(&mut out_twin);
+                        assert_eq!(bits(&out_twin), bits(&out_old), "{at_block}: clone");
+                    }
+                }
+                Mode::RoundTrip => {
+                    let hi_new = new.upsample(input);
+                    let hi_old = old.upsample(input);
+                    assert_eq!(bits(hi_new), bits(hi_old), "{at_block}: up");
+                    edit(hi_new);
+                    edit(hi_old);
+                    new.downsample(&mut out_new);
+                    old.downsample(&mut out_old);
+                    assert_eq!(bits(&out_new), bits(&out_old), "{at_block}");
+                    if let Some(t) = twin.as_mut() {
+                        edit(t.upsample(input));
+                        t.downsample(&mut out_twin);
+                        assert_eq!(bits(&out_twin), bits(&out_old), "{at_block}: clone");
+                    }
+                }
+            }
+            at += used;
+        }
+    }
+
+    #[test]
+    fn upsample_alone_is_bit_exact() {
+        for factor in FACTORS {
+            for max_block in [1, 7, 64, 512] {
+                compare(factor, max_block, Mode::Up, Event::Nothing, 11);
+            }
+        }
+    }
+
+    #[test]
+    fn downsample_alone_is_bit_exact() {
+        for factor in FACTORS {
+            for max_block in [1, 7, 64, 512] {
+                compare(factor, max_block, Mode::Down, Event::Nothing, 12);
+            }
+        }
+    }
+
+    #[test]
+    fn round_trip_is_bit_exact() {
+        for factor in FACTORS {
+            for max_block in [1, 7, 64, 512] {
+                compare(factor, max_block, Mode::RoundTrip, Event::Nothing, 13);
+            }
+        }
+    }
+
+    #[test]
+    fn state_operations_are_bit_exact() {
+        for event in [Event::FactorChanges, Event::Resets, Event::Clones] {
+            for mode in [Mode::Up, Mode::Down, Mode::RoundTrip] {
+                for max_block in [7, 64, 512] {
+                    compare(OversampleFactor::X4, max_block, mode, event, 14);
+                }
+                compare(OversampleFactor::X8, 64, mode, event, 15);
+                compare(OversampleFactor::X2, 64, mode, event, 16);
+            }
+        }
+    }
+
+    #[test]
+    fn negative_zero_input_gives_positive_zero() {
+        // `0.0 + (c * -0.0)` is `+0.0`: the first tap is an addition like every other.
+        for factor in FACTORS {
+            let mut os = Oversampler::new(16);
+            os.set_factor(factor);
+            let hi = os.upsample(&[-0.0; 16]);
+            assert!(hi.iter().all(|v| v.to_bits() == 0), "{factor:?} up");
+            let mut out = [-1.0f32; 16];
+            os.downsample(&mut out);
+            assert!(out.iter().all(|v| v.to_bits() == 0), "{factor:?} down");
+        }
+    }
+
+    /// NaN and infinities in the input: whether an output is NaN and the bits of every output
+    /// that is not NaN must match the reference. The payload of a NaN is not something this
+    /// project promises, so it is not compared.
+    #[test]
+    fn non_finite_input_matches_where_it_is_defined() {
+        let mut r = Rng(21);
+        let mut x: Vec<f32> = (0..3000).map(|_| 0.8 * r.unit()).collect();
+        for (i, v) in [
+            (100, f32::NAN),
+            (101, f32::INFINITY),
+            (900, f32::NEG_INFINITY),
+            (901, f32::INFINITY),
+            (1500, f32::INFINITY),
+            (2000, -f32::NAN),
+            (2700, f32::NEG_INFINITY),
+        ] {
+            x[i] = v;
+        }
+        let same = |a: &[f32], b: &[f32], what: &str| {
+            assert_eq!(a.len(), b.len());
+            for (i, (p, q)) in a.iter().zip(b).enumerate() {
+                assert_eq!(p.is_nan(), q.is_nan(), "{what} {i}");
+                if !p.is_nan() {
+                    assert_eq!(p.to_bits(), q.to_bits(), "{what} {i}");
+                }
+            }
+        };
+        for factor in FACTORS {
+            for max_block in [7, 64] {
+                // One pair upsamples the stream, another downsamples what the first produced.
+                let mut up_new = Oversampler::new(max_block);
+                let mut up_old = reference::Oversampler::new(max_block);
+                let mut down_new = Oversampler::new(max_block);
+                let mut down_old = reference::Oversampler::new(max_block);
+                for o in [&mut up_new, &mut down_new] {
+                    o.set_factor(factor);
+                }
+                up_old.set_factor(factor);
+                down_old.set_factor(factor);
+                for chunk in x.chunks(max_block) {
+                    let hi = up_old.upsample(chunk).to_vec();
+                    same(up_new.upsample(chunk), &hi, "up");
+                    let zeros = vec![0.0; chunk.len()];
+                    down_new.upsample(&zeros).copy_from_slice(&hi);
+                    down_old.upsample(&zeros).copy_from_slice(&hi);
+                    let (mut a, mut b) = (vec![0.0; chunk.len()], vec![0.0; chunk.len()]);
+                    down_new.downsample(&mut a);
+                    down_old.downsample(&mut b);
+                    same(&a, &b, "down");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn working_memory_is_bounded() {
+        // The working buffers do not grow with `max_block` (only the buffer the caller edits does).
+        let heap = |os: &Oversampler| -> usize {
+            4 * (os.buf.len()
+                + os.scratch.len()
+                + [&os.up1, &os.up2, &os.up3]
+                    .iter()
+                    .map(|u| u.lin.len())
+                    .sum::<usize>()
+                + [&os.down1, &os.down2, &os.down3]
+                    .iter()
+                    .map(|d| d.lin_a.len() + d.lin_b.len())
+                    .sum::<usize>())
+        };
+        let (small, large) = (Oversampler::new(64), Oversampler::new(4096));
+        println!(
+            "size_of {} B, heap {} B (64) / {} B (4096)",
+            std::mem::size_of::<Oversampler>(),
+            heap(&small),
+            heap(&large)
+        );
+        assert_eq!(heap(&large) - heap(&small), 4 * 8 * (4096 - 64));
     }
 }
