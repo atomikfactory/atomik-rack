@@ -5491,7 +5491,8 @@ take the app down; Settings > Plugins can switch back to running plugins inside 
   are the **normalised** value, a stepped one (`stepCount` > 0) its step index. In VST3 the
   controller talks to the processor only through the host, so an editor's `performEdit` is pushed to
   the processor at the next batch and every value the rack sets is mirrored to `setParamNormalized`
-  on the main thread, so an open editor and the saved controller state follow the rack. The state
+  on the main thread (once per parameter per poll, with its latest value), so an open editor and the
+  saved controller state follow the rack. The state
   blob is `AVS1` + the component section + the controller section (each a little-endian `u32` length
   and its bytes); restore is `setState`, `setComponentState`, then the controller's own `setState`.
   The editor is hosted in the same separate window as a CLAP one; on Linux the host's `IRunLoop`

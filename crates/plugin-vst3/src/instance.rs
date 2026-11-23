@@ -39,9 +39,6 @@ use vst3::Steinberg::Vst::*;
 use vst3::Steinberg::*;
 use vst3::{ComPtr, ComWrapper, Interface};
 
-/// The most mirrored values applied in one `poll`.
-const MIRROR_PER_POLL: usize = 4_096;
-
 /// Capacity of the ring that carries edits made in the plugin's editor to the processor.
 const EDIT_RING: usize = 1_024;
 
@@ -133,6 +130,8 @@ pub(crate) struct Vst3Instance {
     _host_app: ComWrapper<HostApplication>,
     hub: Arc<Hub>,
     mirror: Option<rtrb::Consumer<(u32, f64)>>,
+    /// The values one drain of the mirror ring pops (never grows past the ring's size).
+    mirror_buf: Vec<(u32, u32, f64)>,
     class: ClassInfo,
     read: Read,
     layout_changed: bool,
@@ -289,6 +288,7 @@ impl Vst3Instance {
             _host_app: host_app,
             hub,
             mirror: None,
+            mirror_buf: Vec::with_capacity(EDIT_RING),
             class: class.clone(),
             read: layout::empty_read(class),
             layout_changed: false,
@@ -442,16 +442,16 @@ impl Vst3Instance {
     }
 
     /// Tells the controller the param values the rack set since the last call (the processor
-    /// copied them into the mirror ring), so an open editor shows them.
+    /// copied them into the mirror ring), so an open editor shows them. The whole ring is drained
+    /// and the controller hears each parameter once, with the latest value the rack set.
     fn apply_mirrored(&mut self) {
         let (Some(ring), Some(c)) = (self.mirror.as_mut(), self.controller.as_ref()) else {
             return;
         };
-        for _ in 0..MIRROR_PER_POLL {
-            let Ok((id, n)) = ring.pop() else { break };
+        drain_latest(ring, &mut self.mirror_buf, |id, n| {
             // SAFETY: a live controller, on the main thread.
             unsafe { c.setParamNormalized(id, n) };
-        }
+        });
     }
 
     /// The folders the presets of this plugin are looked for in.
@@ -477,6 +477,33 @@ impl Vst3Instance {
         let stream = MemStream::new(Vec::new());
         let s = stream.as_com_ref::<IBStream>()?;
         stream_for(s.as_ptr()).then(|| stream.take_bytes())
+    }
+}
+
+/// Pops everything now in `ring` and calls `apply` once per parameter id with the last value
+/// popped for it, ids in ascending order. `buf` holds the popped entries (id, arrival number,
+/// value) and keeps its capacity: one made as large as the ring is never grown here.
+fn drain_latest(
+    ring: &mut rtrb::Consumer<(u32, f64)>,
+    buf: &mut Vec<(u32, u32, f64)>,
+    mut apply: impl FnMut(u32, f64),
+) {
+    buf.clear();
+    // What is in the ring now: the audio thread may keep pushing while this runs.
+    for seq in 0..ring.slots() {
+        let Ok((id, n)) = ring.pop() else { break };
+        buf.push((id, seq as u32, n));
+    }
+    buf.sort_unstable_by_key(|&(id, seq, _)| (id, seq));
+    let mut i = 0;
+    while i < buf.len() {
+        let id = buf[i].0;
+        let mut last = i;
+        while last + 1 < buf.len() && buf[last + 1].0 == id {
+            last += 1;
+        }
+        apply(id, buf[last].2);
+        i = last + 1;
     }
 }
 
@@ -853,6 +880,34 @@ impl Drop for Vst3Instance {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_drained_ring_gives_each_id_once_with_its_last_value() {
+        let (mut tx, mut rx) = rtrb::RingBuffer::new(16_384);
+        for i in 0..10_000u32 {
+            tx.push((i % 3, f64::from(i))).unwrap();
+        }
+        let mut buf = Vec::with_capacity(EDIT_RING);
+        let mut seen = Vec::new();
+        drain_latest(&mut rx, &mut buf, |id, n| seen.push((id, n)));
+        assert_eq!(seen, [(0, 9_999.0), (1, 9_997.0), (2, 9_998.0)]);
+        assert!(rx.is_empty());
+        seen.clear();
+        drain_latest(&mut rx, &mut buf, |id, n| seen.push((id, n)));
+        assert!(seen.is_empty(), "nothing is told twice");
+    }
+
+    #[test]
+    fn a_drain_of_a_ring_sized_buffer_never_grows_it() {
+        let (mut tx, mut rx) = rtrb::RingBuffer::new(EDIT_RING);
+        let mut buf = Vec::with_capacity(EDIT_RING);
+        let (ptr, cap) = (buf.as_ptr(), buf.capacity());
+        for round in 0..4u32 {
+            while tx.push((round % 7, 1.0)).is_ok() {}
+            drain_latest(&mut rx, &mut buf, |_, _| {});
+        }
+        assert_eq!((buf.as_ptr(), buf.capacity()), (ptr, cap));
+    }
 
     #[test]
     fn a_state_blob_round_trips_both_sections() {

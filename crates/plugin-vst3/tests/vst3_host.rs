@@ -642,6 +642,54 @@ fn values_the_rack_sets_reach_the_controller_on_the_main_thread_so_an_editor_sho
 }
 
 #[test]
+fn many_values_the_rack_set_between_two_polls_reach_the_controller_once_per_parameter() {
+    let (k, lib) = k();
+    let (mut inst, _m) = bare(&*k.backend, &k.plugin(Plug::Gain));
+    let mut p = inst.activate(&activate_config(RunMode::Realtime)).unwrap();
+    assert!(p.start_processing());
+    let mut b = Bufs::new();
+    let before = lib.probe(&*inst, probe::CTRL_SET_PARAMS);
+    // 900 events over three parameters (the mirror ring holds 1 024): gain, mute and latency.
+    for block in 0..9 {
+        let events: Vec<PluginEvent> = (0..100)
+            .map(|j| {
+                let last = block == 8 && j >= 90;
+                let (id, early, late) = match j % 3 {
+                    0 => (1, 0.25, 0.5),
+                    1 => (2, 0.0, 1.0),
+                    _ => (3, 8.0, 64.0),
+                };
+                ev(
+                    j as u16,
+                    K::Param {
+                        id,
+                        value: if last { late } else { early },
+                    },
+                )
+            })
+            .collect();
+        b.run(&mut *p, &events, 2, 2);
+    }
+    inst.poll();
+    assert_eq!(
+        lib.probe(&*inst, probe::CTRL_SET_PARAMS),
+        before + 3,
+        "one call per parameter, not one per event"
+    );
+    let now: std::collections::BTreeMap<u32, f64> = inst.read_params().into_iter().collect();
+    assert_eq!(now[&1], 0.5);
+    assert_eq!(now[&2], 1.0);
+    assert_eq!(now[&3], 64.0);
+    inst.poll();
+    assert_eq!(
+        lib.probe(&*inst, probe::CTRL_SET_PARAMS),
+        before + 3,
+        "once"
+    );
+    inst.deactivate(p);
+}
+
+#[test]
 fn a_state_taken_right_after_a_rack_edit_holds_the_edit_in_the_controller_section() {
     let (k, _) = k();
     let (mut inst, _m) = bare(&*k.backend, &k.plugin(Plug::Gain));

@@ -239,6 +239,10 @@ may break APIs and the patch and project formats.
   processes falls from about 59 s to about 42 s). Every plugin is still asked after every batch, so a restart or a
   latency change lands on the same batch as before and the rendered file is the same bytes. A live project is
   unchanged.
+- **A VST3 editor is told each automated value once per frame.** Every value the rack sets on a VST3 plugin is
+  mirrored to the plugin's controller so an open editor follows it. An automated parameter used to cost one
+  controller call per event, hundreds a frame; the controller now hears each parameter once per frame, with the
+  latest value. A state saved or a plugin deactivated still applies everything first.
 
 ### Fixed
 - **Dropping an instrument above its mix channel.** An instrument dragged to the place above its own mix channel
