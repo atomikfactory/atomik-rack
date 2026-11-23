@@ -1520,6 +1520,15 @@ impl PluginManager {
         Ok(self.get(id)?.instance.resize_gui(w, h)?)
     }
 
+    /// The window of the editor of `id` followed a size the plugin asked for: the plugin is told
+    /// (see [`PluginInstance::plugin_resized_gui`]). An unknown instance is ignored.
+    pub fn plugin_resized_gui(&mut self, id: InstanceId, w: u32, h: u32) {
+        assert_main_thread("PluginManager::plugin_resized_gui");
+        if let Ok(m) = self.get(id) {
+            m.instance.plugin_resized_gui(w, h);
+        }
+    }
+
     /// Asks the plugin's editor to resize without waiting for a plugin that is busy (see
     /// [`PluginInstance::request_resize_gui`]): `Some(size)` is the size it took, `None` means
     /// the answer comes later through [`PluginManager::take_soft_answers`] as a

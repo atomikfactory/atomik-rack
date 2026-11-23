@@ -76,6 +76,8 @@ pub mod probe {
     pub const LAST_SET_ID: u32 = 46;
     pub const LAST_SET_VALUE: u32 = 47;
     pub const VIEW_ASKS: u32 = 52;
+    pub const FIXED_SIZE: u32 = 53;
+    pub const ON_SIZE_CALLS: u32 = 54;
 }
 
 /// Commands of the VST3 test library's `atomik_test_command`.
@@ -91,6 +93,7 @@ pub mod command {
     pub const IO_CHANGED: u32 = 16;
     pub const OUT_PARAMS: u32 = 17;
     pub const OUT_VALUE: u32 = 18;
+    pub const FIXED_SIZE: u32 = 19;
 }
 
 /// The process-wide counters of a test library.

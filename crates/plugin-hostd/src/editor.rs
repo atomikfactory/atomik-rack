@@ -232,12 +232,20 @@ impl Editor {
         }
     }
 
-    /// The plugin asked for another size: the window follows.
-    pub fn plugin_resized(&mut self, windows: &mut dyn WindowSystem, w: u32, h: u32) {
+    /// The plugin asked for another size: the window follows, and then the plugin is told it has
+    /// it ([`PluginInstance::plugin_resized_gui`]: an editor the user cannot resize is told, too).
+    pub fn plugin_resized(
+        &mut self,
+        instance: &mut dyn PluginInstance,
+        windows: &mut dyn WindowSystem,
+        w: u32,
+        h: u32,
+    ) {
         if self.open {
             self.asked = Some((w, h));
             self.size = (w, h);
             windows.resize(w, h);
+            instance.plugin_resized_gui(w, h);
         }
     }
 
@@ -456,6 +464,11 @@ pub(crate) mod fakes {
             }
             Ok(self.resize_answer.unwrap_or((w, h)))
         }
+        fn plugin_resized_gui(&mut self, w: u32, h: u32) {
+            self.log
+                .borrow_mut()
+                .push(format!("plugin_resized_gui {w}x{h}"));
+        }
     }
 
     pub fn log() -> Log {
@@ -663,7 +676,7 @@ mod tests {
             Editor::default(),
         );
         ed.user_resized(&mut inst, &mut ws, 500, 400);
-        ed.plugin_resized(&mut ws, 500, 400);
+        ed.plugin_resized(&mut inst, &mut ws, 500, 400);
         ed.plugin_visible(&mut ws, true);
         assert!(lines(&l).is_empty());
     }
@@ -679,8 +692,44 @@ mod tests {
         ed.open(&mut inst, &mut ws, "Fake", None, 1.0, false)
             .unwrap();
         l.borrow_mut().clear();
-        ed.plugin_resized(&mut ws, 800, 600);
-        assert_eq!(lines(&l), vec!["resize 800x600".to_string()]);
+        ed.plugin_resized(&mut inst, &mut ws, 800, 600);
+        assert_eq!(
+            lines(&l),
+            vec![
+                "resize 800x600".to_string(),
+                "plugin_resized_gui 800x600".to_string()
+            ],
+            "the window follows, then the plugin is told it has the size"
+        );
+    }
+
+    #[test]
+    fn an_editor_the_user_cannot_resize_is_told_the_size_it_asked_for() {
+        let l = log();
+        let (mut inst, mut ws, mut ed) = (
+            FakeInstance::new(&l),
+            FakeWindows::new(&l),
+            Editor::default(),
+        );
+        inst.resize_fails = true;
+        ed.open(&mut inst, &mut ws, "Fake", None, 1.0, false)
+            .unwrap();
+        l.borrow_mut().clear();
+        ed.plugin_resized(&mut inst, &mut ws, 800, 600);
+        assert_eq!(
+            lines(&l),
+            vec![
+                "resize 800x600".to_string(),
+                "plugin_resized_gui 800x600".to_string()
+            ],
+            "no resize_gui, which such an editor refuses"
+        );
+        // A user resize of the same editor is still the plugin's to refuse.
+        ed.user_resized(&mut inst, &mut ws, 500, 400);
+        assert_eq!(
+            lines(&l).last().map(String::as_str),
+            Some("resize_gui 500x400")
+        );
     }
 
     #[test]

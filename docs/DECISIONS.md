@@ -2050,3 +2050,32 @@ is the only thing that makes the notifications of a batch visible before the nex
 restart would land on another batch than in a live run).
 
 **Status.** Default (not yet confirmed). Decided by: none yet.
+
+## BM. A VST3 editor is told the size it asked for, whether or not the user may resize it
+
+**Question.** A VST3 editor asks for a size with `resizeView` and the format expects the host to answer by telling the
+view with `onSize`. The host only had `resize_gui`, which asks `canResize` first and refuses an editor of a fixed size,
+so an editor that changes its own size (a zoom menu, a view that folds open) never heard that its window had followed.
+
+**Decision.** `PluginInstance::plugin_resized_gui` (default: nothing) is called where the window has followed a size the
+plugin asked for: in the app when it handles the plugin's resize message (for a plugin of the app's own process), and
+in the plugin process right after its window followed (for a sandboxed one; the app's call is then a no-op). The VST3
+instance calls `onSize` with that rectangle, without `canResize` and without `checkSizeConstraint` (the plugin chose
+the size), only while the view is open, and not again for a size the view was told already (at the opening, by a user
+resize or by this call). A resize by the user keeps its `canResize` check.
+
+**Why no `canResize` check.** The question "may the user drag the frame" is not the question "did the window take the
+size the plugin chose". An editor that can be resized is told by this call too, a moment before the platform's own
+resize event reaches `resize_gui`; the size is the same, so it is told once.
+
+**Why from the poll and not from `resizeView`.** The plugin is inside its own call there, and answering a request with
+a call back into the view from the same stack is the way a plugin loops or deadlocks. The message is handled at the next
+poll, as before, and the call happens there.
+
+**CLAP.** Unchanged: its host callback only posts the request, and the window's own size change reaches the plugin
+through `set_size`, which is attempted only for an editor that reports it can be resized.
+
+**Rejected.** Making `resize_gui` skip the `canResize` check (the user's drag of a fixed editor must stay refused);
+calling `onSize` from inside `resizeView` (reentrancy).
+
+**Status.** Default (not yet confirmed). Decided by: none yet.

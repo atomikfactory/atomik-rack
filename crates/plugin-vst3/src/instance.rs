@@ -141,6 +141,9 @@ pub(crate) struct Vst3Instance {
     activated_latency: u32,
     active: bool,
     gui_open: bool,
+    /// The size the open editor was last told it has (`getSize` at the opening, then each
+    /// `onSize`): a size the plugin asks for that is this one needs no `onSize`.
+    gui_size: Option<(u32, u32)>,
     /// Whether the controller has an editor view: asked of the plugin once, the first time it is
     /// needed (an opened editor answers it too), so a scan builds no view.
     has_view: std::cell::Cell<Option<bool>>,
@@ -298,6 +301,7 @@ impl Vst3Instance {
             activated_latency: 0,
             active: false,
             gui_open: false,
+            gui_size: None,
             has_view: std::cell::Cell::new(None),
             preset_roots: None,
             _module: Arc::clone(module),
@@ -782,6 +786,7 @@ impl HostInstance for Vst3Instance {
         };
         self.view = Some(view);
         self.gui_open = true;
+        self.gui_size = Some(size);
         Ok(size)
     }
 
@@ -796,6 +801,7 @@ impl HostInstance for Vst3Instance {
         }
         self.frame.clear();
         self.gui_open = false;
+        self.gui_size = None;
     }
 
     fn resize_gui(&mut self, w: u32, h: u32) -> Result<(u32, u32), BackendError> {
@@ -824,10 +830,36 @@ impl HostInstance for Vst3Instance {
         if !ok(unsafe { view.onSize(&mut rect) }) {
             return Err(failed("resizing the editor", "onSize failed"));
         }
-        Ok((
+        let size = (
             (rect.right - rect.left).max(1) as u32,
             (rect.bottom - rect.top).max(1) as u32,
-        ))
+        );
+        self.gui_size = Some(size);
+        Ok(size)
+    }
+
+    fn plugin_resized_gui(&mut self, w: u32, h: u32) {
+        assert_main_thread("telling a VST3 plugin editor its new size");
+        let Some(view) = self.view.as_ref().filter(|_| self.gui_open) else {
+            return;
+        };
+        // A size the plugin was told already: a plugin that answers `onSize` with a request for
+        // the same size must not be told again for ever.
+        if self.gui_size == Some((w, h)) {
+            return;
+        }
+        let mut rect = ViewRect {
+            left: 0,
+            top: 0,
+            right: w as i32,
+            bottom: h as i32,
+        };
+        // No `canResize` and no `checkSizeConstraint`: the plugin chose this size; the window
+        // follows it, and the format expects the view to be told it has it.
+        // SAFETY: a live view and a valid rect, on the main thread (and not from inside
+        // `resizeView`: this runs from the poll that handled the plugin's request).
+        unsafe { view.onSize(&mut rect) };
+        self.gui_size = Some((w, h));
     }
 
     fn has_gui(&self) -> bool {

@@ -5498,7 +5498,10 @@ take the app down; Settings > Plugins can switch back to running plugins inside 
   The editor is hosted in the same separate window as a CLAP one; on Linux the host's `IRunLoop`
   pumps both the timers and the file-descriptor handlers (`registerEventHandler`; each tick a
   non-blocking `poll(2)` on the main thread calls the ones that are ready), so an editor that needs
-  either one works.
+  either one works. A size the editor asks for (`resizeView`) is followed by the window and then
+  handed back to the view as `onSize` (`PluginInstance::plugin_resized_gui`, in the app for a plugin
+  of this process and in the plugin process for a sandboxed one), also for an editor the user cannot
+  resize; a resize by the user still goes through `resize_gui` and its `canResize` check.
 - **Render.** `atomik-render` builds plugin devices through the same manager
   (`render/src/plugins.rs`; both backends, a file routed to its backend by its format,
   `format_of_file`) after registering the installed plugins before the project loads.

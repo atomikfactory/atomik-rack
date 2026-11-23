@@ -787,6 +787,73 @@ fn the_editor_is_created_scaled_sized_attached_resized_and_closed() {
     inst.close_gui();
 }
 
+/// Asks for the size `w` x `h` from another thread, the way a plugin's own thread may.
+fn plugin_asks_for_size(
+    lib: &TestLib,
+    inst: &dyn atomik_plugin_host::PluginInstance,
+    w: u64,
+    h: u64,
+) {
+    let handle = inst.native_handle();
+    let path = lib.path.clone();
+    std::thread::spawn(move || {
+        let l = TestLib::open_path(&path);
+        l.command_raw(handle, command::GUI_REQUEST_RESIZE, w, h);
+    })
+    .join()
+    .unwrap();
+}
+
+#[test]
+fn an_editor_the_user_cannot_resize_is_told_the_size_it_asked_for_once() {
+    let (k, lib) = k();
+    let (mut inst, m) = bare(&*k.backend, &k.plugin(Plug::Gain));
+    inst.plugin_resized_gui(410, 330);
+    assert_eq!(
+        lib.probe(&*inst, probe::ON_SIZE_CALLS),
+        0,
+        "no editor, nobody to tell"
+    );
+    inst.open_gui(parent(), 1.0).unwrap();
+    lib.command(&*inst, command::FIXED_SIZE, 1, 0);
+    assert!(
+        inst.resize_gui(500, 400).is_err(),
+        "the user cannot resize a fixed editor"
+    );
+    assert_eq!(lib.probe(&*inst, probe::ON_SIZE_CALLS), 0);
+    // The editor asks for a size of its own: the message reaches the app, the window follows,
+    // and the app tells the editor it has the size.
+    let _ = drain(&m);
+    plugin_asks_for_size(&lib, &*inst, 410, 330);
+    assert!(drain(&m).contains(&PluginMessage::GuiResize { w: 410, h: 330 }));
+    assert_eq!(
+        lib.probe(&*inst, probe::ON_SIZE_CALLS),
+        0,
+        "not from inside the plugin's own request"
+    );
+    inst.plugin_resized_gui(410, 330);
+    assert_eq!(lib.probe(&*inst, probe::ON_SIZE_CALLS), 1);
+    assert_eq!(lib.probe(&*inst, probe::GUI_WIDTH), 410);
+    assert_eq!(lib.probe(&*inst, probe::GUI_HEIGHT), 330);
+    // The same size again (a plugin that answers `onSize` with the same request) is not told again.
+    plugin_asks_for_size(&lib, &*inst, 410, 330);
+    assert!(drain(&m).contains(&PluginMessage::GuiResize { w: 410, h: 330 }));
+    inst.plugin_resized_gui(410, 330);
+    assert_eq!(lib.probe(&*inst, probe::ON_SIZE_CALLS), 1, "once");
+    // Another size is told, and the user's resize is still refused.
+    inst.plugin_resized_gui(420, 340);
+    assert_eq!(lib.probe(&*inst, probe::ON_SIZE_CALLS), 2);
+    assert!(inst.resize_gui(500, 400).is_err());
+    assert_eq!(lib.probe(&*inst, probe::ON_SIZE_CALLS), 2);
+    inst.close_gui();
+    inst.plugin_resized_gui(500, 500);
+    assert_eq!(
+        lib.probe(&*inst, probe::ON_SIZE_CALLS),
+        2,
+        "a closed editor is not told"
+    );
+}
+
 #[test]
 fn a_plugin_without_an_editor_has_no_gui_and_a_refused_parent_is_an_error() {
     let (k, _) = k();

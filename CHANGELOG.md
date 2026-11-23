@@ -487,6 +487,11 @@ may break APIs and the patch and project formats.
   released without being terminated. A factory that answers the controller class with the component's own object is
   one object: initialised and terminated once, with no second initialisation and no proxies. A factory that
   implements the host-context interface now gets the host context once, before anything is created from it.
+- **A VST3 editor that changes its own size is told it has it.** An editor asks for a new size (a zoom menu, a view
+  that folds open) and the window follows; the format then expects the host to tell the view with `onSize`, which the
+  host only did for an editor the user could resize. A fixed-size editor never heard of its new size, and some drew
+  at the old size inside the new window. The view is now told whenever the window followed a size it asked for,
+  in the app and in the plugin process, once per size; a resize by the user of a fixed editor is still refused.
 
 ## [0.5.0-rc.1] - 2026-11-18
 

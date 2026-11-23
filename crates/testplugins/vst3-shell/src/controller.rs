@@ -648,6 +648,7 @@ impl IPlugViewTrait for View {
 
     unsafe fn onSize(&self, new_size: *mut ViewRect) -> tresult {
         self.shared.or(probe::GUI_CALLS, 8);
+        self.shared.add(probe::ON_SIZE_CALLS, 1);
         // SAFETY: the host passes a valid rect.
         let r = unsafe { &*new_size };
         self.shared
@@ -670,7 +671,11 @@ impl IPlugViewTrait for View {
 
     unsafe fn canResize(&self) -> tresult {
         self.shared.or(probe::GUI_CALLS, 64);
-        kResultTrue
+        if self.shared.get(probe::FIXED_SIZE) != 0 {
+            kResultFalse
+        } else {
+            kResultTrue
+        }
     }
 
     unsafe fn checkSizeConstraint(&self, rect: *mut ViewRect) -> tresult {
@@ -747,6 +752,10 @@ pub fn command_run(handle: usize, cmd: u32, a: u64, b: u64) -> u64 {
         command::OUT_PARAMS => {
             shared.set(probe::OUT_COUNT, a);
             shared.set(probe::OUT_BASE, b);
+            0
+        }
+        command::FIXED_SIZE => {
+            shared.set(probe::FIXED_SIZE, a);
             0
         }
         command::OUT_VALUE => {
