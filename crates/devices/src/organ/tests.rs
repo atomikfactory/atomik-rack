@@ -967,3 +967,72 @@ fn every_factory_sound_sounds_and_they_differ() {
         }
     }
 }
+
+// ----------------------------------------------------------------------- the scanner at rest
+
+/// A scenario that crosses every case of the scanner's rest: silence from the start, a note with
+/// percussion and click, their tails, silence longer than the scan lines, scanner changes while
+/// it is silent, and a note again. Returns every output bit.
+fn scanner_scenario(sr: f64, first_scanner: f32) -> Vec<u32> {
+    let mut h = DeviceHarness::new(Box::new(Organ::new()), sr);
+    h.set_param("perc.mode", 1.0);
+    h.set_param("key.click", 1.0);
+    h.set_param("scanner.type", first_scanner);
+    h.set_param("scanner.rate", 6.5);
+    let mut bits = Vec::new();
+    let mut batches = |h: &mut DeviceHarness, n: usize| {
+        for _ in 0..n {
+            h.process();
+            for out in OUT {
+                bits.extend(h.output(out).iter().map(|s| s.to_bits()));
+            }
+        }
+    };
+    batches(&mut h, 40);
+    for k in [48u8, 55, 64] {
+        h.push_note("notes_in", on(40, k, 0.9));
+    }
+    batches(&mut h, 60);
+    for k in [48u8, 55, 64] {
+        h.push_note("notes_in", off(7, k));
+    }
+    batches(&mut h, 200);
+    // Silence for longer than the scan lines, with the scanner type and rate moving.
+    for kind in [6.0, 3.0, 0.0, 1.0, 5.0, 2.0] {
+        h.set_param("scanner.type", kind);
+        h.set_param("scanner.rate", 4.0 + kind);
+        batches(&mut h, 120);
+    }
+    h.push_note("notes_in", on(0, 60, 1.0));
+    batches(&mut h, 60);
+    h.push_note("notes_in", off(100, 60));
+    batches(&mut h, 600);
+    bits
+}
+
+#[test]
+fn a_silent_scanner_rests_without_changing_a_bit() {
+    for sr in [48_000.0, 44_100.0, 96_000.0, 22_050.0] {
+        for kind in [0.0, 2.0, 4.0, 6.0] {
+            crate::shortcuts::taken(crate::shortcuts::Shortcut::Scanner);
+            let rested = scanner_scenario(sr, kind);
+            assert!(
+                crate::shortcuts::taken(crate::shortcuts::Shortcut::Scanner) > 0,
+                "{sr} Hz: the scanner never rested"
+            );
+            let full = crate::shortcuts::with_full(|| scanner_scenario(sr, kind));
+            assert_eq!(
+                crate::shortcuts::taken(crate::shortcuts::Shortcut::Scanner),
+                0
+            );
+            assert!(
+                rested == full,
+                "{sr} Hz, scanner {kind}: the output differs"
+            );
+            assert!(
+                rested.iter().any(|b| f32::from_bits(*b).abs() > 1e-4),
+                "the scenario sounds"
+            );
+        }
+    }
+}

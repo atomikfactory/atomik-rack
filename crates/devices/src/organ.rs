@@ -39,7 +39,8 @@
 //!   0.12, 0.24 and 0.42 ms and use only the delayed signal (a pitch vibrato), C1 to C3 swing by the
 //!   same amounts but add the delayed signal to the direct one half and half, and the right output
 //!   reads the swing a quarter turn later for width. Changes between types glide over 30 ms; Off is
-//!   bit-exact bypass.
+//!   bit-exact bypass. While the organ is silent and both scan lines hold only zeros the scanner
+//!   does not evaluate its sines or touch the lines (the output is the same bits).
 //! * **Overdrive.** `out.drive` runs a rational soft clipper with up to 18 dB of gain in front,
 //!   a square-root makeup behind; 0 is bit-exact off. `out.level` is a gain in dB after it, and a
 //!   soft limit keeps the output below 2 for any setting.
@@ -426,6 +427,9 @@ pub struct Organ {
     scan_phase: f64,
     line_l: DelayLine,
     line_r: DelayLine,
+    /// How many samples in a row the scan lines were fed zero (saturating; the lines are all
+    /// zero once it passes their reach, see `Organ::scanner_rests`).
+    scan_zero_run: usize,
     ctl: ControllerState,
 }
 
@@ -487,6 +491,7 @@ impl Organ {
             scan_phase: 0.0,
             line_l: DelayLine::new(line_len(48_000.0)),
             line_r: DelayLine::new(line_len(48_000.0)),
+            scan_zero_run: 0,
             ctl: ControllerState::new(),
         };
         o.derive();
@@ -723,6 +728,15 @@ impl Organ {
         }
     }
 
+    /// Whether the scanner can rest for this sample: `x` is zero and so are all the entries of the
+    /// scan lines a read can reach (the delay is at most `max_delay`, the interpolation looks one
+    /// entry further back). A line stores zero as +0.0 only, and an interpolated read of
+    /// +0.0 entries is +0.0, the value the rest returns.
+    #[inline]
+    fn scanner_rests(&self, x: f32) -> bool {
+        x == 0.0 && self.scan_zero_run >= self.line_l.max_delay() + 2
+    }
+
     /// Renders the samples `range` of the batch into `left` and `right`.
     fn render(&mut self, left: &mut [f32; BATCH], right: &mut [f32; BATCH], range: (usize, usize)) {
         let sr = f64::from(self.sample_rate);
@@ -791,14 +805,28 @@ impl Organ {
             let depth = self.scan_depth.next_value();
             let mix = self.scan_mix.next_value();
             let spread = f64::from(self.scan_spread.next_value());
-            let ms_to_samples = (sr * 0.001) as f32;
-            let swing_l = sin_cycles(self.scan_phase) as f32;
-            let swing_r = sin_cycles(self.scan_phase + spread) as f32;
-            let delay_l = (SCAN_CENTRE_MS + depth * swing_l) * ms_to_samples;
-            let delay_r = (SCAN_CENTRE_MS + depth * swing_r) * ms_to_samples;
-            let (wet_l, wet_r) = (self.line_l.read(delay_l), self.line_r.read(delay_r));
-            self.line_l.write(x);
-            self.line_r.write(x);
+            let (wet_l, wet_r) = if crate::shortcuts::enabled() && self.scanner_rests(x) {
+                // Silence into lines of silence: a read gives +0.0 whatever the delay, and a
+                // write of zero changes nothing a later read can reach (the write position
+                // waits; the last `reach` entries before it stay zero).
+                crate::shortcuts::took(crate::shortcuts::Shortcut::Scanner);
+                (0.0, 0.0)
+            } else {
+                let ms_to_samples = (sr * 0.001) as f32;
+                let swing_l = sin_cycles(self.scan_phase) as f32;
+                let swing_r = sin_cycles(self.scan_phase + spread) as f32;
+                let delay_l = (SCAN_CENTRE_MS + depth * swing_l) * ms_to_samples;
+                let delay_r = (SCAN_CENTRE_MS + depth * swing_r) * ms_to_samples;
+                let wet = (self.line_l.read(delay_l), self.line_r.read(delay_r));
+                self.line_l.write(x);
+                self.line_r.write(x);
+                self.scan_zero_run = if x == 0.0 {
+                    self.scan_zero_run.saturating_add(1)
+                } else {
+                    0
+                };
+                wet
+            };
             let p = self.scan_phase + f64::from(self.scanner_rate) / sr;
             self.scan_phase = p - p.floor();
             let (l, r) = if mix <= 0.0 {
@@ -840,6 +868,7 @@ impl Device for Organ {
         self.wheel = 0.0;
         self.line_l.clear();
         self.line_r.clear();
+        self.scan_zero_run = usize::MAX;
         self.ctl.reset();
         for w in 0..WHEELS {
             let turns = unit_f64(hash64(self.seed, w as u64, 2));

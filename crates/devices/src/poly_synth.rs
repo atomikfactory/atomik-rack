@@ -2,7 +2,8 @@
 //!
 //! Per voice: two PolyBLEP oscillators (crossfaded by `osc.mix`) plus white noise, a TPT
 //! state-variable filter (LP/BP/HP 12 dB/oct), an amp ADSR and a filter ADSR. One global LFO
-//! modulates pitch and cutoff and is written to `lfo_cv_out` every sample.
+//! modulates pitch and cutoff and is written to `lfo_cv_out` every sample (a batch with no sounding
+//! voice, no note and no cable on that output only moves it on).
 //!
 //! * Voice states follow the amp envelope: Idle → Attack → Decay → Sustain → Release → Idle.
 //! * Same-key note-on retriggers that voice (continuously from its current level). When every
@@ -1805,6 +1806,8 @@ pub(crate) struct BatchIn<'a> {
     pub resonance_on: bool,
     pub level_on: bool,
     pub pan_on: bool,
+    /// Whether a cable leaves the LFO CV output (a layered device has none).
+    pub lfo_out_on: bool,
     /// `TimeInfo::tune_cents`: the master tune.
     pub tune_cents: f32,
 }
@@ -2313,8 +2316,19 @@ impl PolySynth {
         }
         let mut lfo = [0.0f32; BATCH];
         let mut lfo2 = [0.0f32; BATCH];
-        for a in &mut lfo {
-            *a = self.lfo.next_sample();
+        // Only a sounding voice, a note of this batch or a cable on the LFO output reads LFO 1: a
+        // batch with none of them moves it on without evaluating the shape.
+        if crate::shortcuts::enabled()
+            && !inp.lfo_out_on
+            && inp.events.is_empty()
+            && !self.voices.iter().any(Voice::is_active)
+        {
+            crate::shortcuts::took(crate::shortcuts::Shortcut::Lfo);
+            self.lfo.skip(BATCH);
+        } else {
+            for a in &mut lfo {
+                *a = self.lfo.next_sample();
+            }
         }
         // LFO 2 runs only while it has a destination (its phase waits otherwise).
         let s = &self.shared;
@@ -2537,6 +2551,7 @@ impl Device for PolySynth {
                 resonance_on: ctx.is_connected(RESONANCE_CV_IN),
                 level_on: ctx.is_connected(LEVEL_CV_IN),
                 pan_on: ctx.is_connected(PAN_CV_IN),
+                lfo_out_on: ctx.is_connected(LFO_CV_OUT),
                 tune_cents: ctx.time.tune_cents,
             };
             self.render_batch(&inp, true, &mut out);
@@ -2851,6 +2866,8 @@ mod tests {
     #[test]
     fn process_writes_lfo_to_cv_out_every_sample() {
         let (mut h, _) = synth();
+        // A cable on the output: an LFO nobody reads is not evaluated while the synth is idle.
+        h.set_connected("lfo_cv_out", true);
         h.set_param("lfo.rate", 2.0);
         let o = h.render(seconds(1.0), &["lfo_cv_out"]).remove(0);
         assert!(o.iter().all(|v| (-1.0..=1.0).contains(v)));
@@ -4316,5 +4333,26 @@ mod tests {
             let want = 440.0 * 2f64.powf(f64::from(cents) / 1200.0);
             assert!((f - want).abs() < 0.6, "{cents} cents: {f} vs {want}");
         }
+    }
+}
+
+#[cfg(test)]
+mod idle_lfo_tests {
+    use super::*;
+    use crate::shortcuts::lfo_check::{Case, assert_same};
+    use crate::test_support::harness;
+
+    #[test]
+    fn an_idle_batch_without_a_cable_on_the_lfo_output_skips_the_lfo_bit_for_bit() {
+        assert_same(
+            &|| harness(Box::new(PolySynth::new())),
+            &Case {
+                notes: "notes_in",
+                outs: &["out_l", "out_r"],
+                lfo_out: Some("lfo_cv_out"),
+                amount: ("lfo.to_pitch", 7.0),
+                setup: &[("env.amp.release", 5.0), ("lfo.to_cutoff", 0.0)],
+            },
+        );
     }
 }

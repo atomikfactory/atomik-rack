@@ -84,6 +84,7 @@ pub mod sample_hold;
 pub mod sampler;
 pub mod saturation;
 pub mod semi_modular;
+mod shortcuts;
 pub mod slew_limiter;
 pub mod space_reverb;
 pub mod spectrum;

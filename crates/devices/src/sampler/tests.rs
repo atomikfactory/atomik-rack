@@ -1880,3 +1880,18 @@ fn a_tune_of_zero_plays_the_same_bits_as_no_tune() {
             .all(|(x, y)| x.to_bits() == y.to_bits())
     );
 }
+
+#[test]
+fn an_idle_batch_skips_the_lfo_bit_for_bit() {
+    use crate::shortcuts::lfo_check::{Case, assert_same};
+    assert_same(
+        &|| with_map(&ramp_map(40_000, |_| {})).0,
+        &Case {
+            notes: "notes_in",
+            outs: &OUT,
+            lfo_out: None,
+            amount: ("lfo.to_amp", 1.0),
+            setup: &[("lfo.to_pitch", 0.0)],
+        },
+    );
+}

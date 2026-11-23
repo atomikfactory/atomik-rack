@@ -554,6 +554,8 @@ fn the_lfo_vibrato_swings_the_pitch_and_the_tremolo_the_level() {
 #[test]
 fn the_lfo_is_written_to_the_cv_output_every_sample() {
     let (mut h, _) = synth();
+    // A cable on the output: an LFO nobody reads is not evaluated while the synth is idle.
+    h.set_connected("lfo_cv_out", true);
     h.set_param("lfo.rate", 10.0);
     h.render(3, &OUT);
     let a = h.output("lfo_cv_out").to_vec();
@@ -2094,4 +2096,146 @@ fn the_slope_time_holds_at_every_oversampling() {
         let d = 20.0 * (level_at(&x, 0.3) / level_at(&x, 1.3)).log10();
         assert!((d - 60.0).abs() < 6.0, "oversample {over}: {d} dB");
     }
+}
+
+#[test]
+fn an_idle_batch_without_a_cable_on_the_lfo_output_skips_the_lfo_bit_for_bit() {
+    use crate::shortcuts::lfo_check::{Case, assert_same};
+    assert_same(
+        &|| synth().0,
+        &Case {
+            notes: "notes_in",
+            outs: &OUT,
+            lfo_out: Some("lfo_cv_out"),
+            amount: ("lfo.to_pitch", 7.0),
+            setup: &[("op1.release", 5.0), ("op2.release", 5.0)],
+        },
+    );
+}
+
+// ----------------------------------------------------------------- silent operators, key scale
+
+/// One scenario for a silent-operator comparison: `algorithm`, the operators in `zero` (a bit
+/// each) at level 0, `feedback`, `unison` copies, each operator on its own wave. A level is
+/// automated to zero and back during the held note, an operator swells in after a delay, and
+/// the release brings the envelopes to exactly zero. Returns every output bit.
+fn silent_operator_scenario(algorithm: usize, zero: u32, feedback: f32, unison: f32) -> Vec<u32> {
+    let (mut h, _) = synth();
+    patch(
+        &mut h,
+        algorithm,
+        [0.7, 0.6, 0.5, 0.4],
+        [1.0, 2.0, 3.0, 1.0],
+    );
+    h.set_param("feedback", feedback);
+    h.set_param("unison.voices", unison);
+    for (n, key) in WAVE_KEYS.iter().enumerate() {
+        h.set_param(key, ((n + algorithm) % 6) as f32);
+        h.set_param(&format!("op{}.release", n + 1), 8.0);
+        if zero >> n & 1 == 1 {
+            h.set_param(&format!("op{}.level", n + 1), 0.0);
+        }
+    }
+    // One operator that swells in after a delay (its envelope is zero until then).
+    h.set_param("op2.delay", 15.0);
+    let mut bits = Vec::new();
+    let mut batches = |h: &mut DeviceHarness, n: usize| {
+        for _ in 0..n {
+            h.process();
+            for out in OUT {
+                bits.extend(h.output(out).iter().map(|s| s.to_bits()));
+            }
+        }
+    };
+    batches(&mut h, 3);
+    push(
+        &mut h,
+        40,
+        NoteKind::On {
+            key: 57,
+            velocity: 0.8,
+        },
+    );
+    batches(&mut h, 10);
+    // A level automated to zero and back, a level raised from zero.
+    for (key, value) in [("op1.level", 0.0), ("op3.level", 0.9)] {
+        h.set_param(key, value);
+        batches(&mut h, 6);
+    }
+    for (key, value) in [("op1.level", 0.7), ("op3.level", 0.0)] {
+        h.set_param(key, value);
+        batches(&mut h, 6);
+    }
+    push(&mut h, 0, NoteKind::Off { key: 57 });
+    batches(&mut h, 40);
+    bits
+}
+
+#[test]
+fn a_silent_operator_is_not_computed_and_not_a_bit_changes() {
+    for algorithm in 0..12 {
+        for zero in 0..16u32 {
+            for (feedback, unison) in [(0.0, 1.0), (1.0, 1.0), (1.0, 4.0)] {
+                crate::shortcuts::taken(crate::shortcuts::Shortcut::Operator);
+                let fast = silent_operator_scenario(algorithm, zero, feedback, unison);
+                assert!(
+                    crate::shortcuts::taken(crate::shortcuts::Shortcut::Operator) > 0,
+                    "alg {algorithm} zero {zero:04b}"
+                );
+                let full = crate::shortcuts::with_full(|| {
+                    silent_operator_scenario(algorithm, zero, feedback, unison)
+                });
+                assert_eq!(
+                    crate::shortcuts::taken(crate::shortcuts::Shortcut::Operator),
+                    0
+                );
+                assert!(
+                    fast == full,
+                    "alg {algorithm}, zero {zero:04b}, feedback {feedback}, unison {unison}"
+                );
+            }
+        }
+    }
+}
+
+/// The key scaling as it was written before the shortcut for a scale of zero.
+fn key_scale_gain_before(scale: f32, key: f32) -> f32 {
+    let d = key - 60.0;
+    let steps = if scale >= 0.0 {
+        d.max(0.0)
+    } else {
+        (-d).max(0.0)
+    };
+    (-scale.abs() * KEY_SCALE_DB * steps * DB_TO_LOG2).exp2()
+}
+
+#[test]
+fn key_scaling_at_zero_gives_the_same_bits_without_the_exp2() {
+    let mut keys: Vec<f32> = (0..=127).map(|k| k as f32).collect();
+    // The fractional keys of a glide, and the keys a key could never be.
+    keys.extend((0..2_000).map(|i| i as f32 * 0.0635));
+    keys.extend([f32::NAN, f32::INFINITY, f32::NEG_INFINITY, -1.0e30, 1.0e30]);
+    for scale in [
+        0.0,
+        -0.0,
+        0.25,
+        -0.25,
+        1.0,
+        -1.0,
+        3.0,
+        -3.0,
+        f32::MIN_POSITIVE,
+    ] {
+        for &key in &keys {
+            assert_eq!(
+                Voice::key_scale_gain(scale, key).to_bits(),
+                key_scale_gain_before(scale, key).to_bits(),
+                "scale {scale}, key {key}"
+            );
+        }
+    }
+    assert_eq!(
+        Voice::key_scale_gain(0.0, 100.0).to_bits(),
+        1.0f32.to_bits()
+    );
 }

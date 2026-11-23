@@ -109,6 +109,20 @@ impl Lfo {
         }
         y
     }
+
+    /// Leaves the LFO in exactly the state `n` calls of [`Lfo::next_sample`] would, without
+    /// evaluating the shape: the same phase additions and wraps one by one, and the sample & hold
+    /// stream drawn at the same wraps. For a batch whose LFO values nothing reads.
+    #[inline]
+    pub fn skip(&mut self, n: usize) {
+        for _ in 0..n {
+            self.phase += self.inc;
+            if self.phase >= 1.0 {
+                self.phase -= 1.0;
+                self.held = self.rng.next_bipolar();
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -189,6 +203,43 @@ mod tests {
         l.reset();
         let again: Vec<f32> = (0..10_000).map(|_| l.next_sample()).collect();
         assert_eq!(first, again);
+    }
+
+    #[test]
+    fn lfo_skip_leaves_the_state_of_the_same_number_of_samples() {
+        let shapes = [
+            LfoShape::Sine,
+            LfoShape::Triangle,
+            LfoShape::Saw,
+            LfoShape::Square,
+            LfoShape::SampleHold,
+        ];
+        // 0 Hz, a slow rate, one that wraps every few samples, the clamp at half the sample
+        // rate and a rate above it.
+        for shape in shapes {
+            for hz in [0.0, 0.37, 5.0, 1_234.5, 24_000.0, 40_000.0] {
+                for n in [0usize, 1, 63, 64, 100_000] {
+                    let (mut a, mut b) = (Lfo::new(9), Lfo::new(9));
+                    for l in [&mut a, &mut b] {
+                        l.set_shape(shape);
+                        l.set_rate(hz, SR);
+                    }
+                    // A state that is not the initial one.
+                    (0..77).for_each(|_| {
+                        a.next_sample();
+                        b.next_sample();
+                    });
+                    (0..n).for_each(|_| {
+                        a.next_sample();
+                    });
+                    b.skip(n);
+                    assert_eq!(a, b, "{shape:?} {hz} Hz after {n}");
+                    let next_a: Vec<u32> = (0..300).map(|_| a.next_sample().to_bits()).collect();
+                    let next_b: Vec<u32> = (0..300).map(|_| b.next_sample().to_bits()).collect();
+                    assert_eq!(next_a, next_b, "{shape:?} {hz} Hz after {n}");
+                }
+            }
+        }
     }
 
     #[test]

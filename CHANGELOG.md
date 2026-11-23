@@ -248,6 +248,23 @@ may break APIs and the patch and project formats.
   to the plugin once, the first time the app wants the answer (or when the editor is opened, which settles it).
 - **The plugin manager's frame poll no longer builds its list of instances every frame.** The list is kept and
   reused; with nothing to report a poll now allocates nothing.
+- **An idle instrument no longer evaluates its LFO.** The poly synth, FM synth, wavetable synth, sampler and granular
+  synth computed 64 LFO values at the start of every batch, also when no note sounded and nobody read them. A batch
+  with no sounding voice, no note event and no cable on the LFO output now moves the LFO on (the same phase steps,
+  the same sample & hold draws) without evaluating its shape, so the next note finds it exactly where it was and
+  every output sample is unchanged. An idle sampler or granular synth costs about a quarter less per batch (about
+  370 us to 280 us per 256 batches on the bench machine), the other three about a tenth.
+- **The organ's scanner rests while the organ is silent.** The scanner swung a delay by two sines and read and
+  wrote two lines at every sample, also with no key down. When what it is fed is exactly zero and both lines hold
+  only zeros (from a silent start, or once the tails and the lines have emptied) it now skips the sines, the reads and
+  the writes, and keeps its phase, depth and mix moving as before, so the output is the same bits. An idle organ
+  costs about a quarter of what it did (about 1.0 ms to 0.23 ms per 256 batches on the bench machine).
+- **The FM synth does not compute a silent operator.** An operator whose level or envelope is exactly zero at a
+  sample (two of the four in the default patch, or one that has not swelled in yet or has finished its release) used
+  to evaluate its sine series all the same. It is skipped now, its phase still advances, and no output bit changes.
+  The default patch with a three-note chord costs about 38 % less per batch (about 11.7 ms to 7.2 ms per 256 batches
+  on the bench machine).
+  A key scale of zero no longer costs an `exp2` per operator at every control step: the gain is exactly 1 either way.
 
 ### Fixed
 - **Dropping an instrument above its mix channel.** An instrument dragged to the place above its own mix channel

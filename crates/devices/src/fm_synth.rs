@@ -20,7 +20,8 @@
 //!   modulates another is a *modulator*, one that reaches the output a *carrier*; its `level` is
 //!   the volume of a carrier and the modulation index (full level is [`fm::MAX_INDEX_RAD`] = 8
 //!   radians at an index of 1) of a modulator. The phase accumulators are `f64` and wrap, so a
-//!   note stays in tune for hours.
+//!   note stays in tune for hours. An operator whose level or envelope is exactly zero at a sample
+//!   is not evaluated (its phase still advances).
 //! * **Frequency.** In ratio mode an operator runs at the played pitch times `coarse + fine`
 //!   (coarse step 0 is the ratio 0.5), plus `detune` in cents; in fixed mode (`fixed` on) at
 //!   `10^((coarse + fine) / 8)` Hz whatever the key ([`fm::op_frequency`]).
@@ -77,7 +78,8 @@
 //!   note start; the LFO moves the pitch by `lfo.to_pitch` semitones; pitch bend moves it by up to
 //!   `bend.range` semitones (default 2). The fixed-frequency operators ignore all of them.
 //! * **LFO.** One global LFO (`lfo.*`: wave, rate; targets pitch, amplitude and index), written
-//!   to `lfo_cv_out` every sample.
+//!   to `lfo_cv_out` every sample (a batch with no sounding voice, no note and no cable on that
+//!   output only moves it on).
 //! * **Play.** `play.mode`: `poly` (up to `voices`, default 8, at most 16: a note that finds no
 //!   free voice steals the oldest, which fades out over 2 ms), `mono` (one voice; every key
 //!   retriggers the envelopes and returns to the key still held when one is released) and
@@ -1162,6 +1164,11 @@ impl Voice {
 
     /// The gain of a key's level scaling.
     fn key_scale_gain(scale: f32, key: f32) -> f32 {
+        // No scaling is exp2(+-0.0) = 1 exactly; a key that is not finite would make the exponent
+        // NaN, so it keeps the full computation (a voice's key is a MIDI key, always finite).
+        if scale == 0.0 && key.is_finite() {
+            return 1.0;
+        }
         let d = key - 60.0;
         let steps = if scale >= 0.0 {
             d.max(0.0)
@@ -1313,8 +1320,15 @@ impl Voice {
                 // The average of the last two outputs: the damped feedback path.
                 modulation += 0.5 * (fb[0] + fb[1]) * fb_scale;
             }
-            let s = wave(p.ops[op].wave, phase[op] + f64::from(modulation));
-            y[op] = s * level[op] * env[op];
+            // A silent operator is not evaluated. Its output is +0.0 where the product was a zero
+            // of either sign; every sum it joins starts at +0.0 (so never holds -0.0) and the
+            // feedback memory flushes it to +0.0, so no later bit can tell.
+            y[op] = if crate::shortcuts::enabled() && (level[op] == 0.0 || env[op] == 0.0) {
+                crate::shortcuts::took(crate::shortcuts::Shortcut::Operator);
+                0.0
+            } else {
+                wave(p.ops[op].wave, phase[op] + f64::from(modulation)) * level[op] * env[op]
+            };
             let ph = phase[op] + step[op];
             phase[op] = ph - ph.floor();
             if alg.is_carrier(op) {
@@ -1970,9 +1984,24 @@ impl Device for FmSynth {
             self.fresh = false;
         }
         self.shared.tune_cents = ctx.time.tune_cents;
+        let events = ctx.notes_in(NOTES_IN);
         let mut lfo = [0.0f32; BATCH];
-        for s in &mut lfo {
-            *s = self.lfo.next_sample();
+        // Only a sounding voice, a note of this batch or a cable on the LFO output reads the LFO:
+        // a batch with none of them moves it on without evaluating the shape.
+        if crate::shortcuts::enabled()
+            && !ctx.is_connected(LFO_CV_OUT)
+            && events.is_empty()
+            && !self
+                .voices
+                .iter()
+                .any(|v| v.is_active(self.shared.algorithm))
+        {
+            crate::shortcuts::took(crate::shortcuts::Shortcut::Lfo);
+            self.lfo.skip(BATCH);
+        } else {
+            for s in &mut lfo {
+                *s = self.lfo.next_sample();
+            }
         }
         let cv_pitch = *ctx.input(PITCH_CV_IN);
         let cv_index = *ctx.input(INDEX_CV_IN);
@@ -1980,7 +2009,6 @@ impl Device for FmSynth {
         let shift = self.shared.shift;
         let (mut hi_l, mut hi_r) = ([0.0f32; 4 * BATCH], [0.0f32; 4 * BATCH]);
         let mut ctl_gain = [1.0f32; BATCH];
-        let events = ctx.notes_in(NOTES_IN);
         let mut next = 0;
         let mut start = 0;
         // Render in segments between note events so events are sample-accurate.
