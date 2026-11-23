@@ -436,8 +436,15 @@ libraries.
   split gain, a mono effect, a 5.1-only effect the host refuses, plugins that stand a parameter for
   every controller and channel (one answers `IMidiMapping` slowly), plugins that fail to initialise,
   set up, start or process, one that returns NaN, plugins that ask for restarts from inside setup or
-  after every block, one that retitles a param), `vst3-bad`, `vst3-hang`, `vst3-crash`,
-  `vst3-leak`. `atomik_plugin_host::testing::vst3_test_plugin("atomik-test-vst3")` builds a library
+  after every block, one that retitles a param, and five strict ones: a split plugin that lets go of its peer
+  only for the object it was connected with and never in `terminate` (alone and talking to its peer from inside
+  `disconnect` and `terminate`), a component that is not an audio processor, a controller that refuses to
+  initialise and a plugin whose factory answers the controller class with the component's own object; the factory
+  of this library refuses the host context), `vst3-bad`, `vst3-hang`, `vst3-crash`, `vst3-leak`. The shell's
+  process-wide counters (`atomik_test_counter`) also count `initialize` and `terminate` per half, controller
+  objects created and destroyed, what `disconnect` received against the peer it stored, the order of the teardown
+  calls, `setHostContext` calls and `createInstance` calls that came before one; `plugin-vst3/tests/teardown.rs`
+  reads them. `atomik_plugin_host::testing::vst3_test_plugin("atomik-test-vst3")` builds a library
   and installs it as a `.vst3` **bundle** with the layout of the running OS. The shell announces a
   latency change itself (`restartComponent(kLatencyChanged)`), like the CLAP effect asks for a
   restart, so a test must not announce it by hand.
@@ -477,6 +484,22 @@ libraries.
   reports such an edit when its state is loaded and `ATOMIK_TEST_GUI_EDIT_ON_RESTORE` is `<param>:<value>`.
   A live child that misses a batch's deadline passes the dry input, so the tests that compare a live output
   process until the child keeps up (`process_settled`). Editors need a desktop and stay hand checks.
+- **A slow, refused or never-ending start in the sandbox.** The built-in `null` plugins wait
+  `ATOMIK_NULL_START_MS` milliseconds in `start_processing`, and `null.refuse-start` and `null.hang-start`
+  refuse or never return; the test plugin libraries wait `ATOMIK_TEST_START_MS`.
+  `plugin-sandbox/src/tests/start.rs` drives the processor over the fake child with a start the test holds
+  and releases (late, not failed; events kept; refusal read once; stop and start in consecutive batches; reset
+  before the notes; hung when it never answers), `plugin-hostd/tests/e2e_start.rs` does the same through a real
+  child and device, `null_plugins.rs` and `real_plugins.rs` check the child side bit for bit, and
+  `plugin_sandbox_bounce.rs` checks that a slow start leaves a bounce unchanged.
+- **What a plugin tells the app.** `plugin-host/tests/message_channel.rs` stalls the consumer and checks that every
+  message other than a parameter change or a log line arrives, in the order posted: flags, the queue of two threads
+  posting at once, a flood of changes inside `process` next to gestures and failures, tail replacement (never across
+  a begin, an end, another parameter or a message of the other road), the soft and hard caps, the reserve and the
+  one order; `device_sandbox.rs` checks that a failure a full ring refused is said again; `plugin-vst3/src/out_params.rs`
+  and `vst3_host.rs` (`a_metering_plugin_cannot_take_the_room_of_what_the_app_must_hear`, with the test plugin's
+  `OUT_PARAMS` command) check the output-parameter rule, and `plugin-hostd/tests/e2e_out_params.rs` does the same
+  through a real child (`ATOMIK_TEST_OUT_PARAMS`).
 - **Real plugins** are only for manual checks (the ignored tests in `app_core_plugins_real_tests.rs`
   and `plugin-vst3/tests/real_plugin.rs`, driven by the `ATOMIK_REAL_*` environment variables, and
   `plugin_scan_fallback.rs`, which scans the folders named by `ATOMIK_SCAN_SMOKE`, run against

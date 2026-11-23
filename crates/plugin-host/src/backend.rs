@@ -325,6 +325,11 @@ pub enum ProcessStatus {
     /// Sandbox: the plugin's process is gone (crashed, killed or stopped by the watchdog).
     /// The device becomes CRASHED.
     Lost,
+    /// Sandbox: the plugin answered that it cannot start processing. The start rides on the first
+    /// batch that needs it (so a slow start is only a late batch), and this is how its refusal
+    /// comes back: the device becomes FAILED, as it does when an in-process plugin's
+    /// `start_processing` returns false. The batch carried no audio.
+    StartFailed,
 }
 
 /// How a plugin's editor is shown.
@@ -611,6 +616,13 @@ pub trait PluginInstance {
     fn close_gui(&mut self);
     /// Runs the plugin's main-thread work (timers, callbacks); called every UI frame.
     fn poll(&mut self);
+    /// Asks now, without waiting, for what the next [`PluginInstance::poll`] would otherwise
+    /// wait for: a plugin in another process that an offline render polls after every batch is
+    /// sent its request here, so that a manager with many of them waits for all the answers
+    /// together instead of one after the other. Nothing else on the instance may run between
+    /// this call and the `poll`; a `poll` without it behaves as if it had been called. Does
+    /// nothing for a plugin in this process and for a live instance.
+    fn begin_poll(&mut self) {}
     /// Asks the plugin to resize its editor to (about) `w` x `h` pixels; returns the size it
     /// took. The window follows the plugin's answer.
     fn resize_gui(&mut self, _w: u32, _h: u32) -> Result<(u32, u32), BackendError> {
@@ -888,6 +900,11 @@ pub struct NullStats {
     sync_captures: AtomicUsize,
     /// The null instances are alive but do not answer (see [`NullStats::set_not_responding`]).
     not_responding: AtomicBool,
+    /// Every `begin_poll` and `poll` of the null instances, in order (see
+    /// [`NullStats::poll_log`]).
+    poll_log: Mutex<Vec<(usize, bool)>>,
+    /// The poll log is filled only while this is set (see [`NullStats::record_polls`]).
+    record_polls: AtomicBool,
     /// The most bytes a null instance hands over (0: no limit; see
     /// [`NullStats::set_state_limit`]).
     state_limit: AtomicU64,
@@ -1034,6 +1051,19 @@ impl NullStats {
     /// Synchronous state captures the null instances served.
     pub fn sync_captures(&self) -> usize {
         self.sync_captures.load(Ordering::Relaxed)
+    }
+    /// Turns the poll log on or off (off by default: nothing is locked or kept per poll).
+    pub fn record_polls(&self, on: bool) {
+        self.record_polls.store(on, Ordering::Relaxed);
+    }
+    /// What the manager asked of the null instances' main-thread work, in order: `(n, true)` is
+    /// the [`PluginInstance::begin_poll`] and `(n, false)` the [`PluginInstance::poll`] of the
+    /// `n`th instance created (from 0).
+    pub fn poll_log(&self) -> Vec<(usize, bool)> {
+        self.poll_log
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
     }
 
     /// Instances created.
@@ -1187,7 +1217,7 @@ impl PluginBackend for NullBackend {
             .iter()
             .find(|p| &p.plugin == plugin)
             .ok_or_else(|| BackendError::UnknownPlugin(plugin.id.clone()))?;
-        self.stats.created.fetch_add(1, Ordering::Relaxed);
+        let ordinal = self.stats.created.fetch_add(1, Ordering::Relaxed);
         let changed = self
             .stats
             .changed_layout
@@ -1201,6 +1231,7 @@ impl PluginBackend for NullBackend {
             state: PluginStateBlob::default(),
             held: BTreeMap::new(),
             stats: Arc::clone(&self.stats),
+            ordinal,
             capture_out: false,
             opening: None,
             opening_in: None,
@@ -1290,6 +1321,8 @@ struct NullInstance {
     state: PluginStateBlob,
     held: BTreeMap<u32, f64>,
     stats: Arc<NullStats>,
+    /// Which instance of its backend this is, from 0 (see [`NullStats::poll_log`]).
+    ordinal: usize,
     /// A background capture was requested and not collected.
     capture_out: bool,
     /// Polls left before a slow external editor is open.
@@ -1323,6 +1356,17 @@ impl Drop for NullInstance {
 }
 
 impl NullInstance {
+    /// Notes a `begin_poll` (`true`) or a `poll` of this instance when the log is on.
+    fn log_poll(&self, begin: bool) {
+        if self.stats.record_polls.load(Ordering::Relaxed) {
+            self.stats
+                .poll_log
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .push((self.ordinal, begin));
+        }
+    }
+
     /// The error of a call made while the null plugin is set not to respond (see
     /// [`NullStats::set_not_responding`]).
     fn stuck_error(&self, what: &str) -> Result<(), BackendError> {
@@ -1700,7 +1744,12 @@ impl PluginInstance for NullInstance {
         }
     }
 
+    fn begin_poll(&mut self) {
+        self.log_poll(true);
+    }
+
     fn poll(&mut self) {
+        self.log_poll(false);
         self.take_own_edit();
     }
 

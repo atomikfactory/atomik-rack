@@ -23,3 +23,21 @@ fn the_first_post_of_a_host_callback_does_not_allocate() {
     let posted = assert_no_alloc(|| messenger.post(PluginMessage::StateDirty));
     assert!(posted);
 }
+
+#[test]
+fn the_first_post_from_inside_process_does_not_allocate() {
+    use atomik_plugin_host::AudioThreadGuard;
+    let (_device, manager) = plugin_channel(InstanceId(2));
+    let messenger = manager.messenger();
+    let _audio = AudioThreadGuard::enter();
+    // The ring's producer is the mutex the audio path locks: warmed when the channel was made.
+    let posted = assert_no_alloc(|| {
+        messenger.post(PluginMessage::GuiClosed)
+            && messenger.post(PluginMessage::ParamEdit {
+                id: 1,
+                value: 0.5,
+                phase: atomik_plugin_host::ParamPhase::Change,
+            })
+    });
+    assert!(posted);
+}

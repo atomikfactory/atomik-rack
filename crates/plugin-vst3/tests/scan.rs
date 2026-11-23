@@ -269,9 +269,29 @@ fn the_classes_of_the_split_plugin_are_not_listed_twice() {
     let (_, found) = variants();
     assert_eq!(
         found.len(),
-        19,
-        "nineteen plugins, the controller class is not one"
+        24,
+        "twenty-four plugins, the controller class is not one"
     );
+}
+
+#[test]
+fn a_plugin_that_is_not_a_processor_or_whose_controller_refuses_is_unsupported_with_the_reason() {
+    let (_, found) = variants();
+    let why = |n| {
+        find(&found, &variant_id(n))
+            .unsupported
+            .clone()
+            .unwrap_or_else(|| panic!("variant {n} is supported"))
+    };
+    assert!(why(V_NOT_PROC).contains("not an audio processor"));
+    assert!(why(V_CTRL_REFUSES).contains("controller refused to initialise"));
+    // The strict ones and the plugin that is its own controller scan clean.
+    for n in [V_STRICT, V_STRICT_CHATTY, V_CTRL_IS_COMPONENT] {
+        assert!(
+            find(&found, &variant_id(n)).unsupported.is_none(),
+            "variant {n}"
+        );
+    }
 }
 
 #[cfg(windows)]

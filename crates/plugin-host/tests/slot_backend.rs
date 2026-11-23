@@ -57,6 +57,7 @@ fn the_event_list_clamps_offsets_keeps_them_non_decreasing_and_counts_drops() {
 
 #[test]
 fn messages_flow_from_any_thread_to_the_manager_and_a_full_ring_drops_and_counts() {
+    use atomik_plugin_host::AudioThreadGuard;
     let (_device, manager) = plugin_channel(InstanceId(7));
     assert_eq!(manager.slot().id(), InstanceId(7));
     let host = manager.messenger();
@@ -73,11 +74,14 @@ fn messages_flow_from_any_thread_to_the_manager_and_a_full_ring_drops_and_counts
         Some(PluginMessage::Log { .. })
     ));
     assert_eq!(manager.try_recv(), None);
-    // Fill the ring: further posts are refused, never blocked, and counted.
+    // Fill the ring from inside `process`: further posts are refused, never blocked, and counted.
     let mut accepted = 0;
-    for _ in 0..10_000 {
-        if host.post(PluginMessage::StateDirty) {
-            accepted += 1;
+    {
+        let _audio = AudioThreadGuard::enter();
+        for _ in 0..10_000 {
+            if host.post(PluginMessage::GuiClosed) {
+                accepted += 1;
+            }
         }
     }
     assert!((64..10_000).contains(&accepted), "{accepted}");
@@ -85,7 +89,8 @@ fn messages_flow_from_any_thread_to_the_manager_and_a_full_ring_drops_and_counts
     assert_eq!(manager.dropped_messages(), host.dropped());
     // Draining makes room again.
     while manager.try_recv().is_some() {}
-    assert!(host.post(PluginMessage::StateDirty));
+    let _audio = AudioThreadGuard::enter();
+    assert!(host.post(PluginMessage::GuiClosed));
 }
 
 #[test]

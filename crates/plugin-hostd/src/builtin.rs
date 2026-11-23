@@ -21,6 +21,11 @@
 //!   for `ATOMIK_NULL_BUSY_US` microseconds per batch (default 0, read at activation). With
 //!   `ATOMIK_NULL_BUSY_BURST` set it is cheap for seven batches and busy on the eighth, like a
 //!   plugin that works in blocks.
+//! * `null.refuse-start`: a passthrough whose `start_processing` answers false.
+//! * `null.hang-start`: a passthrough whose `start_processing` never returns.
+//!
+//! Every null plugin waits `ATOMIK_NULL_START_MS` milliseconds in `start_processing` (default 0, read
+//! at each start): a plugin that is slow to start.
 
 use atomik_core::{BATCH, Batch};
 use atomik_device_sdk::{
@@ -52,6 +57,9 @@ pub const BUSY_US_ENV: &str = "ATOMIK_NULL_BUSY_US";
 /// Environment variable: set, `null.busy` is busy on every eighth batch only.
 pub const BUSY_BURST_ENV: &str = "ATOMIK_NULL_BUSY_BURST";
 
+/// Environment variable: how long a null plugin's `start_processing` takes, in milliseconds.
+pub const START_MS_ENV: &str = "ATOMIK_NULL_START_MS";
+
 /// Frames of latency `null.latency` reports.
 const LATENCY: u32 = 32;
 
@@ -70,6 +78,8 @@ enum Kind {
     Synth,
     Noisy,
     Busy,
+    RefuseStart,
+    HangStart,
 }
 
 impl Kind {
@@ -84,6 +94,8 @@ impl Kind {
             "null.synth" => Self::Synth,
             "null.noisy" => Self::Noisy,
             "null.busy" => Self::Busy,
+            "null.refuse-start" => Self::RefuseStart,
+            "null.hang-start" => Self::HangStart,
             _ => return None,
         })
     }
@@ -170,6 +182,9 @@ impl PluginInstance for BuiltinInstance {
             }
             Kind::Synth => Box::new(SynthProcessor::new(cfg.sample_rate)),
             Kind::Busy => Box::new(BusyProcessor::from_env()),
+            Kind::RefuseStart | Kind::HangStart => Box::new(StartProcessor {
+                refuse: self.kind == Kind::RefuseStart,
+            }),
         })
     }
 
@@ -309,6 +324,7 @@ impl GainProcessor {
 
 impl PluginProcessor for GainProcessor {
     fn start_processing(&mut self) -> bool {
+        pause_start();
         true
     }
 
@@ -358,6 +374,7 @@ impl BusyProcessor {
 
 impl PluginProcessor for BusyProcessor {
     fn start_processing(&mut self) -> bool {
+        pause_start();
         true
     }
 
@@ -393,6 +410,7 @@ struct PassProcessor {
 
 impl PluginProcessor for PassProcessor {
     fn start_processing(&mut self) -> bool {
+        pause_start();
         true
     }
 
@@ -410,11 +428,46 @@ impl PluginProcessor for PassProcessor {
     }
 }
 
+/// Waits as long as `ATOMIK_NULL_START_MS` says: a plugin that is slow to start.
+fn pause_start() {
+    let ms = std::env::var(START_MS_ENV)
+        .ok()
+        .and_then(|v| v.trim().parse::<u64>().ok())
+        .unwrap_or(0);
+    if ms > 0 {
+        std::thread::sleep(Duration::from_millis(ms));
+    }
+}
+
+/// A passthrough whose start is refused, or never returns.
+struct StartProcessor {
+    refuse: bool,
+}
+
+impl PluginProcessor for StartProcessor {
+    fn start_processing(&mut self) -> bool {
+        if !self.refuse {
+            hang();
+        }
+        false
+    }
+
+    fn stop_processing(&mut self) {}
+
+    fn reset(&mut self) {}
+
+    fn process(&mut self, io: &mut PluginIo<'_>) -> ProcessStatus {
+        copy_through(io);
+        ProcessStatus::Continue
+    }
+}
+
 /// A processor whose `process` panics.
 struct PanicProcessor;
 
 impl PluginProcessor for PanicProcessor {
     fn start_processing(&mut self) -> bool {
+        pause_start();
         true
     }
 
@@ -440,6 +493,7 @@ struct NoisyProcessor;
 
 impl PluginProcessor for NoisyProcessor {
     fn start_processing(&mut self) -> bool {
+        pause_start();
         true
     }
 
@@ -458,6 +512,7 @@ struct HangProcessor;
 
 impl PluginProcessor for HangProcessor {
     fn start_processing(&mut self) -> bool {
+        pause_start();
         true
     }
 
@@ -520,6 +575,7 @@ impl SynthProcessor {
 
 impl PluginProcessor for SynthProcessor {
     fn start_processing(&mut self) -> bool {
+        pause_start();
         true
     }
 

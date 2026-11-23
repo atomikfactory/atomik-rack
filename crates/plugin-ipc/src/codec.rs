@@ -19,10 +19,64 @@ pub enum AudioOp {
     Reset = 4,
 }
 
+/// Work the child does before the op of a request, in the order stop, start, reset. It is
+/// what lets a start (or a reset) ride on the batch that needs it: the parent never waits for
+/// a request of its own for them, so a plugin that is slow to start only makes that batch late.
+/// The bits sit above the op code in the request's op word ([`AudioOp::from_code`] ignores
+/// them).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Before(u32);
+
+impl Before {
+    /// Nothing before the op.
+    pub const NONE: Before = Before(0);
+    /// `stop_processing` first.
+    pub const STOP: Before = Before(1);
+    /// `start_processing` first (answered false: the request carries no audio and says
+    /// [`ProcessStatus::StartFailed`]).
+    pub const START: Before = Before(2);
+    /// `reset` first (after the start).
+    pub const RESET: Before = Before(4);
+
+    const SHIFT: u32 = 8;
+    const MASK: u32 = 7;
+
+    /// Both sets of work.
+    pub const fn with(self, other: Before) -> Before {
+        Before(self.0 | other.0)
+    }
+
+    /// `self` without the work of `other`.
+    pub const fn without(self, other: Before) -> Before {
+        Before(self.0 & !other.0)
+    }
+
+    /// True when all the work of `other` is in `self` (and `other` is not empty).
+    pub const fn has(self, other: Before) -> bool {
+        other.0 != 0 && self.0 & other.0 == other.0
+    }
+
+    /// True when there is nothing to do.
+    pub const fn is_empty(self) -> bool {
+        self.0 == 0
+    }
+
+    /// The op word: the op code with this work above it.
+    pub fn word(self, op: AudioOp) -> u32 {
+        (op as u32) | (self.0 << Self::SHIFT)
+    }
+
+    /// The work in an op word (bits nobody writes are ignored).
+    pub fn from_word(word: u32) -> Before {
+        Before((word >> Self::SHIFT) & Self::MASK)
+    }
+}
+
 impl AudioOp {
-    /// The op for a code, `None` for a code no parent writes.
+    /// The op for an op word (the work above the op code is [`Before::from_word`]), `None` for
+    /// a code no parent writes.
     pub fn from_code(code: u32) -> Option<Self> {
-        match code {
+        match code & ((1 << Before::SHIFT) - 1) {
             1 => Some(Self::Process),
             2 => Some(Self::Start),
             3 => Some(Self::Stop),
@@ -43,6 +97,7 @@ pub fn status_code(status: ProcessStatus) -> u32 {
         ProcessStatus::Late => 5,
         ProcessStatus::Lost => 6,
         ProcessStatus::Refused => 7,
+        ProcessStatus::StartFailed => 8,
     }
 }
 
@@ -56,6 +111,7 @@ pub fn status_from_code(code: u32) -> ProcessStatus {
         5 => ProcessStatus::Late,
         6 => ProcessStatus::Lost,
         7 => ProcessStatus::Refused,
+        8 => ProcessStatus::StartFailed,
         _ => ProcessStatus::Error,
     }
 }
@@ -276,6 +332,8 @@ mod tests {
             ProcessStatus::Error,
             ProcessStatus::Late,
             ProcessStatus::Lost,
+            ProcessStatus::Refused,
+            ProcessStatus::StartFailed,
         ] {
             assert_eq!(status_from_code(status_code(s)), s);
         }
@@ -287,6 +345,7 @@ mod tests {
         assert_eq!(status_code(ProcessStatus::Continue), 0);
         assert_eq!(status_code(ProcessStatus::Late), 5);
         assert_eq!(status_code(ProcessStatus::Lost), 6);
+        assert_eq!(status_code(ProcessStatus::StartFailed), 8);
     }
 
     #[test]
@@ -322,5 +381,28 @@ mod tests {
         }
         assert_eq!(AudioOp::from_code(0), None);
         assert_eq!(AudioOp::from_code(99), None);
+    }
+
+    #[test]
+    fn the_work_before_an_op_rides_above_its_code_and_does_not_change_it() {
+        let all = Before::STOP.with(Before::START).with(Before::RESET);
+        for op in [
+            AudioOp::Process,
+            AudioOp::Start,
+            AudioOp::Stop,
+            AudioOp::Reset,
+        ] {
+            let word = all.word(op);
+            assert_eq!(AudioOp::from_code(word), Some(op));
+            assert_eq!(Before::from_word(word), all);
+            assert_eq!(Before::from_word(Before::NONE.word(op)), Before::NONE);
+        }
+        assert!(all.has(Before::START) && !all.without(Before::START).has(Before::START));
+        assert!(!Before::NONE.has(Before::NONE), "nothing is not work");
+        assert!(Before::NONE.is_empty() && !Before::RESET.is_empty());
+        assert_eq!(AudioOp::Process as u32, Before::NONE.word(AudioOp::Process));
+        // Bits nobody writes do not make an op out of an unknown code, nor work out of nothing.
+        assert_eq!(AudioOp::from_code(99 | (7 << 8)), None);
+        assert_eq!(Before::from_word(u32::MAX), all);
     }
 }

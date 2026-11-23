@@ -5107,8 +5107,13 @@ take the app down; Settings > Plugins can switch back to running plugins inside 
   engine is rebuilt only when another live instance of the same plugin was built with the old shape
   (the registry describes the new one now, and that instance is created again as after any restart).
   A plugin opened over an older scan whose ports differ is learned without an engine restart too. Plugin callbacks
-  into the host only post to a bounded message ring that `poll` drains; a full ring drops and
-  counts.
+  into the host only post to the instance's message channel that `poll` drains: flags for the requests
+  that carry no data (always accepted), a queue for the threads outside `process` (a thread waits for its
+  lock; only a parameter change or a log line is shed, past 1 024 waiting messages, and everything past 65 536),
+  and a 256-slot ring for `process` itself (wait-free, a change is pushed only while 64 slots are free, a full
+  ring drops and counts). Every message is stamped when posted and comes out in that order, flags first. A VST3
+  processor reports the parameters the plugin wrote only for ids of the layout, when the value moved, and at
+  most once every 15 blocks.
 - **Latency and PDC.** The reported latency (clamped to 1 s) is an atomic on the slot;
   `Device::latency_frames` reads it and the engine's existing PDC does the rest. A plugin announces
   a change (CLAP `latency.changed`, VST3 `restartComponent(kLatencyChanged)`), the manager restarts
@@ -5304,7 +5309,11 @@ take the app down; Settings > Plugins can switch back to running plugins inside 
     exactly one reply; plugin callbacks come back as notifications and reach the instance's
     `HostMessenger` on a reader thread. The child sends every pending notification before each
     reply, and a bounce asks for a `Flush` after every batch, so a callback reaches the host before
-    the next batch exactly as in process (a bounce counts in batches, never in time). Main-thread
+    the next batch exactly as in process (a bounce counts in batches, never in time). The manager
+    sends every instance's `Flush` first (`PluginInstance::begin_poll`, in `PluginManager::poll`)
+    and each instance takes its answer in its own `poll`, so the children flush at the same time and
+    a batch waits for the slowest one, not for the sum; an instance remembers the id of the request
+    it sent and falls back to the blocking call when another call abandoned it. Main-thread
     calls have timeouts. The ones that matter (10 s create, activate and state; 2 s deactivate and
     flush) kill the child when they are not answered, unless it shows a sign of life (below). The
     cosmetic ones (param text, default pins, layout changes, the list of presets, the param values,
@@ -5398,6 +5407,20 @@ take the app down; Settings > Plugins can switch back to running plugins inside 
     value or the clock for a decision. A bounce (`SandboxConfig::bounce`, set by
     `atomik-render`, also for `--plugin-mode realtime`) and an offline instance wait for every batch
     up to a 30 s watchdog, so a sandboxed bounce is byte-identical to an in-process one.
+  - *Start, stop and reset.* None of the three is a request the audio thread waits for. `start_processing`
+    and `reset` are owed to the child and ride on the next batch (the op word of the request carries the
+    work, `Before` in `atomik-plugin-ipc`; the child serves stop, start, reset and then the batch, and a start it
+    does not need, because the plugin is already started, is skipped). The audio thread waits for that batch like
+    for any other, so a plugin that takes 100 ms to start makes the batches of those 100 ms late (dry or silent, the
+    `late` meter counts them, the batches behind the first are polled, not waited for) and is never failed for it;
+    one full wait that ran out is one miss, which an answered batch forgives. A start the plugin refuses answers
+    with `ProcessStatus::StartFailed` and no audio (also for a batch that was late: the refusal is read before
+    the next request overwrites it) and fails the device once with "the plugin could not start processing", as
+    an in-process plugin does. `stop_processing` is sent at once and not waited for; when a request is in flight
+    it is owed and rides on the next batch ahead of its start (a stop followed at once by a start leaves the plugin
+    started), and a start that was owed and never sent is simply dropped. A start that never returns is a child
+    that completes nothing: the hang guard below ends it. Offline instances follow the same rule and wait for the
+    batch up to the watchdog, so a bounce is byte-identical with the sandbox on and off.
   - *Crash.* When the child ends, the reader thread (the end of the pipe) or the watcher thread
     (the process itself: a helper process that inherited the pipes cannot hide the death), whichever
     comes first and only once, marks the block dead (`DeathHandle`) and posts
@@ -5453,7 +5476,15 @@ take the app down; Settings > Plugins can switch back to running plugins inside 
   per scan and per instance with a half-second budget; units as modules), `IMidiMapping` and note-expression support;
   `instance.rs` is the main-thread half (component and controller created and connected through two
   proxies so neither holds the other, the controller brought in step with the component's state, the
-  host `IComponentHandler`, the editor `IPlugView` with an `IPlugFrame` that is also an `IRunLoop`);
+  host `IComponentHandler`, the editor `IPlugView` with an `IPlugFrame` that is also an `IRunLoop`).
+  The life cycle is by the book: the factory gets `setHostContext` once, before anything is created from it, and
+  the module keeps that context for as long as it holds the factory; from the moment the component initialised
+  every way out of `create` terminates it (a separate controller that initialised first), a controller that is a
+  class of its own and refuses to initialise fails the plugin (released without `terminate`), and a controller
+  class the factory answers with the component's own object is a single-object plugin (no second `initialize`,
+  no proxies, one `terminate`). Teardown is the editor closed and the handler detached, `setActive(0)` when
+  active, each half `disconnect`ed with the proxy it was connected with, both proxies cut (they hold the plugin
+  halves strongly, so only the host can break the ring), the controller terminated, then the component;
   `processor.rs` is the audio half (fixed-capacity `IParameterChanges` and `IEventList`,
   `silenceFlags` per channel, `ProcessContext` from the batch transport, host note ids, pitch bend
   and CCs through `IMidiMapping`, per-note expressions, output notes back as `notes_out`). Params

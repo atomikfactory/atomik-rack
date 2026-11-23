@@ -4,7 +4,7 @@
 //! input events and the output event list are preallocated at their fixed capacities.
 
 use crate::block::SharedBlock;
-use crate::codec::{AudioOp, sleep_rule_code, status_code, tail_code};
+use crate::codec::{AudioOp, Before, sleep_rule_code, status_code, tail_code};
 use crate::deadline::now;
 use crate::doorbell::Doorbell;
 use crate::layout::{MAX_AUX_CHANNELS, MAX_CHANNELS, MAX_EVENTS_IN, MAX_EVENTS_OUT, WireEvent};
@@ -134,6 +134,7 @@ impl ChildPort {
                             port: self,
                             ticket,
                             op,
+                            before: Before::from_word(code),
                         });
                     }
                     None => {
@@ -198,12 +199,18 @@ pub struct Request<'a> {
     port: &'a mut ChildPort,
     ticket: u64,
     op: AudioOp,
+    before: Before,
 }
 
 impl Request<'_> {
     /// The op to perform.
     pub fn op(&self) -> AudioOp {
         self.op
+    }
+
+    /// The work to do before the op (a start or a reset that rides on a batch).
+    pub fn before(&self) -> Before {
+        self.before
     }
 
     /// Runs `f` with a [`PluginIo`] over the request inputs and the response outputs

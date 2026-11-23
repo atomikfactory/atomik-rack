@@ -5,7 +5,7 @@ mod support;
 
 use atomik_plugin_host::{ProcessStatus, SleepRule, TailLength};
 use atomik_plugin_ipc::{
-    AudioOp, FromChild, ProcessorInfo, ToChild, WireChannels, WireErrorKind, WireKind,
+    AudioOp, Before, FromChild, ProcessorInfo, ToChild, WireChannels, WireErrorKind, WireKind,
 };
 use support::{PATIENCE, SR, Spawn, TestParent, note_off, note_on, param, ramp};
 
@@ -368,4 +368,67 @@ fn the_round_trip_of_one_block_is_measured() {
         times[times.len() * 99 / 100],
         times[times.len() - 1]
     );
+}
+
+// ----- a start that rides on a batch ------------------------------------------------------------
+
+/// The output of the first batch of `null.synth` with a note at frame 10, the start riding on it.
+fn first_batch(spawn: &Spawn, before: Before) -> (ProcessStatus, Vec<u32>) {
+    let mut p = TestParent::spawn(spawn);
+    p.hello();
+    p.instantiate();
+    p.activate(false);
+    let out = p.process_before(before, &[], &[note_on(10, 69, 1.0, 1)]);
+    (out.status, bits(&out.main_out[0]))
+}
+
+#[test]
+fn a_start_riding_on_the_batch_gives_the_output_of_a_separate_start_even_when_it_is_slow() {
+    let separate = {
+        let mut p = started("null.synth");
+        p.instantiate();
+        p.activate(false);
+        assert!(p.op(AudioOp::Start).ok);
+        let out = p.process(&[], &[note_on(10, 69, 1.0, 1)]);
+        (out.status, bits(&out.main_out[0]))
+    };
+    assert!(
+        separate.1[11..].iter().any(|b| f32::from_bits(*b) != 0.0),
+        "the note sounds"
+    );
+    let instant = first_batch(
+        &Spawn::null("null.synth"),
+        Before::START.with(Before::RESET),
+    );
+    assert_eq!(instant, separate, "the same bits as a start of its own");
+    // A start that takes 100 ms: the note is not lost, and sounds at its offset.
+    let slow = first_batch(
+        &Spawn::null("null.synth").env("ATOMIK_NULL_START_MS", "100"),
+        Before::START.with(Before::RESET),
+    );
+    assert_eq!(slow, separate, "slow or not, the same bits");
+}
+
+#[test]
+fn a_start_the_plugin_refuses_answers_the_batch_with_no_audio_and_a_status_that_says_why() {
+    let (status, out) = first_batch(&Spawn::null("null.refuse-start"), Before::START);
+    assert_eq!(status, ProcessStatus::StartFailed);
+    assert!(out.iter().all(|b| f32::from_bits(*b) == 0.0));
+}
+
+#[test]
+fn a_stop_and_a_start_on_one_batch_leave_the_plugin_started_and_a_start_of_a_started_one_is_harmless()
+ {
+    let mut p = started("null.synth");
+    p.instantiate();
+    p.activate(false);
+    let first = p.process_before(Before::START, &[], &[note_on(0, 69, 1.0, 1)]);
+    assert_eq!(first.status, ProcessStatus::Continue);
+    // Stopped and started again in one request.
+    let again = p.process_before(Before::STOP.with(Before::START), &[], &[]);
+    assert_eq!(again.status, ProcessStatus::Continue);
+    // A start asked of a plugin that is already started is answered like any batch.
+    let third = p.process_before(Before::START, &[], &[]);
+    assert_eq!(third.status, ProcessStatus::Continue);
+    assert!(p.op(AudioOp::Stop).ok);
 }

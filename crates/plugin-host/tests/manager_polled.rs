@@ -553,3 +553,35 @@ fn a_ready_creation_that_is_cancelled_ends_its_plugin_across_polls() {
     assert_eq!(m.leaving_count(), 0);
     assert_eq!(stats.destroyed(), 1);
 }
+
+#[test]
+fn one_poll_asks_every_instance_before_it_polls_any_of_them() {
+    let (mut m, stats) = manager();
+    stats.record_polls(true);
+    let mut kept = Vec::new();
+    let mut ids = Vec::new();
+    for _ in 0..3 {
+        let (h, id) = harness_of(m.instantiate(&request(None)).unwrap());
+        kept.push(h);
+        ids.push(id);
+    }
+    // The last one is parked: its device went away and the engine keeps it for a restart.
+    m.retain(ids[2], true);
+    drop(kept.pop());
+    m.poll();
+    let before = stats.poll_log().len();
+    m.poll();
+    let log = stats.poll_log();
+    assert_eq!(
+        log[before..],
+        [
+            (0, true),
+            (1, true),
+            (2, true),
+            (0, false),
+            (1, false),
+            (2, false)
+        ],
+        "every ask comes before the first poll, and a parked instance is asked and polled too"
+    );
+}

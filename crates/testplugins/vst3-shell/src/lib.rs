@@ -26,7 +26,8 @@ mod hooks;
 mod util;
 
 pub use api::{
-    Arrangement, Dsp, Info, Io, LibraryDef, ParamSpec, Passthrough, PluginDef, Ports, Status,
+    Arrangement, Dsp, Info, Io, LibraryDef, ParamSpec, Passthrough, PluginDef, Ports, Quirks,
+    Status,
 };
 pub use classes::make_factory;
 pub use component::{MIDI_ALL_OFF, MIDI_BEND, MIDI_MOD, MIDI_PRESSURE};

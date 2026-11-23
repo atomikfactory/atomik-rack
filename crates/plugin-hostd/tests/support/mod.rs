@@ -10,9 +10,9 @@ use atomik_plugin_host::{
     EventList, PluginEvent, PluginEventKind, PluginIo, PluginTransport, ProcessStatus,
 };
 use atomik_plugin_ipc::{
-    AudioOp, Deadline, Doorbell, DoorbellName, FromChild, PROTOCOL_VERSION, ParentPort, Poll,
-    Response, SharedBlock, ToChild, WireLayout, block_file_name, default_block_dir, read_frame,
-    write_frame,
+    AudioOp, Before, Deadline, Doorbell, DoorbellName, FromChild, PROTOCOL_VERSION, ParentPort,
+    Poll, Response, SharedBlock, ToChild, WireLayout, block_file_name, default_block_dir,
+    read_frame, write_frame,
 };
 #[cfg(windows)]
 pub mod owner_window;
@@ -347,6 +347,19 @@ impl TestParent {
         out_channels: usize,
         wait: Duration,
     ) -> Result<Out, Poll> {
+        self.try_process_before(Before::NONE, main_in, events, out_channels, wait)
+    }
+
+    /// [`TestParent::try_process`] with work for the child to do before the block (a start that
+    /// rides on it).
+    pub fn try_process_before(
+        &mut self,
+        before: Before,
+        main_in: &[Batch],
+        events: &[PluginEvent],
+        out_channels: usize,
+        wait: Duration,
+    ) -> Result<Out, Poll> {
         let mut main_out = [[0.0; BATCH]; 2];
         let mut events_out = EventList::with_capacity(512);
         let status = {
@@ -363,7 +376,7 @@ impl TestParent {
                 transport: PluginTransport::default(),
                 dropped: 0,
             };
-            let t = self.port.submit(AudioOp::Process, &io);
+            let t = self.port.submit_before(AudioOp::Process, before, &io);
             match self.port.wait_done(t, Deadline::after(wait)) {
                 Poll::Done => {}
                 other => return Err(other),
@@ -395,6 +408,17 @@ impl TestParent {
             dropped: 0,
         };
         self.port.submit(AudioOp::Process, &io)
+    }
+
+    /// Sends one block with `before` riding on it and waits for the result.
+    pub fn process_before(
+        &mut self,
+        before: Before,
+        main_in: &[Batch],
+        events: &[PluginEvent],
+    ) -> Out {
+        self.try_process_before(before, main_in, events, 2, PATIENCE)
+            .expect("the child answers the block")
     }
 
     /// Sends one block and waits for the result.

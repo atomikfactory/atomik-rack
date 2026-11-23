@@ -18,7 +18,7 @@
 
 use crate::panic_report;
 use atomik_plugin_host::{AudioThreadGuard, FtzGuard, PluginProcessor, ProcessStatus};
-use atomik_plugin_ipc::{AudioOp, ChildPort, ChildWaker, ProcessorInfo};
+use atomik_plugin_ipc::{AudioOp, Before, ChildPort, ChildWaker, ProcessorInfo};
 use std::io;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
@@ -272,31 +272,53 @@ fn answer(
     report: &Sender<Vec<String>>,
 ) {
     let _guard = AudioThreadGuard::enter();
+    let before = request.before();
     let Held {
         processor,
         started,
         poisoned,
     } = held;
     request.complete(|io| {
-        let run = catch_unwind(AssertUnwindSafe(|| match op {
-            AudioOp::Process => {
-                // The same floating-point environment the device gives an in-process plugin.
-                let _flush = FtzGuard::enter();
-                (processor.process(io), true)
-            }
-            AudioOp::Start => {
-                let ok = processor.start_processing();
-                *started = ok;
-                (ProcessStatus::Continue, ok)
-            }
-            AudioOp::Stop => {
+        let run = catch_unwind(AssertUnwindSafe(|| {
+            // What rides on the request comes first, in the order the device calls it: the
+            // stop, the start (a plugin that is already started is not started again), the
+            // reset. A start the plugin refuses ends the request: no audio, and the answer
+            // says why.
+            if before.has(Before::STOP) {
                 processor.stop_processing();
                 *started = false;
-                (ProcessStatus::Continue, true)
             }
-            AudioOp::Reset => {
+            if before.has(Before::START) && !*started {
+                let ok = processor.start_processing();
+                *started = ok;
+                if !ok {
+                    return (ProcessStatus::StartFailed, false);
+                }
+            }
+            if before.has(Before::RESET) {
+                let _flush = FtzGuard::enter();
                 processor.reset();
-                (ProcessStatus::Continue, true)
+            }
+            match op {
+                AudioOp::Process => {
+                    // The same floating-point environment the device gives an in-process plugin.
+                    let _flush = FtzGuard::enter();
+                    (processor.process(io), true)
+                }
+                AudioOp::Start => {
+                    let ok = processor.start_processing();
+                    *started = ok;
+                    (ProcessStatus::Continue, ok)
+                }
+                AudioOp::Stop => {
+                    processor.stop_processing();
+                    *started = false;
+                    (ProcessStatus::Continue, true)
+                }
+                AudioOp::Reset => {
+                    processor.reset();
+                    (ProcessStatus::Continue, true)
+                }
             }
         }));
         run.unwrap_or_else(|_| {

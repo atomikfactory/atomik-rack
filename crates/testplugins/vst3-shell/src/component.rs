@@ -1,8 +1,8 @@
 //! The processor half of a test plugin: `IComponent`, `IAudioProcessor`,
 //! `IProcessContextRequirements` and the connection point, over a [`Dsp`].
 
-use crate::api::{Arrangement, Dsp, Info, Io, ParamSpec, PluginDef, Ports, Status};
-use crate::hooks::{self, Shared, bump, counter, probe};
+use crate::api::{Arrangement, Dsp, Info, Io, ParamSpec, PluginDef, Ports, Quirks, Status};
+use crate::hooks::{self, Shared, bump, counter, disconnect_peer, probe, stamp};
 use crate::util::{copy_wstr, cstr_text, plain_of, read_all, write_all};
 use atomik_test_plugin_core::{BLOCK, Event, ExprKind, TimedEvent};
 use std::ffi::c_void;
@@ -48,6 +48,7 @@ pub(crate) struct ComponentCore {
     pub shared: Arc<Shared>,
     proc: Mutex<Proc>,
     ports: Ports,
+    pub quirks: Quirks,
     host: Mutex<Option<ComPtr<IHostApplication>>>,
     peer: Mutex<Option<ComPtr<IConnectionPoint>>>,
     rate: AtomicU64,
@@ -62,6 +63,7 @@ impl ComponentCore {
         let dsp = (def.create)();
         let ports = dsp.ports();
         let params = dsp.params();
+        let quirks = dsp.quirks();
         bump(counter::CREATED);
         Self {
             info: def.info,
@@ -75,6 +77,7 @@ impl ComponentCore {
                 grown: false,
             }),
             ports,
+            quirks,
             host: Mutex::new(None),
             peer: Mutex::new(None),
             rate: AtomicU64::new(48_000f64.to_bits()),
@@ -96,8 +99,14 @@ impl ComponentCore {
     }
 
     pub fn terminate(&self) -> tresult {
+        if self.quirks.chatty_teardown {
+            self.say_goodbye();
+        }
         *lock(&self.host) = None;
-        *lock(&self.peer) = None;
+        // A strict plugin keeps its peer here: it lets go of it only in `disconnect`.
+        if !self.quirks.strict_peer {
+            *lock(&self.peer) = None;
+        }
         kResultOk
     }
 
@@ -276,6 +285,7 @@ impl ComponentCore {
             }
         } else {
             bump(counter::DEACTIVATED);
+            stamp(counter::SEQ_DEACTIVATE);
             self.shared.add(probe::DEACTIVATIONS, 1);
             // Bus activation is per activation cycle in this plugin's books.
             self.shared.set(probe::BUS_ACTIVE, 0);
@@ -312,6 +322,10 @@ impl ComponentCore {
     pub fn set_processing(&self, state: bool) -> tresult {
         if state {
             self.shared.add(probe::PROCESSING_STARTS, 1);
+            let delay = atomik_test_plugin_core::start_delay_ms();
+            if delay > 0 {
+                std::thread::sleep(std::time::Duration::from_millis(delay));
+            }
             if !lock(&self.proc).dsp.start_processing() {
                 return kResultFalse;
             }
@@ -368,9 +382,12 @@ impl ComponentCore {
         kResultOk
     }
 
-    pub unsafe fn disconnect(&self, _other: *mut IConnectionPoint) -> tresult {
-        *lock(&self.peer) = None;
-        kResultOk
+    pub unsafe fn disconnect(&self, other: *mut IConnectionPoint) -> tresult {
+        stamp(counter::SEQ_DISCONNECT_COMPONENT);
+        if self.quirks.chatty_teardown {
+            self.say_goodbye();
+        }
+        disconnect_peer(&self.peer, other, self.quirks.strict_peer)
     }
 
     pub unsafe fn notify(&self, message: *mut IMessage) -> tresult {
@@ -381,13 +398,57 @@ impl ComponentCore {
         kResultOk
     }
 
-    /// Sends a message with one integer attribute `id` through `peer`.
-    pub(crate) fn send(&self, peer: &ComPtr<IConnectionPoint>, name: &str, id: i64) {
+    /// Sends a message with one integer attribute `id` through `peer`; whether the peer took it.
+    pub(crate) fn send(&self, peer: &ComPtr<IConnectionPoint>, name: &str, id: i64) -> bool {
         let host = lock(&self.host).clone();
-        send_message(host.as_ref(), peer, name, id);
+        send_message(host.as_ref(), peer, name, id)
+    }
+
+    /// A chatty plugin's last word to its peer, from inside `disconnect` and `terminate`.
+    fn say_goodbye(&self) {
+        let peer = lock(&self.peer).clone();
+        if let Some(peer) = peer
+            && self.send(&peer, "atomik.bye", self.shared.number as i64)
+        {
+            bump(counter::TEARDOWN_MESSAGES_DELIVERED);
+        }
     }
 
     // ----- process -----------------------------------------------------------------------------
+
+    /// Writes the output parameters a test asked for (`command::OUT_PARAMS`) into the host's
+    /// list, one queue each, as a metering plugin does in every block.
+    fn write_out_params(&self, d: &ProcessData) {
+        let count = self.shared.get(probe::OUT_COUNT);
+        if count == 0 {
+            return;
+        }
+        // SAFETY: the host passes null or a valid list for the call.
+        let Some(list) = (unsafe { ComRef::from_raw(d.outputParameterChanges) }) else {
+            return;
+        };
+        let base = self.shared.get(probe::OUT_BASE) as u32;
+        let calls = self.shared.get(probe::PROCESS_CALLS);
+        let fixed = f64::from_bits(self.shared.get(probe::OUT_VALUE));
+        let ramp = self.shared.get(probe::OUT_RAMP) != 0;
+        for k in 0..count {
+            let id = base.wrapping_add(k as u32);
+            let value = if ramp {
+                ((calls + k) % 997) as f64 / 997.0
+            } else {
+                fixed
+            };
+            let mut index = 0i32;
+            // SAFETY: calling methods of the host's list with valid arguments.
+            let queue = unsafe { list.addParameterData(&id, &mut index) };
+            // SAFETY: null or a queue of the host's list.
+            if let Some(queue) = unsafe { ComRef::from_raw(queue) } {
+                let mut at = 0i32;
+                // SAFETY: valid out pointer.
+                unsafe { queue.addPoint(0, value, &mut at) };
+            }
+        }
+    }
 
     pub unsafe fn process(&self, data: *mut ProcessData) -> tresult {
         // SAFETY: the host passes a valid ProcessData for the call.
@@ -535,6 +596,7 @@ impl ComponentCore {
 
         self.shared.add(probe::PROCESS_CALLS, 1);
         self.shared.set(probe::FRAMES, d.numSamples as u64);
+        self.write_out_params(d);
         if !d.processContext.is_null() {
             // SAFETY: non-null and valid for the call.
             let c = unsafe { &*d.processContext };
@@ -723,25 +785,26 @@ unsafe fn read_bus(
     Some((out, bus.silenceFlags, n))
 }
 
-/// Builds a host message named `name` with the integer attribute `id` and sends it to `peer`.
+/// Builds a host message named `name` with the integer attribute `id` and sends it to `peer`;
+/// whether the peer took it.
 pub(crate) fn send_message(
     host: Option<&ComPtr<IHostApplication>>,
     peer: &ComPtr<IConnectionPoint>,
     name: &str,
     id: i64,
-) {
-    let Some(host) = host else { return };
+) -> bool {
+    let Some(host) = host else { return false };
     let mut cid = IMessage_iid;
     let mut iid = IMessage_iid;
     let mut obj: *mut c_void = std::ptr::null_mut();
     // SAFETY: valid ids and out pointer; the host returns an owned IMessage or fails.
     let r = unsafe { host.createInstance(&mut cid, &mut iid, &mut obj) };
     if r != kResultOk {
-        return;
+        return false;
     }
     // SAFETY: the host handed us one reference to an IMessage.
     let Some(message) = (unsafe { ComPtr::from_raw(obj.cast::<IMessage>()) }) else {
-        return;
+        return false;
     };
     let text = std::ffi::CString::new(name).unwrap_or_default();
     // SAFETY: the message is live; the id string outlives the calls.
@@ -750,7 +813,7 @@ pub(crate) fn send_message(
         if let Some(attrs) = ComRef::from_raw(message.getAttributes()) {
             attrs.setInt(c"id".as_ptr(), id);
         }
-        peer.notify(message.as_ptr());
+        peer.notify(message.as_ptr()) == kResultOk
     }
 }
 

@@ -16,12 +16,22 @@ fn scanning_creates_and_destroys_every_instance_even_the_ones_that_fail_halfway(
     let lib = TestLib::open_path(&path);
     let b = Vst3Backend::new();
     let found = b.scan_file(&path).unwrap();
-    assert_eq!(found.len(), 19);
-    assert!(found.iter().filter(|p| p.unsupported.is_some()).count() >= 3);
-    assert_eq!(lib.counter(counter::CREATED), 19, "one instance per class");
+    assert_eq!(found.len(), 24);
+    assert!(found.iter().filter(|p| p.unsupported.is_some()).count() >= 5);
+    assert_eq!(lib.counter(counter::CREATED), 24, "one instance per class");
     assert_eq!(
         lib.counter(counter::DESTROYED),
-        19,
+        24,
         "the unsupported and the failed ones are torn down, too"
+    );
+    assert_eq!(
+        lib.counter(counter::CONTROLLERS_CREATED),
+        lib.counter(counter::CONTROLLERS_DESTROYED),
+        "every controller class object is destroyed, too"
+    );
+    assert_eq!(
+        lib.counter(counter::COMPONENT_INITS) - lib.counter(counter::COMPONENT_TERMS),
+        1,
+        "every component that initialised was terminated: the one that refused to is the one left"
     );
 }

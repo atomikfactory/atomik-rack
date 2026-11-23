@@ -128,8 +128,31 @@ pub struct Io<'a> {
     pub output: [Block; 2],
 }
 
+/// Ways a test plugin behaves like a strict real one. All off by default: a plugin that asks for
+/// none of them behaves as before.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Quirks {
+    /// A split plugin that lets go of its peer in `disconnect(other)` only when `other` is the
+    /// peer it stored (it answers `kResultFalse` otherwise) and does not let go of it in
+    /// `terminate`: the plugin whose component and controller keep each other alive through the
+    /// host's proxies until the host disconnects them properly.
+    pub strict_peer: bool,
+    /// The plugin sends a message to its peer from inside `disconnect` and `terminate`.
+    pub chatty_teardown: bool,
+    /// The component initialises fine and is not an audio processor.
+    pub not_a_processor: bool,
+    /// The separate controller's `initialize` returns an error.
+    pub controller_refuses: bool,
+    /// The factory answers the controller class with the component's own object.
+    pub controller_is_component: bool,
+}
+
 /// The DSP and state of one plugin.
 pub trait Dsp: Send {
+    /// How strictly the plugin behaves towards the host (see [`Quirks`]).
+    fn quirks(&self) -> Quirks {
+        Quirks::default()
+    }
     /// The buses.
     fn ports(&self) -> Ports;
     /// The parameter table now.
@@ -237,11 +260,25 @@ pub struct LibraryDef {
     pub plugins: &'static [PluginDef],
     /// Module entry; false fails loading the library.
     pub init: fn() -> bool,
+    /// The factory answers `setHostContext` with an error instead of keeping the context.
+    pub refuse_host_context: bool,
 }
 
 impl LibraryDef {
     /// A library of `plugins` whose entry is `init`.
     pub const fn new(plugins: &'static [PluginDef], init: fn() -> bool) -> Self {
-        Self { plugins, init }
+        Self {
+            plugins,
+            init,
+            refuse_host_context: false,
+        }
+    }
+
+    /// The same library whose factory refuses the host context (the call is advisory: the host
+    /// must carry on).
+    #[must_use]
+    pub const fn refusing_host_context(mut self) -> Self {
+        self.refuse_host_context = true;
+        self
     }
 }

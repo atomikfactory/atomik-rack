@@ -537,13 +537,14 @@ fn plugin_messages_become_manager_events_tagged_with_the_instance() {
     assert_eq!(
         events,
         vec![
+            // A flag comes out before the messages that carry data.
+            ManagerEvent::StateDirty(id),
             ManagerEvent::ParamEdit {
                 instance: id,
                 param: 3,
                 value: 0.25,
                 phase: ParamPhase::Change
             },
-            ManagerEvent::StateDirty(id),
             ManagerEvent::GuiResize {
                 instance: id,
                 w: 400,

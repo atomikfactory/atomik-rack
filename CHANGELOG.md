@@ -232,6 +232,13 @@ may break APIs and the patch and project formats.
   window that is uncovered or gains the focus, a frame that was not shown, the first paint and screenshots are never
   held back, a lone window keeps painting in step with its monitor as before, and the periodic activity line now
   also says how many paints were held back per window.
+- **A bounce waits for its sandboxed plugins together, not one after the other.** After every batch an offline render
+  asks each plugin in its own process for its notifications (a restart it wants, a latency change, a dirty state):
+  the requests of all plugins now go out first and their answers are collected afterwards, so a project with ten
+  such plugins no longer pays ten round trips per batch in a row (a 60 s bounce of ten test plugins in ten
+  processes falls from about 59 s to about 42 s). Every plugin is still asked after every batch, so a restart or a
+  latency change lands on the same batch as before and the rendered file is the same bytes. A live project is
+  unchanged.
 
 ### Fixed
 - **Dropping an instrument above its mix channel.** An instrument dragged to the place above its own mix channel
@@ -435,6 +442,42 @@ may break APIs and the patch and project formats.
   death of a plugin process from the process itself, not only from the end of its pipes, so a plugin that started a
   helper process is shown as crashed when it dies instead of seconds later (or when the helper ends); a shared process
   loses all its plugins at once. There is one report per death, and a shutdown the app asked for is never one.
+- **A plugin in its own process that is slow to start no longer stalls the audio or fails.** The start (and the reset
+  after a locate) used to be a request the audio thread waited for up to 50 ms: a plugin that took 20 ms to start
+  held every callback for 20 ms, and one that took longer failed with "the plugin could not start processing" until
+  RELOAD. The start now rides on the first batch that needs it, which is waited for like any batch, so a slow start is
+  only a run of late batches (dry or silent) and the plugin plays as soon as it has started. A sleeping instrument
+  that is woken by a note is started the same way, and its first note sounds. A stop is sent without waiting. A plugin
+  that refuses to start still fails once with the same message, and one whose start never returns is still ended as
+  hung. A bounce is unchanged.
+- **What a plugin tells the app is no longer lost to a full or busy message ring.** Everything a plugin or its device
+  said went through one ring of 256 messages that dropped a message when it was full or when two threads posted at
+  the same instant, so a plugin that wrote parameters in every block, with the app busy for a moment, could cost a
+  change of latency, a request to save, the end of a gesture or the news that its process had died (and with it the
+  automatic reload). The requests that carry no data (save, latency, parameter table, restart, callback) are now flags
+  that are always accepted; every other message posted outside a plugin's `process` goes to a queue its threads wait
+  for, where a drag in a plugin's window is held as one message and only a parameter change or a log line is shed,
+  after a thousand are waiting; inside `process` the ring keeps room for gestures, log lines and failures that a flood
+  of changes cannot take. The messages come out in the order they were posted, flags first, and a failure the ring
+  refused is said again on the next blocks. A VST3 plugin's own parameter writes are reported only for the parameters
+  the app shows, only when the value moved, and at most about once every 20 ms, instead of every parameter in every
+  block.
+- **Removing a VST3 plugin whose controller is a class of its own now leaves nothing of it behind.** The host joined
+  the two halves through proxies that each kept the other half alive, and at removal it asked each half to
+  disconnect with nothing, which a plugin written the usual way ignores, so every removal left the whole plugin
+  (threads, handles, memory) in the process: it stayed until the app closed when plugins are not sandboxed, when
+  they share a process, and in a scan. Each half is now disconnected with the proxy it was connected with and both
+  proxies are cut whatever the plugin answers, after the plugin was deactivated and before its controller and then
+  its component are terminated. A proxy no longer releases a plugin object while it holds its own lock, so a
+  plugin that talks while it is released cannot hang the app.
+- **A VST3 plugin that cannot be used is torn down, and a controller that refuses to start fails the plugin.** A
+  component that initialised and then turned out not to be an audio processor was dropped without being
+  terminated. A separate controller whose initialisation failed was used anyway (its parameters, state and editor)
+  and terminated: the plugin is now refused with "the plugin's controller refused to initialise", which the plugin
+  list shows as the reason it is unsupported and a project shows on the missing device, and the controller is
+  released without being terminated. A factory that answers the controller class with the component's own object is
+  one object: initialised and terminated once, with no second initialisation and no proxies. A factory that
+  implements the host-context interface now gets the host context once, before anything is created from it.
 
 ## [0.5.0-rc.1] - 2026-11-18
 

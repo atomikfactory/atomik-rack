@@ -79,8 +79,16 @@ fn a_batch_the_child_answers_returns_its_status_and_its_exact_output() {
     }
     r.fake.ctl.set_audio_status(ProcessStatus::Sleep);
     assert_eq!(p.process(&mut b.io()), ProcessStatus::Sleep);
+    // A stop is sent at once, a reset is owed to the next batch; nothing is a request of its own
+    // that the call waits for.
     p.stop_processing();
     p.reset();
+    r.fake.ctl.set_audio_status(ProcessStatus::Continue);
+    assert!(p.start_processing());
+    eventually("the stop to be answered", || {
+        r.fake.ctl.audio_ops().len() == 6
+    });
+    assert_eq!(p.process(&mut b.io()), ProcessStatus::Continue);
     assert_eq!(
         r.fake.ctl.audio_ops(),
         vec![
@@ -90,7 +98,9 @@ fn a_batch_the_child_answers_returns_its_status_and_its_exact_output() {
             AudioOp::Process,
             AudioOp::Process,
             AudioOp::Stop,
-            AudioOp::Reset
+            AudioOp::Start,
+            AudioOp::Reset,
+            AudioOp::Process
         ]
     );
 }
@@ -205,20 +215,6 @@ fn a_wait_for_a_stalled_child_ends_when_the_child_dies() {
     assert_eq!(p.process(&mut b.io()), ProcessStatus::Lost);
     assert!(now().saturating_duration_since(t) < Duration::from_millis(600));
     killer.join().unwrap();
-}
-
-#[test]
-fn start_processing_that_is_not_answered_in_time_is_false_not_a_kill() {
-    let mut r = rig(FakeOptions::default());
-    let mut p = active(&mut r, FAST, RunMode::Realtime);
-    r.fake.ctl.set_audio(AudioMode::Stall);
-    assert!(!p.start_processing());
-    assert!(!r.instance.is_lost(), "late is not lost");
-    r.fake.ctl.set_audio(AudioMode::Echo);
-    eventually("the old op to complete", || {
-        r.fake.ctl.audio_ops().len() == 1
-    });
-    assert!(p.start_processing());
 }
 
 #[test]

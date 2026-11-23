@@ -164,8 +164,10 @@ fn a_full_edit_ring_drops_and_counts_but_the_app_still_hears_the_edit() {
     let (hub, m) = hub();
     let (producer, _consumer) = rtrb::RingBuffer::new(1);
     hub.set_edit_sink(Some(producer));
-    for _ in 0..3 {
-        hub.edit(1, 0.5);
+    // Three params, so that the app's message queue keeps all three (a change of the same param
+    // as the last one replaces it).
+    for id in 1..=3 {
+        hub.edit(id, 0.5);
     }
     assert_eq!(hub.edits_dropped.load(Ordering::Relaxed), 2);
     assert_eq!(drain(&m).len(), 3);
@@ -320,6 +322,64 @@ fn the_connection_proxy_forwards_to_its_destination_and_stops_when_cut() {
     // SAFETY: a valid proxy pointer.
     assert_eq!(unsafe { p.notify(std::ptr::null_mut()) }, kResultOk);
     assert_eq!(seen.load(Ordering::Relaxed), 2);
+}
+
+/// A destination that, when it is released, tells the proxy it was a destination of: plugin code
+/// that runs from a release and talks to its peer.
+struct TalksWhenReleased {
+    proxy: Mutex<Option<ComPtr<IConnectionPoint>>>,
+    told: Arc<AtomicUsize>,
+}
+
+impl Class for TalksWhenReleased {
+    type Interfaces = (IConnectionPoint,);
+}
+
+impl IConnectionPointTrait for TalksWhenReleased {
+    unsafe fn connect(&self, _o: *mut IConnectionPoint) -> tresult {
+        kResultOk
+    }
+    unsafe fn disconnect(&self, _o: *mut IConnectionPoint) -> tresult {
+        kResultOk
+    }
+    unsafe fn notify(&self, _m: *mut IMessage) -> tresult {
+        kResultOk
+    }
+}
+
+impl Drop for TalksWhenReleased {
+    fn drop(&mut self) {
+        if let Some(p) = lock(&self.proxy).take() {
+            // SAFETY: a live proxy; a null message is only counted by the proxy's answer.
+            if unsafe { p.notify(std::ptr::null_mut()) } == kResultFalse {
+                self.told.fetch_add(1, Ordering::Relaxed);
+            }
+        }
+    }
+}
+
+#[test]
+fn a_destination_released_by_the_proxy_may_talk_to_the_same_proxy_without_deadlock() {
+    // Run on a thread of its own: a proxy that releases under its lock never answers.
+    let (done, wait) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let told = Arc::new(AtomicUsize::new(0));
+        let proxy = ConnectionProxy::new();
+        let me = proxy.to_com_ptr::<IConnectionPoint>().unwrap();
+        let destination = ComWrapper::new(TalksWhenReleased {
+            proxy: Mutex::new(Some(me)),
+            told: Arc::clone(&told),
+        });
+        proxy.set_destination(destination.to_com_ptr::<IConnectionPoint>());
+        drop(destination);
+        // The proxy holds the last reference to the destination: cutting it releases it.
+        proxy.set_destination(None);
+        let _ = done.send(told.load(Ordering::Relaxed));
+    });
+    let told = wait
+        .recv_timeout(std::time::Duration::from_secs(60))
+        .expect("the proxy answers while it releases its destination");
+    assert_eq!(told, 1, "the release ran, and its talk met a cut proxy");
 }
 
 #[cfg(target_os = "linux")]

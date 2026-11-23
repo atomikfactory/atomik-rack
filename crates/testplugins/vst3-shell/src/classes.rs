@@ -5,11 +5,12 @@
 use crate::api::{LibraryDef, PluginDef};
 use crate::component::ComponentCore;
 use crate::controller::ControllerCore;
-use crate::hooks::{self, Shared};
+use crate::hooks::{self, Shared, bump, counter, set_counter, stamp};
 use crate::util::{copy_cstr, copy_wstr};
 use std::ffi::{c_char, c_void};
-use std::sync::atomic::{AtomicU64, Ordering};
-use vst3::{Class, ComWrapper, Steinberg::Vst::*, Steinberg::*, uid};
+use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use vst3::{Class, ComPtr, ComWrapper, Steinberg::Vst::*, Steinberg::*, uid};
 
 static NEXT_NUMBER: AtomicU64 = AtomicU64::new(1);
 
@@ -20,6 +21,13 @@ fn b(state: TBool) -> bool {
 // ----- trait impls shared by the three classes ----------------------------------------------
 
 macro_rules! impl_component {
+    ($t:ty) => {
+        impl_icomponent!($t);
+        impl_processor!($t);
+    };
+}
+
+macro_rules! impl_icomponent {
     ($t:ty) => {
         impl IComponentTrait for $t {
             unsafe fn getControllerClassId(&self, class_id: *mut TUID) -> tresult {
@@ -72,7 +80,11 @@ macro_rules! impl_component {
                 unsafe { self.comp.get_state(state) }
             }
         }
+    };
+}
 
+macro_rules! impl_processor {
+    ($t:ty) => {
         impl IAudioProcessorTrait for $t {
             unsafe fn setBusArrangements(
                 &self,
@@ -337,12 +349,15 @@ impl Class for Both {
 
 impl IPluginBaseTrait for Both {
     unsafe fn initialize(&self, context: *mut FUnknown) -> tresult {
+        bump(counter::COMPONENT_INITS);
         // SAFETY: forwarded from the host.
         let (a, b) = unsafe { (self.comp.initialize(context), self.ctrl.initialize(context)) };
         if a == kResultOk { b } else { a }
     }
 
     unsafe fn terminate(&self) -> tresult {
+        bump(counter::COMPONENT_TERMS);
+        stamp(counter::SEQ_TERMINATE_COMPONENT);
         self.ctrl.terminate();
         self.comp.terminate()
     }
@@ -350,6 +365,32 @@ impl IPluginBaseTrait for Both {
 
 impl_component!(Both);
 impl_controller!(Both);
+
+// ----- a component that is not an audio processor ---------------------------------------------
+
+pub(crate) struct NotProc {
+    comp: ComponentCore,
+}
+
+impl Class for NotProc {
+    type Interfaces = (IComponent,);
+}
+
+impl IPluginBaseTrait for NotProc {
+    unsafe fn initialize(&self, context: *mut FUnknown) -> tresult {
+        bump(counter::COMPONENT_INITS);
+        // SAFETY: forwarded from the host.
+        unsafe { self.comp.initialize(context) }
+    }
+
+    unsafe fn terminate(&self) -> tresult {
+        bump(counter::COMPONENT_TERMS);
+        stamp(counter::SEQ_TERMINATE_COMPONENT);
+        self.comp.terminate()
+    }
+}
+
+impl_icomponent!(NotProc);
 
 // ----- a split plugin -------------------------------------------------------------------------
 
@@ -368,11 +409,14 @@ impl Class for Comp {
 
 impl IPluginBaseTrait for Comp {
     unsafe fn initialize(&self, context: *mut FUnknown) -> tresult {
+        bump(counter::COMPONENT_INITS);
         // SAFETY: forwarded from the host.
         unsafe { self.comp.initialize(context) }
     }
 
     unsafe fn terminate(&self) -> tresult {
+        bump(counter::COMPONENT_TERMS);
+        stamp(counter::SEQ_TERMINATE_COMPONENT);
         self.comp.terminate()
     }
 }
@@ -410,12 +454,24 @@ impl Class for Ctrl {
 
 impl IPluginBaseTrait for Ctrl {
     unsafe fn initialize(&self, context: *mut FUnknown) -> tresult {
+        bump(counter::CONTROLLER_INITS);
+        if self.ctrl.quirks.controller_refuses {
+            return kInternalError;
+        }
         // SAFETY: forwarded from the host.
         unsafe { self.ctrl.initialize(context) }
     }
 
     unsafe fn terminate(&self) -> tresult {
+        bump(counter::CONTROLLER_TERMS);
+        stamp(counter::SEQ_TERMINATE_CONTROLLER);
         self.ctrl.terminate()
+    }
+}
+
+impl Drop for Ctrl {
+    fn drop(&mut self) {
+        bump(counter::CONTROLLERS_DESTROYED);
     }
 }
 
@@ -441,10 +497,44 @@ impl IConnectionPointTrait for Ctrl {
 /// The plugin factory of a library.
 pub(crate) struct Factory {
     pub lib: &'static LibraryDef,
+    /// The host context a factory keeps after `setHostContext`, as real plugins do.
+    context: Mutex<Option<ComPtr<FUnknown>>>,
+    /// `setHostContext` has been called.
+    given: AtomicBool,
+    /// The last single-object plugin made (a component the factory also answers its controller
+    /// class with): its class id and the object, handed out once more for the controller class.
+    single: Mutex<Option<(TUID, ComPtr<FUnknown>)>>,
+}
+
+impl Factory {
+    pub(crate) fn new(lib: &'static LibraryDef) -> Self {
+        Self {
+            lib,
+            context: Mutex::new(None),
+            given: AtomicBool::new(false),
+            single: Mutex::new(None),
+        }
+    }
 }
 
 impl Class for Factory {
     type Interfaces = (IPluginFactory3,);
+}
+
+impl Drop for Factory {
+    fn drop(&mut self) {
+        let context = self
+            .context
+            .get_mut()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take();
+        if let Some(context) = context {
+            let raw = context.into_raw();
+            // SAFETY: the one reference this factory kept; `release` answers how many remain.
+            let remaining = unsafe { ((*(*raw).vtbl).release)(raw) };
+            set_counter(counter::CONTEXT_REFS_AT_FACTORY_DROP, u64::from(remaining));
+        }
+    }
 }
 
 /// One factory class: which plugin and whether it is the controller class.
@@ -518,32 +608,60 @@ impl IPluginFactoryTrait for Factory {
         iid: FIDString,
         obj: *mut *mut c_void,
     ) -> tresult {
+        if !self.given.load(Ordering::Acquire) {
+            bump(counter::CREATES_BEFORE_CONTEXT);
+        }
         // SAFETY: the host passes a 16 byte class id.
         let want: TUID = unsafe { *cid.cast::<TUID>() };
         for def in self.lib.plugins {
             let make: Option<vst3::ComPtr<FUnknown>> = if tuid_of(def.info.cid) == want {
                 let number = NEXT_NUMBER.fetch_add(1, Ordering::Relaxed);
                 let shared = Shared::new(number);
-                if def.info.controller_cid.is_some() {
-                    let w = ComWrapper::new(Comp {
-                        comp: ComponentCore::new(def, shared.clone()),
-                    });
+                let comp = ComponentCore::new(def, shared.clone());
+                let quirks = comp.quirks;
+                if quirks.not_a_processor {
+                    let w = ComWrapper::new(NotProc { comp });
+                    register_not_proc(&w, shared);
+                    w.to_com_ptr::<FUnknown>()
+                } else if def.info.controller_cid.is_some() && !quirks.controller_is_component {
+                    let w = ComWrapper::new(Comp { comp });
                     register(&w, shared);
                     w.to_com_ptr::<FUnknown>()
                 } else {
                     let w = ComWrapper::new(Both {
-                        comp: ComponentCore::new(def, shared.clone()),
+                        comp,
                         ctrl: ControllerCore::new(def, shared.clone()),
                     });
                     register_both(&w, shared);
-                    w.to_com_ptr::<FUnknown>()
+                    let unknown = w.to_com_ptr::<FUnknown>();
+                    if let (true, Some(u)) = (quirks.controller_is_component, unknown.as_ref()) {
+                        *lock(&self.single) = Some((tuid_of(def.info.cid), u.clone()));
+                    }
+                    unknown
                 }
             } else if def.info.controller_cid.map(tuid_of) == Some(want) {
-                let number = NEXT_NUMBER.fetch_add(1, Ordering::Relaxed);
-                let w = ComWrapper::new(Ctrl {
-                    ctrl: ControllerCore::new(def, Shared::new(number)),
-                });
-                w.to_com_ptr::<FUnknown>()
+                // A plugin that is its own controller answers its controller class with the
+                // object it made for the component class.
+                let single = {
+                    let mut single = lock(&self.single);
+                    match single.take() {
+                        Some((class, object)) if class == tuid_of(def.info.cid) => Some(object),
+                        other => {
+                            *single = other;
+                            None
+                        }
+                    }
+                };
+                if let Some(object) = single {
+                    Some(object)
+                } else {
+                    let number = NEXT_NUMBER.fetch_add(1, Ordering::Relaxed);
+                    bump(counter::CONTROLLERS_CREATED);
+                    let w = ComWrapper::new(Ctrl {
+                        ctrl: ControllerCore::new(def, Shared::new(number)),
+                    });
+                    w.to_com_ptr::<FUnknown>()
+                }
             } else {
                 continue;
             };
@@ -558,6 +676,10 @@ impl IPluginFactoryTrait for Factory {
     }
 }
 
+fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
 fn register(w: &ComWrapper<Comp>, shared: std::sync::Arc<Shared>) {
     if let Some(p) = w.as_com_ref::<IComponent>() {
         hooks::register(p.as_ptr() as usize, shared);
@@ -565,6 +687,12 @@ fn register(w: &ComWrapper<Comp>, shared: std::sync::Arc<Shared>) {
 }
 
 fn register_both(w: &ComWrapper<Both>, shared: std::sync::Arc<Shared>) {
+    if let Some(p) = w.as_com_ref::<IComponent>() {
+        hooks::register(p.as_ptr() as usize, shared);
+    }
+}
+
+fn register_not_proc(w: &ComWrapper<NotProc>, shared: std::sync::Arc<Shared>) {
     if let Some(p) = w.as_com_ref::<IComponent>() {
         hooks::register(p.as_ptr() as usize, shared);
     }
@@ -645,14 +773,23 @@ impl IPluginFactory3Trait for Factory {
         kResultOk
     }
 
-    unsafe fn setHostContext(&self, _context: *mut FUnknown) -> tresult {
+    unsafe fn setHostContext(&self, context: *mut FUnknown) -> tresult {
+        bump(counter::HOST_CONTEXT_CALLS);
+        self.given.store(true, Ordering::Release);
+        if self.lib.refuse_host_context {
+            return kInternalError;
+        }
+        // SAFETY: the host passes null or a valid FUnknown.
+        if let Some(c) = unsafe { vst3::ComRef::from_raw(context) } {
+            *lock(&self.context) = Some(c.to_com_ptr());
+        }
         kResultOk
     }
 }
 
 /// Makes the factory object for `GetPluginFactory` (one reference, owned by the caller).
 pub fn make_factory(lib: &'static LibraryDef) -> *mut IPluginFactory {
-    ComWrapper::new(Factory { lib })
+    ComWrapper::new(Factory::new(lib))
         .to_com_ptr::<IPluginFactory>()
         .map_or(std::ptr::null_mut(), vst3::ComPtr::into_raw)
 }

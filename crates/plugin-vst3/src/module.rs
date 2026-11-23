@@ -9,14 +9,20 @@
 //!
 //! Layout and entry names are those of the VST3 developer portal's "Plug-in Format" page and the
 //! SDK's module code.
+//!
+//! A factory that implements `IPluginFactory3` gets the host context (`setHostContext`) once,
+//! right after it is fetched and before anything is created from it. The context is advisory: a
+//! factory without the interface, or one that refuses it, is loaded all the same.
 
+use crate::host::HostApplication;
 use atomik_plugin_host::BackendError;
 use atomik_plugin_host::paths::Os;
 #[cfg(not(windows))]
 use std::ffi::c_void;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use vst3::{ComPtr, Steinberg::IPluginFactory};
+use vst3::Steinberg::{FUnknown, IPluginFactory, IPluginFactory3, IPluginFactory3Trait};
+use vst3::{ComPtr, ComWrapper};
 
 /// The folder name of this build's CPU in a bundle (`x86_64`, `arm64`, ...) for `os`.
 fn arch_folders(os: Os, arch: &str) -> Vec<&'static str> {
@@ -163,22 +169,30 @@ fn refused(path: &Path) -> BackendError {
     ))
 }
 
-/// A loaded VST3 module: its library, its factory and its exit function. Dropping it releases
-/// the factory, runs the exit function and unloads the library.
+/// A loaded VST3 module: its library, its factory, the host context the factory was given and its
+/// exit function. Dropping it releases the factory, then the context, runs the exit function and
+/// unloads the library.
 pub(crate) struct Module {
     path: PathBuf,
     factory: Option<ComPtr<IPluginFactory>>,
+    /// The context given to the factory (`setHostContext`), kept for as long as the factory is.
+    host: Option<ComWrapper<HostApplication>>,
     exit: Option<ExitFn>,
     lib: Option<RawLibrary>,
     #[cfg(target_os = "macos")]
     _bundle: Option<bundle::Bundle>,
 }
 
-// SAFETY: the factory is a COM object whose methods the VST3 specification allows to be called
-// from any thread (factory calls are thread-safe), the exit function is a plain function pointer
-// and the library handle is only used to unload. The module is shared behind an `Arc`.
+// The factory is a COM object whose methods the VST3 specification allows to be called from any
+// thread (factory calls are thread-safe), the exit function is a plain function pointer and the
+// library handle is only used to unload. The host context is a stateless object whose methods run
+// on any thread and whose reference count is atomic; the module only holds it and drops it (the
+// factory may keep its own reference and call it from other threads, which that object allows).
+// The module is shared behind an `Arc`.
+// SAFETY: every field is thread-safe as described above.
 unsafe impl Send for Module {}
-// SAFETY: see above; shared access only reads the factory pointer.
+// SAFETY: see above; shared access only reads the factory pointer, the context is not touched
+// until the drop.
 unsafe impl Sync for Module {}
 
 impl std::fmt::Debug for Module {
@@ -213,6 +227,7 @@ impl Module {
         let mut module = Module {
             path: path.to_path_buf(),
             factory: None,
+            host: None,
             exit: None,
             lib: None,
             #[cfg(target_os = "macos")]
@@ -223,6 +238,7 @@ impl Module {
         unsafe { module.enter(lib, path)? };
         // SAFETY: as above.
         let factory = unsafe { module.factory_of() }?;
+        module.host = Self::give_host_context(&factory);
         module.factory = Some(factory);
         Ok(Arc::new(module))
     }
@@ -317,6 +333,26 @@ impl Module {
         unsafe { ComPtr::from_raw(ptr) }.ok_or_else(|| not("GetPluginFactory returned null"))
     }
 
+    /// Hands the host context to a factory that implements `IPluginFactory3`, before anything is
+    /// created from it. Returns the context to keep alive as long as the factory is, or `None`
+    /// for a factory without the interface. A factory that refuses it is carried on with: the
+    /// context is advisory.
+    fn give_host_context(factory: &ComPtr<IPluginFactory>) -> Option<ComWrapper<HostApplication>> {
+        let factory3 = factory.cast::<IPluginFactory3>()?;
+        let host = ComWrapper::new(HostApplication);
+        let context = host.to_com_ptr::<FUnknown>()?;
+        // SAFETY: a live factory and a valid host context, which the module keeps alive for as
+        // long as it holds the factory.
+        unsafe { factory3.setHostContext(context.as_ptr()) };
+        Some(host)
+    }
+
+    /// The host context the factory was given, if it takes one (tests count its references).
+    #[cfg(test)]
+    pub(crate) fn host_context(&self) -> Option<ComPtr<FUnknown>> {
+        self.host.as_ref()?.to_com_ptr::<FUnknown>()
+    }
+
     /// The module's factory.
     pub(crate) fn factory(&self) -> Option<&ComPtr<IPluginFactory>> {
         self.factory.as_ref()
@@ -348,8 +384,10 @@ unsafe fn open_library(binary: &Path) -> Result<RawLibrary, libloading::Error> {
 
 impl Drop for Module {
     fn drop(&mut self) {
-        // The factory goes first, then the module's exit function, then the library.
+        // The factory goes first, then the host context it was given, then the module's exit
+        // function, then the library.
         self.factory = None;
+        self.host = None;
         if let Some(exit) = self.exit.take() {
             // SAFETY: the exit function of a module this struct entered; called once.
             unsafe { exit() };
@@ -378,6 +416,35 @@ mod tests {
         assert_eq!(
             plist_executable("<key>CFBundleExecutable</key><string></string>"),
             None
+        );
+    }
+
+    /// The references an object has (one is added and taken back to read them).
+    fn references(p: &ComPtr<FUnknown>) -> u32 {
+        let raw = p.as_ptr();
+        // SAFETY: a live object; the added reference is released at once.
+        let now = unsafe { ((*(*raw).vtbl).addRef)(raw) };
+        // SAFETY: the reference added above.
+        unsafe { ((*(*raw).vtbl).release)(raw) };
+        now - 1
+    }
+
+    #[test]
+    fn the_host_context_given_to_the_factory_is_released_when_the_module_is_dropped() {
+        atomik_plugin_host::mark_main_thread();
+        let path = atomik_plugin_host::testing::vst3_test_plugin("atomik-test-vst3-leak")
+            .expect("the test plugin builds");
+        let module = Module::load(&path).expect("loads");
+        let context = module
+            .host_context()
+            .expect("a factory with `IPluginFactory3` is given the host context");
+        // The module's own reference, the one the factory kept, and ours.
+        assert!(references(&context) >= 3, "{}", references(&context));
+        drop(module);
+        assert_eq!(
+            references(&context),
+            1,
+            "the module and the factory let go of the context: only ours is left"
         );
     }
 

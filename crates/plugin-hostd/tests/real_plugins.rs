@@ -15,7 +15,7 @@ use atomik_plugin_host::{
     PluginEvent, PluginEventKind, PluginIo, PluginTransport, ProcessStatus, mark_main_thread,
     plugin_channel,
 };
-use atomik_plugin_ipc::{AudioOp, FromChild, ToChild, WireLayout};
+use atomik_plugin_ipc::{AudioOp, Before, FromChild, ToChild, WireLayout};
 use atomik_plugin_vst3::Vst3Backend;
 use std::path::{Path, PathBuf};
 use support::{PATIENCE, SR, Spawn, TestParent, note_off, note_on, param};
@@ -721,4 +721,50 @@ fn a_vst3_editor_opens_closes_and_reopens_under_an_owner_window() {
         return;
     };
     editor_opens_closes_and_reopens_under_an_owner(Format::Vst3, Path::new(&file), &id);
+}
+
+/// The instrument script through the child with the start riding on the first block, the
+/// plugin taking 100 ms to start: the bits are those of the plugin run in this process, and the
+/// first block was held up by the start (a lower bound: a sleep never ends early).
+fn same_bits_with_a_slow_start_riding_on_the_first_block(format: Format) {
+    let file = format.file(format.package());
+    let id = format.id(Kind::Synth);
+    let script = synth_script();
+    let (want, _, _) = in_process(format, &file, &id, &script);
+    let spec = Spawn::real(format.name(), &file, &id).env("ATOMIK_TEST_START_MS", "100");
+    let mut p = TestParent::spawn(&spec);
+    p.hello();
+    p.instantiate();
+    p.activate(true);
+    for (i, step) in script.iter().enumerate() {
+        let before = if i == 0 { Before::START } else { Before::NONE };
+        let held = atomik_plugin_ipc::Deadline::after(std::time::Duration::from_millis(100));
+        let out = p.process_before(before, &step.main_in, &step.events);
+        if i == 0 {
+            assert!(
+                held.passed(),
+                "{format:?}: the start took place on the first block"
+            );
+        }
+        assert_eq!(out.status, want[i].0, "status of block {i}");
+        for ch in 0..2 {
+            assert_eq!(
+                bits(&out.main_out[ch]),
+                bits(&want[i].1[ch]),
+                "{format:?} block {i} channel {ch}"
+            );
+        }
+    }
+    p.op(AudioOp::Stop);
+    p.deactivate();
+}
+
+#[test]
+fn the_clap_instrument_with_a_slow_start_riding_on_the_first_block_gives_the_same_bits() {
+    same_bits_with_a_slow_start_riding_on_the_first_block(Format::Clap);
+}
+
+#[test]
+fn the_vst3_instrument_with_a_slow_start_riding_on_the_first_block_gives_the_same_bits() {
+    same_bits_with_a_slow_start_riding_on_the_first_block(Format::Vst3);
 }

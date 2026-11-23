@@ -16,7 +16,7 @@ use atomik_plugin_host::{
     plugin_channel,
 };
 use atomik_plugin_ipc::{
-    AudioOp, ChildPort, Doorbell, DoorbellName, FromChild, PROTOCOL_VERSION, ParentPort,
+    AudioOp, Before, ChildPort, Doorbell, DoorbellName, FromChild, PROTOCOL_VERSION, ParentPort,
     ProcessorInfo, SharedBlock, ToChild, WireChannels, WireKind, WireLayout, WireParam, WirePreset,
     block_file_name, default_block_dir, read_frame, write_frame,
 };
@@ -88,6 +88,13 @@ pub(crate) struct Control {
     released: AtomicBool,
     /// Extra microseconds the audio thread idles per pass: a slow beat (a loaded machine).
     audio_idle_us: AtomicU64,
+    /// A start that rides on a request is held until [`Control::release_start`] (a plugin that is
+    /// slow to start, for as long as the test wants).
+    start_held: AtomicBool,
+    /// What a start answers (false: the plugin refuses it).
+    start_refuses: AtomicBool,
+    /// The work that rode on the requests the audio thread has answered, in order.
+    audio_before: Mutex<Vec<Before>>,
 }
 
 impl Control {
@@ -113,6 +120,9 @@ impl Control {
             dead: AtomicBool::new(false),
             released: AtomicBool::new(false),
             audio_idle_us: AtomicU64::new(0),
+            start_held: AtomicBool::new(false),
+            start_refuses: AtomicBool::new(false),
+            audio_before: Mutex::new(Vec::new()),
         }
     }
 
@@ -120,6 +130,26 @@ impl Control {
     pub fn set_audio_idle(&self, idle: Duration) {
         self.audio_idle_us
             .store(idle.as_micros() as u64, Ordering::SeqCst);
+    }
+
+    /// The next start that rides on a request is not performed until [`Control::release_start`].
+    pub fn hold_start(&self) {
+        self.start_held.store(true, Ordering::SeqCst);
+    }
+
+    /// Lets the held start (or the next one) be performed.
+    pub fn release_start(&self) {
+        self.start_held.store(false, Ordering::SeqCst);
+    }
+
+    /// Makes a start answer false (the plugin refuses to start) or true again.
+    pub fn refuse_start(&self, refuses: bool) {
+        self.start_refuses.store(refuses, Ordering::SeqCst);
+    }
+
+    /// The work that rode on each request the audio thread answered, in order.
+    pub fn audio_before(&self) -> Vec<Before> {
+        lock(&self.audio_before).clone()
     }
 
     /// Makes the next [`Action::Blocked`] request wait for [`Control::release`] again.
@@ -242,6 +272,7 @@ impl Control {
                 ProcessStatus::Late => 5,
                 ProcessStatus::Lost => 6,
                 ProcessStatus::Refused => 7,
+                ProcessStatus::StartFailed => 8,
             },
             Ordering::SeqCst,
         );
@@ -458,6 +489,7 @@ fn status_of(code: u8) -> ProcessStatus {
         5 => ProcessStatus::Late,
         6 => ProcessStatus::Lost,
         7 => ProcessStatus::Refused,
+        8 => ProcessStatus::StartFailed,
         _ => ProcessStatus::Continue,
     }
 }
@@ -488,6 +520,27 @@ fn run_audio(ctl: &Control, mut port: ChildPort) {
             continue;
         }
         let op = req.op();
+        let before = req.before();
+        if before.has(Before::START) {
+            // A plugin that is slow to start: nothing is answered until the test lets it.
+            while ctl.start_held.load(Ordering::SeqCst)
+                && !ctl.stop.load(Ordering::SeqCst)
+                && !ctl.dead.load(Ordering::SeqCst)
+            {
+                std::thread::sleep(Duration::from_millis(1));
+            }
+        }
+        // The work that rides on the request is performed (and recorded) before the op.
+        for (work, rides) in [
+            (AudioOp::Stop, before.has(Before::STOP)),
+            (AudioOp::Start, before.has(Before::START)),
+            (AudioOp::Reset, before.has(Before::RESET)),
+        ] {
+            if rides {
+                lock(&ctl.audio_ops).push(work);
+            }
+        }
+        let refused = before.has(Before::START) && ctl.start_refuses.load(Ordering::SeqCst);
         let delay = ctl.audio_delay_us.load(Ordering::SeqCst);
         if delay > 0 {
             std::thread::sleep(Duration::from_micros(delay));
@@ -495,6 +548,9 @@ fn run_audio(ctl: &Control, mut port: ChildPort) {
         let status = status_of(ctl.audio_status.load(Ordering::SeqCst));
         req.complete(|io| {
             lock(&ctl.audio_events).push(io.events_in.to_vec());
+            if refused {
+                return (ProcessStatus::StartFailed, false);
+            }
             for (ch, out) in io.main_out.iter_mut().enumerate() {
                 if let Some(src) = io.main_in.get(ch) {
                     for i in 0..BATCH {
@@ -505,7 +561,10 @@ fn run_audio(ctl: &Control, mut port: ChildPort) {
             (status, true)
         });
         // Recorded once the answer is published, so a test that sees the op can rely on it.
-        lock(&ctl.audio_ops).push(op);
+        if !refused {
+            lock(&ctl.audio_ops).push(op);
+        }
+        lock(&ctl.audio_before).push(before);
     }
 }
 

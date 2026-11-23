@@ -2,6 +2,7 @@
 
 mod background;
 mod budget;
+mod flush_ahead;
 mod loading;
 mod lost;
 mod no_alloc;
@@ -11,6 +12,7 @@ mod polled;
 mod processor;
 mod rpc;
 mod soft;
+mod start;
 mod stuck;
 mod supervision;
 mod watcher;

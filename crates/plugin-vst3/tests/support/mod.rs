@@ -88,6 +88,8 @@ pub mod command {
     pub const MIDI_MAPPING_CHANGED: u32 = 14;
     pub const PARAM_VALUES_CHANGED: u32 = 15;
     pub const IO_CHANGED: u32 = 16;
+    pub const OUT_PARAMS: u32 = 17;
+    pub const OUT_VALUE: u32 = 18;
 }
 
 /// The process-wide counters of a test library.
@@ -98,6 +100,36 @@ pub mod counter {
     pub const DEACTIVATED: u32 = 3;
     pub const ENTRY_INIT: u32 = 4;
     pub const ENTRY_DEINIT: u32 = 5;
+    /// `setHostContext` calls on the library's factories.
+    pub const HOST_CONTEXT_CALLS: u32 = 6;
+    /// `createInstance` calls on a factory that had no host context yet.
+    pub const CREATES_BEFORE_CONTEXT: u32 = 7;
+    /// The references the context still had when a factory let go of it.
+    pub const CONTEXT_REFS_AT_FACTORY_DROP: u32 = 8;
+    /// `initialize` calls on component classes.
+    pub const COMPONENT_INITS: u32 = 9;
+    /// `terminate` calls on component classes.
+    pub const COMPONENT_TERMS: u32 = 10;
+    /// `initialize` calls on controller classes.
+    pub const CONTROLLER_INITS: u32 = 11;
+    /// `terminate` calls on controller classes.
+    pub const CONTROLLER_TERMS: u32 = 12;
+    /// Controller class objects created.
+    pub const CONTROLLERS_CREATED: u32 = 13;
+    /// Controller class objects destroyed.
+    pub const CONTROLLERS_DESTROYED: u32 = 14;
+    /// `disconnect` calls that got the peer the half had stored.
+    pub const DISCONNECTS_OWN: u32 = 15;
+    /// `disconnect` calls that got anything else.
+    pub const DISCONNECTS_OTHER: u32 = 16;
+    /// Order stamps of the teardown calls (later events have larger numbers).
+    pub const SEQ_DEACTIVATE: u32 = 17;
+    pub const SEQ_DISCONNECT_COMPONENT: u32 = 18;
+    pub const SEQ_DISCONNECT_CONTROLLER: u32 = 19;
+    pub const SEQ_TERMINATE_CONTROLLER: u32 = 20;
+    pub const SEQ_TERMINATE_COMPONENT: u32 = 21;
+    /// Messages sent from inside `disconnect` or `terminate` that the peer accepted.
+    pub const TEARDOWN_MESSAGES_DELIVERED: u32 = 22;
 }
 
 // SAFETY: these are the signatures of the exported test hooks.
@@ -230,6 +262,16 @@ pub const V_RETITLE: u32 = 16;
 pub const V_TAIL: u32 = 17;
 pub const V_UNDERREPORTED: u32 = 18;
 pub const V_ENDLESS: u32 = 19;
+/// A split plugin that lets go of its peer only for the proxy it was connected with.
+pub const V_STRICT: u32 = 20;
+/// As [`V_STRICT`], and it talks to its peer from inside `disconnect` and `terminate`.
+pub const V_STRICT_CHATTY: u32 = 21;
+/// A component that initialises and is not an audio processor.
+pub const V_NOT_PROC: u32 = 22;
+/// A split plugin whose controller refuses to initialise.
+pub const V_CTRL_REFUSES: u32 = 23;
+/// A plugin whose factory answers the controller class with the component's own object.
+pub const V_CTRL_IS_COMPONENT: u32 = 24;
 
 /// The first controller proxy id of the proxies plugins (`atomik_test_vst3_variants::PROXY_BASE`).
 pub const PROXY_BASE: u32 = 1_000;

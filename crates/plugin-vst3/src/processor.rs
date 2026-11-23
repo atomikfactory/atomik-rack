@@ -8,6 +8,7 @@ use crate::events::{EventListObj, zero_event};
 use crate::host::Hub;
 use crate::layout::{AudioPlan, Role};
 use crate::module::Module;
+use crate::out_params::OutParams;
 use crate::params::ParamChanges;
 use crate::values::{self, Steps};
 use atomik_core::{BATCH, Batch, ExprKind};
@@ -38,6 +39,9 @@ pub(crate) struct Setup {
     pub expressions: u32,
     pub mode: RunMode,
     pub param_capacity: usize,
+    /// The ids of the parameters the host shows: the only ones a plugin's own writes are
+    /// reported for.
+    pub out_ids: Vec<u32>,
     pub hub: Arc<Hub>,
     pub edits: rtrb::Consumer<(u32, f64)>,
     /// Where every param value the rack sets is copied so the main thread can tell the
@@ -78,6 +82,7 @@ pub(crate) struct Vst3Processor {
     out_buses: Vec<AudioBusBuffers>,
     changes_in: ComWrapper<ParamChanges>,
     changes_out: ComWrapper<ParamChanges>,
+    out_params: OutParams,
     events_in: ComWrapper<EventListObj>,
     events_out: ComWrapper<EventListObj>,
     context: ProcessContext,
@@ -166,6 +171,7 @@ impl Vst3Processor {
             out_buses,
             changes_in: ParamChanges::new(s.param_capacity),
             changes_out: ParamChanges::new(OUT_PARAMS),
+            out_params: OutParams::new(s.out_ids),
             events_in: EventListObj::new(EVENT_CAPACITY),
             events_out: EventListObj::new(OUT_EVENTS),
             context,
@@ -228,6 +234,9 @@ impl Vst3Processor {
         let mut dropped = 0u32;
         // Edits made in the plugin's own editor reach the processor first, at offset 0.
         while let Ok((id, n)) = self.edits.pop() {
+            // What the app set itself is newer than what the plugin wrote before it.
+            self.out_params
+                .supersede(id, values::host_value(&self.steps, id, n));
             if !self.changes_in.add_point(id, 0, n) {
                 dropped += 1;
             }
@@ -414,15 +423,25 @@ impl Vst3Processor {
                 );
             }
         }
-        // Params the plugin changed on its own go to the app like editor edits.
+        // Params the plugin changed on its own go to the app like editor edits: those of the
+        // layout, when the value moved, at most once every `OUT_PARAM_EVERY` blocks.
         for i in 0..self.changes_out.used() {
-            if let Some((id, _, v)) = self.changes_out.last_of(i) {
-                self.hub.messenger.post(PluginMessage::ParamEdit {
-                    id,
-                    value: values::host_value(&self.steps, id, v),
-                    phase: ParamPhase::Change,
-                });
+            if let Some((id, _, v)) = self.changes_out.last_of(i)
+                && let Some(index) = self.out_params.index_of(id)
+            {
+                self.out_params
+                    .note(index, values::host_value(&self.steps, id, v));
             }
+        }
+        if self.out_params.due() {
+            let messenger = &self.hub.messenger;
+            self.out_params.flush(|id, value| {
+                messenger.post(PluginMessage::ParamEdit {
+                    id,
+                    value,
+                    phase: ParamPhase::Change,
+                })
+            });
         }
     }
 }

@@ -820,3 +820,123 @@ fn an_edit_of_a_stepped_param_is_reported_as_its_step_index() {
         .unwrap();
     assert_eq!(value, 37.0);
 }
+
+// ----- the parameters a plugin writes itself ----------------------------------------------------------
+
+/// The `(id, value)` of every parameter change in `msgs`, in order.
+fn changes_of(msgs: &[PluginMessage]) -> Vec<(u32, f64)> {
+    msgs.iter()
+        .filter_map(|m| match m {
+            PluginMessage::ParamEdit {
+                id,
+                value,
+                phase: atomik_plugin_host::ParamPhase::Change,
+            } => Some((*id, *value)),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn a_metering_plugin_cannot_take_the_room_of_what_the_app_must_hear() {
+    use atomik_plugin_host::ParamPhase::{Begin, End};
+    let (k, lib) = k();
+    let mut r = rig(&k, Plug::Gain);
+    let in_layout: Vec<u32> = r.layout.params.iter().map(|p| p.id).collect();
+    // 64 output parameters written in every block: some are the plugin's parameters the host
+    // shows, the others are not in the layout at all.
+    let (base, count) = (1u32, 64u32);
+    let shown: Vec<u32> = (base..base + count)
+        .filter(|id| in_layout.contains(id))
+        .collect();
+    assert!(!shown.is_empty() && shown.len() < 20, "{shown:?}");
+    lib.command(
+        &*r.instance,
+        command::OUT_PARAMS,
+        u64::from(count),
+        u64::from(base),
+    );
+    lib.command(&*r.instance, command::OUT_VALUE, 0, 1);
+    let mut h = r.harness();
+    *h.input_mut("in_l") = [0.3; BATCH];
+    *h.input_mut("in_r") = [0.3; BATCH];
+    let _ = drain(&r.manager);
+
+    // The consumer is stalled for thousands of blocks.
+    for n in 0..3_000 {
+        h.process();
+        if n == 1_000 {
+            // The plugin's latency changes, it asks for a restart, marks its state dirty, and
+            // the user drags a control in its window.
+            let (host, _) = k.host_value(Plug::Gain, core::GainFx::LATENCY, 37.0);
+            h.set_param(&format!("p{}", core::GainFx::LATENCY), host as f32);
+        }
+        if n == 1_001 {
+            lib.command(&*r.instance, command::REQUEST_RESTART, 0, 0);
+            lib.command(&*r.instance, command::MARK_DIRTY, 0, 0);
+            lib.command(&*r.instance, command::GUI_EDIT, 900, 0.25f64.to_bits());
+            r.instance.poll();
+        }
+    }
+    let first = drain(&r.manager);
+    for want in [
+        PluginMessage::LatencyChanged,
+        PluginMessage::RequestRestart,
+        PluginMessage::StateDirty,
+    ] {
+        assert_eq!(
+            first.iter().filter(|m| **m == want).count(),
+            1,
+            "{want:?} arrives once: {} messages",
+            first.len()
+        );
+    }
+    let gesture: Vec<_> = first
+        .iter()
+        .filter_map(|m| match m {
+            PluginMessage::ParamEdit {
+                id: 900,
+                value,
+                phase,
+            } => Some((*phase, *value)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(gesture.len(), 3, "{gesture:?}");
+    assert_eq!(gesture[0].0, Begin);
+    assert_eq!(gesture[1], (atomik_plugin_host::ParamPhase::Change, 0.25));
+    assert_eq!(gesture[2].0, End);
+    // Nothing of what the layout does not show ever arrives.
+    let mut seen = changes_of(&first);
+    seen.retain(|(id, _)| *id != 900);
+    assert!(!seen.is_empty(), "the shown parameters are reported");
+    assert!(seen.iter().all(|(id, _)| shown.contains(id)), "{seen:?}");
+
+    // The plugin settles on one value: afterwards each shown parameter's latest value arrives,
+    // and the same value written over and over is reported once.
+    lib.command(&*r.instance, command::OUT_VALUE, 0.0f64.to_bits(), 0);
+    let mut later = Vec::new();
+    for _ in 0..200 {
+        h.process();
+        later.extend(drain(&r.manager));
+    }
+    let later = changes_of(&later);
+    for id in &shown {
+        let mine: Vec<f64> = later
+            .iter()
+            .filter(|(i, _)| i == id)
+            .map(|(_, v)| *v)
+            .collect();
+        assert_eq!(mine.last().copied(), Some(0.0), "id {id}: {mine:?}");
+        assert!(
+            mine.len() <= 2,
+            "id {id} is not posted again and again: {mine:?}"
+        );
+    }
+    assert!(later.iter().all(|(id, _)| shown.contains(id)));
+    // A quiet stretch: nothing to say.
+    for _ in 0..200 {
+        h.process();
+    }
+    assert!(changes_of(&drain(&r.manager)).is_empty());
+}

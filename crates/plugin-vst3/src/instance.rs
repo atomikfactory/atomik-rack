@@ -3,8 +3,21 @@
 //! Creation follows the hosting sequence of the VST3 documentation: create the component, initialise
 //! it with the host context, find the controller (a separate class or the same object), connect
 //! the two through proxies, give the controller the component handler, bring the controller in
-//! step with the component's state, negotiate the buses, read the parameters. Teardown is the
-//! reverse.
+//! step with the component's state, negotiate the buses, read the parameters.
+//!
+//! * From the moment the component initialised, every way out of `create` terminates it (and a
+//!   separate controller that initialised) before the references go: [`Initialised`] does it
+//!   until the instance owns the plugin, and the instance's `Drop` does it after.
+//! * A controller that is a class of its own must initialise: one that refuses fails the plugin
+//!   (released without `terminate`, the component terminated). A controller class the factory
+//!   cannot create leaves the plugin without a controller. A controller class the factory
+//!   answers with the component's own object is a single-object plugin: no second `initialize`,
+//!   no proxies, one `terminate`.
+//! * Teardown order: editor closed and handler detached, `setActive(0)` when active, each half
+//!   `disconnect`ed with the proxy it was connected with, both proxies' destinations cleared (so
+//!   the ring component -> proxy -> controller -> proxy -> component is broken on the host's side
+//!   whatever the plugin does in `disconnect`), the controller terminated (when it is a class of
+//!   its own), then the component.
 
 use crate::host::{ComponentHandler, ConnectionProxy, HostApplication, Hub, PlugFrame};
 use crate::ids;
@@ -66,6 +79,43 @@ pub(crate) fn unpack_state(blob: &[u8]) -> Option<(&[u8], &[u8])> {
     let (component, rest) = take(rest)?;
     let (controller, rest) = take(rest)?;
     rest.is_empty().then_some((component, controller))
+}
+
+/// Terminates a separate controller (when there is one) and then the component: the end of
+/// every path that has initialised them.
+fn terminate_halves(controller: Option<&ComPtr<IEditController>>, component: &ComPtr<IComponent>) {
+    if let Some(c) = controller {
+        // SAFETY: a live controller that initialised, terminated once.
+        unsafe { c.terminate() };
+    }
+    // SAFETY: a live component that initialised, terminated once.
+    unsafe { component.terminate() };
+}
+
+/// What `create` has initialised and not yet handed to the instance: dropped armed (an early
+/// return of any kind), it terminates the halves before the references it sits beside are
+/// released. The instance disarms it when it takes over (its own `Drop` terminates from then on).
+struct Initialised {
+    component: ComPtr<IComponent>,
+    /// A separate controller that initialised.
+    controller: Option<ComPtr<IEditController>>,
+    armed: bool,
+}
+
+impl Drop for Initialised {
+    fn drop(&mut self) {
+        if self.armed {
+            terminate_halves(self.controller.as_ref(), &self.component);
+        }
+    }
+}
+
+/// Whether two interface pointers belong to one object (COM identity: the `FUnknown` of each).
+fn same_object<A: Interface, B: Interface>(a: &ComPtr<A>, b: &ComPtr<B>) -> bool {
+    match (a.cast::<FUnknown>(), b.cast::<FUnknown>()) {
+        (Some(x), Some(y)) => x.as_ptr() == y.as_ptr(),
+        _ => false,
+    }
 }
 
 /// The `PluginInstance` of a VST3 plugin.
@@ -137,6 +187,12 @@ impl Vst3Instance {
                 "the plugin refused to initialise".to_string(),
             ));
         }
+        // From here on the component is initialised: every way out terminates it.
+        let mut up = Initialised {
+            component: component.clone(),
+            controller: None,
+            armed: true,
+        };
         let processor = component.cast::<IAudioProcessor>().ok_or_else(|| {
             BackendError::Unsupported("the component is not an audio processor".to_string())
         })?;
@@ -147,13 +203,26 @@ impl Vst3Instance {
         let has_class = ok(unsafe { component.getControllerClassId(&mut cc) }) && cc != [0; 16];
         let mut separate = false;
         let controller = if has_class {
-            match create(&cc, &IEditController::IID) {
+            let made = create(&cc, &IEditController::IID).and_then(|obj| {
                 // SAFETY: the factory returned one owned IEditController reference.
-                Some(obj) => unsafe { owned::<IEditController>(obj) }.inspect(|c| {
-                    separate = true;
+                unsafe { owned::<IEditController>(obj) }
+            });
+            match made {
+                // The factory answered with the component's own object: one object, one
+                // `initialize`, one `terminate`, like the plugin that is its own controller.
+                Some(c) if same_object(&c, &component) => component.cast::<IEditController>(),
+                Some(c) => {
                     // SAFETY: a live controller and a valid host context.
-                    unsafe { c.initialize(host_context.as_ptr()) };
-                }),
+                    if !ok(unsafe { c.initialize(host_context.as_ptr()) }) {
+                        // Released without `terminate`; the guard terminates the component.
+                        return Err(BackendError::Unsupported(
+                            "the plugin's controller refused to initialise".to_string(),
+                        ));
+                    }
+                    separate = true;
+                    up.controller = Some(c.clone());
+                    Some(c)
+                }
                 None => None,
             }
         } else {
@@ -206,6 +275,7 @@ impl Vst3Instance {
 
         // From here on the instance owns the plugin, so every failure below tears it down the
         // way `Drop` does (terminate after initialise).
+        up.armed = false;
         let mut instance = Self {
             view: None,
             proxies,
@@ -241,6 +311,33 @@ impl Vst3Instance {
             .as_ref()
             .is_some_and(|c| make_view(c).is_some());
         Ok(instance)
+    }
+
+    /// Cuts the connection of a split plugin: each half is asked to disconnect from the proxy it
+    /// was connected with (a plugin lets go of its peer only for the object it stored, so a null
+    /// there would keep it), then both proxies forget their destinations whatever the plugin
+    /// answered, which breaks the ring on the host's side.
+    fn disconnect_halves(&mut self) {
+        let Some((to_controller, to_component)) = self.proxies.take() else {
+            return;
+        };
+        if let (Some(a), Some(c), Some(pa), Some(pb)) = (
+            self.component.cast::<IConnectionPoint>(),
+            self.controller
+                .as_ref()
+                .and_then(|c| c.cast::<IConnectionPoint>()),
+            to_controller.as_com_ref::<IConnectionPoint>(),
+            to_component.as_com_ref::<IConnectionPoint>(),
+        ) {
+            // SAFETY: live connection points and the proxies' own interface pointers, the ones
+            // `create` connected them with.
+            unsafe {
+                a.disconnect(pa.as_ptr());
+                c.disconnect(pb.as_ptr());
+            }
+        }
+        to_controller.set_destination(None);
+        to_component.set_destination(None);
     }
 
     /// The scan facts of this instance.
@@ -455,6 +552,7 @@ impl HostInstance for Vst3Instance {
             expressions: self.read.expressions,
             mode: cfg.mode,
             param_capacity: self.read.layout.params.len() + crate::layout::MIDI_CONTROLLERS + 16,
+            out_ids: self.read.layout.params.iter().map(|p| p.id).collect(),
             hub: Arc::clone(&self.hub),
             edits: consumer,
             mirror: mirror_in,
@@ -736,33 +834,18 @@ impl Drop for Vst3Instance {
             // SAFETY: a live controller; a null handler detaches it.
             unsafe { c.setComponentHandler(std::ptr::null_mut()) };
         }
-        if self.proxies.take().is_some()
-            && let (Some(a), Some(c)) = (
-                self.component.cast::<IConnectionPoint>(),
-                self.controller
-                    .as_ref()
-                    .and_then(|c| c.cast::<IConnectionPoint>()),
-            )
-        {
-            // SAFETY: live connection points; a null peer disconnects.
-            unsafe {
-                a.disconnect(std::ptr::null_mut());
-                c.disconnect(std::ptr::null_mut());
-            }
-        }
         if self.active {
             // SAFETY: a live component.
             unsafe { self.component.setActive(0) };
             self.active = false;
         }
-        if let Some(c) = &self.controller
-            && self.separate_controller
-        {
-            // SAFETY: a live controller, terminated once.
-            unsafe { c.terminate() };
-        }
-        // SAFETY: a live component, terminated once.
-        unsafe { self.component.terminate() };
+        self.disconnect_halves();
+        terminate_halves(
+            self.controller
+                .as_ref()
+                .filter(|_| self.separate_controller),
+            &self.component,
+        );
         let _ = (&self.handler, &self.host_context);
     }
 }

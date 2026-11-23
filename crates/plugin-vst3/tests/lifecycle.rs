@@ -379,7 +379,7 @@ fn vst3_host_callbacks_from_any_thread_arrive_as_events_on_the_main_thread() {
     assert_eq!(
         events,
         vec![
-            ManagerEvent::StateDirty(id),
+            // Two requests for a save are one flag, and a flag comes before the other messages.
             ManagerEvent::StateDirty(id),
             ManagerEvent::GuiResize {
                 instance: id,

@@ -1896,3 +1896,157 @@ resizes (stretched content during a live resize); reading the monitor's rate (se
 tolerance for input too (a sweep could paint more often than the period allows).
 
 **Status.** Default (not yet confirmed). Decided by: none yet.
+
+## BI. A sandboxed plugin's start, stop and reset are never waited for on the audio thread
+
+**Question.** For a plugin in its own process, `start_processing`, `stop_processing` and `reset` were requests of
+their own, and the audio thread spun for the answer for up to 50 ms (at least `LIVE_OP_DEADLINE`). That is a dropout
+by construction (50 ms is 15 to 40 callbacks), and a start that took longer than the wait was a permanent failure of
+the device ("the plugin could not start processing" until RELOAD), where the same plugin in this process just starts,
+however long it takes. Since the sleep rule an instrument that goes quiet is told to stop and is started again by the
+batch that wakes it, so a start happens on the audio thread whenever a sleeping instrument gets a note, and a reset
+after every locate.
+
+**Decision.** Live, the audio thread spends on a start, a stop or a reset no more than it spends on any batch, and a
+slow start is late, not failed. The start and the reset ride on the batch that needs them: the request carries "stop
+first", "start first" and "reset first" (bits above the op code in the request's op word), the child performs them in
+that order inside the one request and then processes the batch, and the answer says whether the start succeeded
+(`ProcessStatus::StartFailed`, no audio). The audio thread waits for the batch with the batch deadline, the cool-down
+and the hang guard it already has. A stop is sent at once and not waited for; when a request is in flight it is owed and
+rides on the next batch, ahead of its start. A start that was owed and not sent is dropped by a stop (the child never
+heard of it). A refusal that arrives after a late batch is read before the next request overwrites the answer. The
+same rule holds offline, where the batch is waited for up to the watchdog: there is no second, synchronous path, and
+the child sees the same calls in the same order, so a bounce is byte-identical with the sandbox on and off.
+
+**Why.** The batch already has everything a start needs: a deadline, a way to be late, a counter, a recovery when the
+answer arrives, and a hang detection. A separate request would need its own state machine for "start pending", "start
+late" and "events that arrived meanwhile". With the start on the batch no event is lost (the notes of the batch travel
+with the request and are processed after the start, at their offsets), and the cost of the start shows as what it is:
+time in that batch. In-process plugins keep calling the trait methods as before; the remote processor only records
+what is owed.
+
+**What a slow start costs now.** A start of 100 ms is one full wait (one batch period, or the callback's published
+budget, at most 100 ms) that runs out, then the batches behind it are polled and late at once for the rest of the 100 ms,
+counted in the `late` meter, dry for an effect and silent for an instrument; the plugin then plays. One miss is far from
+the four that start a cool-down and an answered batch forgives it, so many slow starts in a row never look like a
+broken plugin. A start slower than the hang limit (three seconds of batches with nothing completed) is a hung child
+and is ended and reloaded by the existing rule.
+
+**Limits.** The device believes the plugin started as soon as it asked, so a refusal fails it one batch later than
+before (the batch that carried the start, or the first one after it when that one was late). A reset that is owed when
+the plugin is stopped is not sent on its own: a stop supersedes it. A stop that cannot be sent because a request is in
+flight and is followed by no start is left to the child, which stops its plugin itself when it gives it back.
+
+**Rejected.** Submitting the start alone, playing dry or silence meanwhile, polling once per batch and delivering later
+every event that arrived (a second state machine, and a note-on and its note-off could be split by it); keeping the
+synchronous wait with a longer deadline (a longer dropout); a separate offline path (it would let a bounce and live
+play follow different rules).
+
+**Status.** Default (not yet confirmed). Decided by: none yet.
+
+## BJ. Only a parameter change or a log line can be lost on the way from a plugin to the app
+
+**Question.** Everything a plugin or its device told the app went through one ring of 256 messages per instance, and
+`post` dropped a message when the ring was full or another thread was posting at that instant. The VST3 processor
+posted a change for every output parameter queue in every block. A stalled consumer plus a metering plugin filled the
+ring, and two threads posting at once lost one message even with an empty ring. What was lost included messages that
+must arrive: a request to save, a new latency, the end of a gesture (an undo gesture stays open), a failure, the news
+that the plugin's process died (the single automatic reload depends on it).
+
+**Decision.** Three roads, one order. (1) The five messages that carry no data (`StateDirty`, `LatencyChanged`,
+`RescanParams`, `RequestRestart`, `RequestCallback`) are bits in an atomic: posting sets the bit from any thread and is
+always accepted; the receiver takes them all at once and hands them out first, in a fixed order. (2) A thread that is
+not inside `process` posts to a queue under a mutex it waits for, so two such threads never lose a message to each
+other; a change that follows a change of the same parameter, with nothing posted since, replaces it (a drag in a
+window is one message and its end still carries the last value); from 1 024 waiting messages a change and a log line
+are dropped and counted, every other message is queued, and 65 536 is a cap against a plugin that never stops (only
+a runaway stream of window-move or callback messages with a consumer gone for good could reach it). (3) A thread
+inside `process` keeps the wait-free ring and its `try_lock`, with one rule added: a change is pushed only while more
+than 64 slots are free, so a flood of changes cannot take the room of a begin or an end, a log line or a failure. Each
+message of the ring and the queue is stamped from one counter and the receiver hands out the older head, locking the
+queue before it looks at the ring so that a message posted later on the other road is never handed out first. The
+device keeps a failure the ring refused in a plain field and says it again on the next blocks.
+
+**Why a change may still be lost.** A change outside a gesture only feeds MIDI learn and the camera touch, and inside
+a gesture the merger keeps the last value, so a later value of the same parameter makes an earlier one worthless. What
+is done so that the latest value survives: a queued change is replaced by the next of the same parameter, the VST3
+processor keeps the latest value of every parameter it reports and offers it again, also with nothing new written,
+until the ring takes it, and the reserve keeps the ring from being full of changes. A change that is refused is
+counted in the dropped counter.
+
+**Output parameters of a VST3 plugin.** The processor builds the sorted list of the ids of the layout the app shows
+when the plugin is activated, and reports a value written during `process` only for those ids, only when it differs
+from the last one reported, and at most once every 15 blocks (about 20 ms at 48 kHz; blocks are counted, a clock is
+never read, so a bounce and a live run report at the same blocks). A value the plugin wrote before the user edited the
+same parameter in the plugin's window is not reported over the edit. For a parameter the plugin automates out while
+the user drags it, the app sees the begin, the edits and the plugin's own values in the order they were posted, and
+the gesture's last value is the last one posted.
+
+**Limits.** Flags no longer keep their place among the other messages: the app's restart request is one boolean and
+`StateDirty` only stamps a time, and the plugin process forwards each flag as it takes it. Log lines a plugin writes
+from its audio thread still use the small ring (they can be shed there).
+
+**Rejected.** A bigger ring (the same loss, later); waiting for the lock on the audio thread; one queue for every
+thread (the audio thread would lock); counting each flag (the app does not need it).
+
+**Status.** Default (not yet confirmed). Decided by: none yet.
+
+## BK. A VST3 plugin is brought up and taken down by the book
+
+**Question.** A VST3 plugin whose controller is a class of its own is joined to its component through two proxies that
+each hold their destination strongly, and the host disconnected both halves with null before it terminated them. A
+plugin written the usual way ignores a null, so the ring kept both halves alive for ever; a component that initialised
+and was then found not to be an audio processor was never terminated; a controller that refused to initialise was used
+anyway; and the factory never got the host context it may ask for.
+
+**Decision.** `disconnect` is called on each half with the proxy that half was connected with, never with null, and
+both proxies are then cut (their destinations cleared) whatever the plugin answered; the order of teardown is
+deactivate, disconnect, terminate the controller (when it is a class of its own), terminate the component. A separate
+controller whose `initialize` does not return ok fails the plugin with an honest error (the controller is released
+without `terminate`, the component is terminated) instead of the plugin going on without a working controller. When the
+factory answers the controller class with the component's own object (compared as the `FUnknown` of each) the plugin is
+a single object: one `initialize`, no proxies, one `terminate`. A factory that implements `IPluginFactory3` gets
+`setHostContext` once, before anything is created from it, and the module keeps the context for as long as it keeps the
+factory (the factory first, then the context, then the module's exit function, then the library). Every way out of
+`create` after the component initialised terminates it, by a guard that is dropped armed.
+
+**Why `disconnect` gets the proxy.** A plugin lets go of its peer in `disconnect(other)` only when `other` is the object
+it stored (the reference hosting code does the same and a plugin may answer `kResultFalse` otherwise). The proxies hold
+their destinations strongly, so component -> proxy -> controller -> proxy -> component is a ring that keeps both halves
+alive for ever when the plugin ignores a null. Cutting the proxies after the call breaks the ring on the host's side
+whatever the plugin does (nothing at all, or an error): the plugin never has to cooperate to be freed. A proxy takes a
+destination out under its lock and releases it after the lock, because a release can run plugin code that calls `notify`
+on the same proxy.
+
+**Why a refusing controller fails the plugin.** A plugin with no parameters, no controller state and no editor is worse
+than an honest error, and the format's reference hosting code fails the plugin too. The error is
+`BackendError::Unsupported`: an instantiate (opening a project, adding the plugin) returns it, and a scan lists the
+class as unsupported with the same reason, so it is never offered. A controller class the factory cannot create at all
+is unchanged: the plugin loads without a controller.
+
+**Rejected.** Disconnecting with null and also with the proxy (a null is meaningless to a strict plugin and harmless to
+the others, but it hides a bug); keeping the proxies alive and clearing them at the next instance (a plugin would
+outlive its removal); a second proxy per half.
+
+**Status.** Default (not yet confirmed). Decided by: none yet.
+
+## BL. A bounce flushes every sandboxed plugin after every batch, and the flushes are waited for together
+
+**Question.** A bounce polls the plugin manager after every 64-frame batch, and each sandboxed plugin answers a `Flush`
+that carries every notification it queued, one plugin after the other. Could the round trip be skipped for a plugin that
+has posted nothing, or at least shared?
+
+**Decision.** Every sandboxed plugin is still flushed after every batch, as the sync point that makes a restart, a
+latency change or a dirty state land on the same batch in every run. What changes is the waiting: `PluginManager::poll`
+first sends the request to every instance (`PluginInstance::begin_poll`) and each instance takes its answer in its own
+`poll`, so the plugin processes flush at the same time. A request that another call abandoned in between is simply sent
+again by `poll`, as before.
+
+**Why no "nothing to flush" flag.** What a plugin posts from its own main thread is not tied to a batch: it may do so
+at any moment, so a flag read on the parent side would race with it and a bounce would depend on timing. The round trip
+is the only thing that makes the notifications of a batch visible before the next one.
+
+**Rejected.** Skipping the flush when the plugin reported nothing since the last one; flushing every few batches (a
+restart would land on another batch than in a live run).
+
+**Status.** Default (not yet confirmed). Decided by: none yet.

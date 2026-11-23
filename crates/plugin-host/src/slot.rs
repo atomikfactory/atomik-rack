@@ -3,16 +3,54 @@
 //!
 //! Everything the audio thread touches here is wait-free: relaxed or acquire/release atomics and
 //! `rtrb` rings. The only locks guard structures that are used off the audio thread (the
-//! reaper queue, the manager's receiving end) or are taken with `try_lock` and never waited on
-//! (the host message sender, which several plugin threads share).
+//! reaper queue, the manager's receiving end, the message queue) or are taken with `try_lock`
+//! and never waited on (the ring's producer, which several plugin threads share).
+//!
+//! What a plugin tells the app reaches [`ManagerEnd::try_recv`] by three roads, and every
+//! message other than a parameter `Change` and a log line is impossible to lose:
+//!
+//! * **Flags.** `StateDirty`, `LatencyChanged`, `RescanParams`, `RequestRestart` and
+//!   `RequestCallback` carry nothing and mean the same said once or twice: posting one sets a
+//!   bit, from any thread, always accepted. `try_recv` hands the set flags out first, in a fixed
+//!   order, each once.
+//! * **The queue** takes every other message from a thread that is not inside a plugin's
+//!   `process` (the plugin's UI thread, the main thread, the sandbox's reader and watcher). It is
+//!   a list under a mutex that those threads lock, never `try_lock`, so two of them posting at
+//!   the same instant lose nothing. A `Change` that follows a `Change` of the same parameter
+//!   replaces it (a drag holds one message). From [`QUEUE_SOFT_CAP`] messages on, a `Change` and
+//!   a log line are dropped and counted, everything else is still queued; at [`QUEUE_HARD_CAP`]
+//!   everything is dropped and counted, so that a rogue plugin cannot grow the list without
+//!   bound. The audio thread never touches this mutex.
+//! * **The ring** takes the messages posted inside a plugin's `process` (a thread holding an
+//!   [`AudioThreadGuard`](crate::AudioThreadGuard)), wait-free. A full ring, or a ring another
+//!   thread is pushing to at that instant, drops the message and counts it; a `Change` is only
+//!   pushed while more than [`CHANGE_RESERVE`] slots are free, so a flood of changes cannot take
+//!   the room of a gesture's begin or end, a log line or a failure.
+//!
+//! Every message of the ring and of the queue carries the number it was stamped with when it was
+//! posted, and `try_recv` hands out the older of the two heads: one order, the posting order.
 
 use crate::backend::PluginProcessor;
+use crate::threads::is_audio_thread;
 use rtrb::{Consumer, Producer, PushError, RingBuffer};
+use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 
-/// Capacity of a slot's message ring.
+/// Capacity of a slot's message ring (the messages posted inside a plugin's `process`).
 pub const MESSAGE_CAPACITY: usize = 256;
+
+/// Free slots of the ring that a parameter `Change` never takes: a `Change` posted from the audio
+/// thread is pushed only while more than this many are free, so the room is left for a gesture's
+/// begin and end, a log line or a failure.
+pub const CHANGE_RESERVE: usize = 64;
+
+/// How many messages the queue of the threads outside `process` holds before it refuses a
+/// parameter `Change` and a log line (every other message is still queued).
+pub const QUEUE_SOFT_CAP: usize = 1024;
+
+/// How many messages the queue holds at most: beyond it every message is dropped and counted.
+pub const QUEUE_HARD_CAP: usize = 65_536;
 
 /// Identifies one plugin instance for the manager and the app.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -170,9 +208,50 @@ pub fn warmed<T>(m: Mutex<T>) -> Mutex<T> {
     m
 }
 
-/// The sender side of the message ring, shared by every thread that may call a host callback.
-/// Posting never blocks: when the ring is full or another thread is posting at that instant,
-/// the message is dropped and counted.
+/// A message with the number it was stamped with when it was posted.
+#[derive(Debug)]
+struct Stamped {
+    seq: u64,
+    message: PluginMessage,
+}
+
+/// The bit of a message that is a flag (no data, saying it twice is saying it once).
+fn flag_bit(message: &PluginMessage) -> Option<u8> {
+    match message {
+        PluginMessage::StateDirty => Some(1),
+        PluginMessage::LatencyChanged => Some(1 << 1),
+        PluginMessage::RescanParams => Some(1 << 2),
+        PluginMessage::RequestRestart => Some(1 << 3),
+        PluginMessage::RequestCallback => Some(1 << 4),
+        _ => None,
+    }
+}
+
+/// The message of a flag bit; the bits come out lowest first.
+fn flag_message(bit: u8) -> Option<PluginMessage> {
+    Some(match bit {
+        1 => PluginMessage::StateDirty,
+        2 => PluginMessage::LatencyChanged,
+        4 => PluginMessage::RescanParams,
+        8 => PluginMessage::RequestRestart,
+        16 => PluginMessage::RequestCallback,
+        _ => return None,
+    })
+}
+
+fn is_change(message: &PluginMessage) -> bool {
+    matches!(
+        message,
+        PluginMessage::ParamEdit {
+            phase: ParamPhase::Change,
+            ..
+        }
+    )
+}
+
+/// The sender side of the message channel, shared by every thread that may call a host callback.
+/// Posting never blocks the audio thread: see the module doc for what each road does with a
+/// message it cannot take.
 #[derive(Debug, Clone)]
 pub struct HostMessenger {
     inner: Arc<MessengerInner>,
@@ -180,17 +259,93 @@ pub struct HostMessenger {
 
 #[derive(Debug)]
 struct MessengerInner {
-    producer: Mutex<Producer<PluginMessage>>,
+    /// The ring of the audio thread's messages (`try_lock`, wait-free).
+    producer: Mutex<Producer<Stamped>>,
+    /// The messages of every other thread. Never locked on the audio path.
+    queue: Mutex<VecDeque<Stamped>>,
+    /// The flags posted and not yet taken.
+    flags: AtomicU8,
+    /// The next number to stamp a message with.
+    seq: AtomicU64,
     dropped: AtomicU64,
 }
 
-impl HostMessenger {
-    /// Posts a message. Returns false when it was dropped.
-    pub fn post(&self, message: PluginMessage) -> bool {
-        let accepted = match self.inner.producer.try_lock() {
-            Ok(mut producer) => producer.push(message).is_ok(),
-            Err(std::sync::TryLockError::Poisoned(p)) => p.into_inner().push(message).is_ok(),
+impl MessengerInner {
+    fn stamp(&self) -> u64 {
+        self.seq.fetch_add(1, Ordering::Relaxed)
+    }
+
+    /// The audio thread's road: wait-free, refuses when the ring is full or busy.
+    fn post_ring(&self, message: PluginMessage) -> bool {
+        let push = |producer: &mut Producer<Stamped>, message: PluginMessage| {
+            if is_change(&message) && producer.slots() <= CHANGE_RESERVE {
+                return false;
+            }
+            let seq = self.stamp();
+            producer.push(Stamped { seq, message }).is_ok()
+        };
+        match self.producer.try_lock() {
+            Ok(mut producer) => push(&mut producer, message),
+            Err(std::sync::TryLockError::Poisoned(p)) => push(&mut p.into_inner(), message),
             Err(std::sync::TryLockError::WouldBlock) => false,
+        }
+    }
+
+    /// The road of every other thread: waits for the lock, which nobody holds for long.
+    fn post_queue(&self, message: PluginMessage) -> bool {
+        let mut queue = self.queue.lock().unwrap_or_else(PoisonError::into_inner);
+        if let PluginMessage::ParamEdit {
+            id: new_id,
+            value: new_value,
+            phase: ParamPhase::Change,
+        } = &message
+            && let Some(tail) = queue.back_mut()
+            && let PluginMessage::ParamEdit {
+                id,
+                value,
+                phase: ParamPhase::Change,
+            } = &mut tail.message
+            && id == new_id
+            // Nobody posted anything since the tail, on either road: the newer value takes its
+            // place and keeps the order of the messages around it.
+            && self
+                .seq
+                .compare_exchange(
+                    tail.seq + 1,
+                    tail.seq + 2,
+                    Ordering::Relaxed,
+                    Ordering::Relaxed,
+                )
+                .is_ok()
+        {
+            *value = *new_value;
+            tail.seq += 1;
+            return true;
+        }
+        let len = queue.len();
+        let sheddable = is_change(&message) || matches!(message, PluginMessage::Log { .. });
+        if len >= QUEUE_HARD_CAP || (len >= QUEUE_SOFT_CAP && sheddable) {
+            return false;
+        }
+        let seq = self.stamp();
+        queue.push_back(Stamped { seq, message });
+        true
+    }
+}
+
+impl HostMessenger {
+    /// Posts a message. Returns false when it was dropped (and counted): outside a plugin's
+    /// `process` only a parameter `Change` or a log line can be; inside it, anything the ring has
+    /// no room for.
+    pub fn post(&self, message: PluginMessage) -> bool {
+        if let Some(bit) = flag_bit(&message) {
+            self.inner.flags.fetch_or(bit, Ordering::Release);
+            return true;
+        }
+        let accepted = if is_audio_thread() {
+            self.inner.post_ring(message)
+        } else {
+            self.inner.post_queue(message)
         };
         if !accepted {
             self.inner.dropped.fetch_add(1, Ordering::Relaxed);
@@ -344,10 +499,17 @@ impl DeviceEnd {
     }
 }
 
+/// What `try_recv` reads the ring and the flags from.
+struct Inbox {
+    ring: Consumer<Stamped>,
+    /// Flags taken from the atomic and not yet handed out.
+    flags: u8,
+}
+
 /// The main-thread end of an instance.
 pub struct ManagerEnd {
     slot: PluginSlot,
-    messages: Mutex<Consumer<PluginMessage>>,
+    messages: Mutex<Inbox>,
     from_device: Consumer<ProcBox>,
     to_device: Producer<ProcBox>,
 }
@@ -363,16 +525,38 @@ impl ManagerEnd {
         self.slot.messenger()
     }
 
-    /// The next message, if any.
+    /// The next message, if any: the flags that are set first (one each, in a fixed order), then
+    /// the messages of the ring and of the queue in the order they were posted.
     pub fn try_recv(&self) -> Option<PluginMessage> {
-        self.messages
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .pop()
-            .ok()
+        let inner = &self.slot.inner.messenger.inner;
+        let mut inbox = self.messages.lock().unwrap_or_else(PoisonError::into_inner);
+        if inbox.flags == 0 {
+            inbox.flags = inner.flags.swap(0, Ordering::AcqRel);
+        }
+        if inbox.flags != 0 {
+            let bit = 1u8 << inbox.flags.trailing_zeros();
+            inbox.flags &= !bit;
+            return flag_message(bit);
+        }
+        // The queue is locked before the ring is looked at: a message of the queue posted after
+        // a message of the ring cannot appear while the two heads are compared, so the older one
+        // is never overtaken.
+        let mut queue = inner.queue.lock().unwrap_or_else(PoisonError::into_inner);
+        let from_queue = match (inbox.ring.peek().ok(), queue.front()) {
+            (None, None) => return None,
+            (Some(_), None) => false,
+            (None, Some(_)) => true,
+            (Some(ring), Some(queued)) => queued.seq < ring.seq,
+        };
+        if from_queue {
+            queue.pop_front().map(|s| s.message)
+        } else {
+            inbox.ring.pop().ok().map(|s| s.message)
+        }
     }
 
-    /// Messages dropped because the ring was full or busy.
+    /// Messages dropped: a parameter `Change` or a log line the queue had no room for, and what
+    /// the ring refused because it was full or busy.
     pub fn dropped_messages(&self) -> u64 {
         self.slot.inner.messenger.dropped()
     }
@@ -430,10 +614,14 @@ pub fn plugin_channel(id: InstanceId) -> (DeviceEnd, ManagerEnd) {
     let messenger = HostMessenger {
         inner: Arc::new(MessengerInner {
             producer: Mutex::new(msg_tx),
+            queue: Mutex::new(VecDeque::new()),
+            flags: AtomicU8::new(0),
+            seq: AtomicU64::new(0),
             dropped: AtomicU64::new(0),
         }),
     };
-    // `post` runs on the audio thread (a plugin may call back from `process`): see `warm`.
+    // `post` runs on the audio thread (a plugin may call back from `process`): see `warm`. The
+    // queue's mutex is never locked there, so it needs no warming.
     warm(&messenger.inner.producer);
     let slot = PluginSlot {
         inner: Arc::new(SlotInner {
@@ -456,7 +644,10 @@ pub fn plugin_channel(id: InstanceId) -> (DeviceEnd, ManagerEnd) {
         },
         ManagerEnd {
             slot,
-            messages: Mutex::new(msg_rx),
+            messages: Mutex::new(Inbox {
+                ring: msg_rx,
+                flags: 0,
+            }),
             from_device,
             to_device,
         },

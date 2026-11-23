@@ -73,9 +73,9 @@ pub use settings::{
     ProcessChoice, ProcessMode,
 };
 pub use slot::{
-    DeviceEnd, DeviceState, HostMessenger, InstanceId, LogLevel, MESSAGE_CAPACITY, ManagerEnd,
-    ParamPhase, PluginMessage, PluginSlot, ReapItem, ReaperQueue, STALL_THRESHOLD, StallOutcome,
-    plugin_channel, warm, warmed,
+    CHANGE_RESERVE, DeviceEnd, DeviceState, HostMessenger, InstanceId, LogLevel, MESSAGE_CAPACITY,
+    ManagerEnd, ParamPhase, PluginMessage, PluginSlot, QUEUE_HARD_CAP, QUEUE_SOFT_CAP, ReapItem,
+    ReaperQueue, STALL_THRESHOLD, StallOutcome, plugin_channel, warm, warmed,
 };
 pub use soft::{SOFT_FRAME_BUDGET, SoftAnswer, SoftBudget};
 pub use standin::{PluginStandIn, stand_in};

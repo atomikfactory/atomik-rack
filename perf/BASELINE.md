@@ -572,3 +572,21 @@ bursts in series the first plugin takes 4 ms of the 7 and answers; the second ha
 at the deadline and it falls back to one period, while the first keeps the budget: late batches fall from 6394 to
 2795 (the second plugin's bursts are still lost), and the audio side pays 5.5 ms per callback, most of it the first
 plugin's own work, against 1.4 ms. The two plugins do not fit together, which no wait length changes.
+
+## A bounce with ten plugins in ten processes (2026-11-23)
+
+The command-line bounce (`atomik-render --plugin-sandbox on --plugin-mode offline`, release build with debug info) of a
+60 s project of ten test CLAP synths, each on its own console channel with a note pattern, every plugin in a process of
+its own, 48 kHz (45 000 batches of 64 frames). Same machine as above, nothing else running; wall time of the whole
+command, three runs each, and the time the plugin manager's poll after the batches took (a counter around the poll,
+not kept in the code). **before** asks the processes for their notifications one after the other, **after** sends
+every request first and then collects the answers.
+
+| | wall time, runs | median | the polls |
+|---|---|---|---|
+| before | 58.1 s, 59.2 s, 59.5 s | 59.2 s | 50.7 to 52.3 s (88 %) |
+| after | 42.9 s, 41.4 s, 42.5 s | 42.5 s | 34.2 to 35.3 s (83 %) |
+
+The wall time falls by about 28 % and the three runs of each column lie within 1.5 s of each other. The WAV is the same
+bytes before and after. The polls still take most of the bounce: each batch still waits for one round trip to the
+slowest process, and the ten processes share one machine.

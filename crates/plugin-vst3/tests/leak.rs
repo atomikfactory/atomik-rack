@@ -148,6 +148,49 @@ fn five_hundred_instances_leave_every_counter_where_it_started() {
     }
 }
 
+/// A split plugin that is as strict as real ones are: it lets go of its peer only for the object
+/// it was connected with, and never in `terminate`. Only a host that disconnects each half with
+/// the proxy that half got, and cuts the proxies, leaves nothing of it alive.
+#[test]
+fn five_hundred_strict_split_instances_leave_both_halves_destroyed() {
+    let _s = serial();
+    let path = Format::Vst3.install("atomik-test-vst3-variants");
+    let lib = TestLib::open_path(&path);
+    let mut m = manager_for(Format::Vst3, &[path]);
+    let plugin = vst3_ref(&variant_id(V_STRICT));
+    // A first round warms everything up. Every round restarts the plugin once (deactivate and
+    // activate again with the halves connected), a real path of a split plugin.
+    cycle(&mut m, &plugin, true);
+    let base = |i| lib.counter(i);
+    let (activated, deactivated) = (base(counter::ACTIVATED), base(counter::DEACTIVATED));
+    let (created, destroyed) = (base(counter::CREATED), base(counter::DESTROYED));
+    let (controllers, controllers_destroyed) = (
+        base(counter::CONTROLLERS_CREATED),
+        base(counter::CONTROLLERS_DESTROYED),
+    );
+    for _ in 0..500 {
+        cycle(&mut m, &plugin, true);
+    }
+    assert_eq!(
+        base(counter::ACTIVATED) - activated,
+        base(counter::DEACTIVATED) - deactivated,
+        "every activation deactivated"
+    );
+    assert_eq!(base(counter::CREATED) - created, 500);
+    assert_eq!(
+        base(counter::DESTROYED) - destroyed,
+        500,
+        "every component is destroyed"
+    );
+    assert_eq!(base(counter::CONTROLLERS_CREATED) - controllers, 500);
+    assert_eq!(
+        base(counter::CONTROLLERS_DESTROYED) - controllers_destroyed,
+        500,
+        "every controller is destroyed"
+    );
+    assert_eq!(m.instance_count(), 0);
+}
+
 #[test]
 fn parked_and_reattached_instances_are_destroyed_exactly_once() {
     let _s = serial();
