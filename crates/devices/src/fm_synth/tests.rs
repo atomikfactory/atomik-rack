@@ -2112,3 +2112,88 @@ fn an_idle_batch_without_a_cable_on_the_lfo_output_skips_the_lfo_bit_for_bit() {
         },
     );
 }
+
+// ---------------------------------------------------------------------------- silent operators
+
+/// One scenario for a silent-operator comparison: `algorithm`, the operators in `zero` (a bit
+/// each) at level 0, `feedback`, `unison` copies, each operator on its own wave. A level is
+/// automated to zero and back during the held note, an operator swells in after a delay, and
+/// the release brings the envelopes to exactly zero. Returns every output bit.
+fn silent_operator_scenario(algorithm: usize, zero: u32, feedback: f32, unison: f32) -> Vec<u32> {
+    let (mut h, _) = synth();
+    patch(
+        &mut h,
+        algorithm,
+        [0.7, 0.6, 0.5, 0.4],
+        [1.0, 2.0, 3.0, 1.0],
+    );
+    h.set_param("feedback", feedback);
+    h.set_param("unison.voices", unison);
+    for (n, key) in WAVE_KEYS.iter().enumerate() {
+        h.set_param(key, ((n + algorithm) % 6) as f32);
+        h.set_param(&format!("op{}.release", n + 1), 8.0);
+        if zero >> n & 1 == 1 {
+            h.set_param(&format!("op{}.level", n + 1), 0.0);
+        }
+    }
+    // One operator that swells in after a delay (its envelope is zero until then).
+    h.set_param("op2.delay", 15.0);
+    let mut bits = Vec::new();
+    let mut batches = |h: &mut DeviceHarness, n: usize| {
+        for _ in 0..n {
+            h.process();
+            for out in OUT {
+                bits.extend(h.output(out).iter().map(|s| s.to_bits()));
+            }
+        }
+    };
+    batches(&mut h, 3);
+    push(
+        &mut h,
+        40,
+        NoteKind::On {
+            key: 57,
+            velocity: 0.8,
+        },
+    );
+    batches(&mut h, 10);
+    // A level automated to zero and back, a level raised from zero.
+    for (key, value) in [("op1.level", 0.0), ("op3.level", 0.9)] {
+        h.set_param(key, value);
+        batches(&mut h, 6);
+    }
+    for (key, value) in [("op1.level", 0.7), ("op3.level", 0.0)] {
+        h.set_param(key, value);
+        batches(&mut h, 6);
+    }
+    push(&mut h, 0, NoteKind::Off { key: 57 });
+    batches(&mut h, 40);
+    bits
+}
+
+#[test]
+fn a_silent_operator_is_not_computed_and_not_a_bit_changes() {
+    for algorithm in 0..12 {
+        for zero in 0..16u32 {
+            for (feedback, unison) in [(0.0, 1.0), (1.0, 1.0), (1.0, 4.0)] {
+                crate::shortcuts::taken(crate::shortcuts::Shortcut::Operator);
+                let fast = silent_operator_scenario(algorithm, zero, feedback, unison);
+                assert!(
+                    crate::shortcuts::taken(crate::shortcuts::Shortcut::Operator) > 0,
+                    "alg {algorithm} zero {zero:04b}"
+                );
+                let full = crate::shortcuts::with_full(|| {
+                    silent_operator_scenario(algorithm, zero, feedback, unison)
+                });
+                assert_eq!(
+                    crate::shortcuts::taken(crate::shortcuts::Shortcut::Operator),
+                    0
+                );
+                assert!(
+                    fast == full,
+                    "alg {algorithm}, zero {zero:04b}, feedback {feedback}, unison {unison}"
+                );
+            }
+        }
+    }
+}

@@ -607,8 +607,10 @@ tree with them. A row that did not move says so.
 | granular, idle | 375.3 us, 400.2 us | 275.5 us, 277.7 us |
 | organ, idle | 997.5 us, 1018 us | 234.0 us, 236.7 us |
 | organ, chord | 2.569 ms, 2.555 ms | 2.596 ms, 2.535 ms (did not move) |
+| fm-synth, chord (default patch), silent operators skipped | 11.660 ms, 11.685 ms | 7.217 ms, 7.209 ms |
 
 The LFO that an idle instrument no longer evaluates is 64 sine calls a batch, about 0.3 us on this machine: 85 to
 100 us of the 256 batches, which is a quarter of an idle sampler or granular synth and a tenth of the other three. What
 remains of an idle poly, FM and wavetable synth is outside this item (the output stage runs for every sample). The
-organ's scanner was three quarters of an idle organ.
+organ's scanner was three quarters of an idle organ. In the default FM patch two of the four operators have level 0, and
+the sine series of an operator is the largest part of a voice sample: skipping the silent ones takes 38 % off the chord.

@@ -259,6 +259,11 @@ may break APIs and the patch and project formats.
   only zeros (from a silent start, or once the tails and the lines have emptied) it now skips the sines, the reads and
   the writes, and keeps its phase, depth and mix moving as before, so the output is the same bits. An idle organ
   costs about a quarter of what it did (about 1.0 ms to 0.23 ms per 256 batches on the bench machine).
+- **The FM synth does not compute a silent operator.** An operator whose level or envelope is exactly zero at a
+  sample (two of the four in the default patch, or one that has not swelled in yet or has finished its release) used
+  to evaluate its sine series all the same. It is skipped now, its phase still advances, and no output bit changes.
+  The default patch with a three-note chord costs about 38 % less per batch (about 11.7 ms to 7.2 ms per 256 batches
+  on the bench machine).
 
 ### Fixed
 - **Dropping an instrument above its mix channel.** An instrument dragged to the place above its own mix channel

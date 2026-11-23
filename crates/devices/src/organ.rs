@@ -809,7 +809,7 @@ impl Organ {
                 // Silence into lines of silence: a read gives +0.0 whatever the delay, and a
                 // write of zero changes nothing a later read can reach (the write position
                 // waits; the last `reach` entries before it stay zero).
-                crate::shortcuts::took();
+                crate::shortcuts::took(crate::shortcuts::Shortcut::Scanner);
                 (0.0, 0.0)
             } else {
                 let ms_to_samples = (sr * 0.001) as f32;

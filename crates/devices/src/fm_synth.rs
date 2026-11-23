@@ -20,7 +20,8 @@
 //!   modulates another is a *modulator*, one that reaches the output a *carrier*; its `level` is
 //!   the volume of a carrier and the modulation index (full level is [`fm::MAX_INDEX_RAD`] = 8
 //!   radians at an index of 1) of a modulator. The phase accumulators are `f64` and wrap, so a
-//!   note stays in tune for hours.
+//!   note stays in tune for hours. An operator whose level or envelope is exactly zero at a sample
+//!   is not evaluated (its phase still advances).
 //! * **Frequency.** In ratio mode an operator runs at the played pitch times `coarse + fine`
 //!   (coarse step 0 is the ratio 0.5), plus `detune` in cents; in fixed mode (`fixed` on) at
 //!   `10^((coarse + fine) / 8)` Hz whatever the key ([`fm::op_frequency`]).
@@ -1314,8 +1315,15 @@ impl Voice {
                 // The average of the last two outputs: the damped feedback path.
                 modulation += 0.5 * (fb[0] + fb[1]) * fb_scale;
             }
-            let s = wave(p.ops[op].wave, phase[op] + f64::from(modulation));
-            y[op] = s * level[op] * env[op];
+            // A silent operator is not evaluated. Its output is +0.0 where the product was a zero
+            // of either sign; every sum it joins starts at +0.0 (so never holds -0.0) and the
+            // feedback memory flushes it to +0.0, so no later bit can tell.
+            y[op] = if crate::shortcuts::enabled() && (level[op] == 0.0 || env[op] == 0.0) {
+                crate::shortcuts::took(crate::shortcuts::Shortcut::Operator);
+                0.0
+            } else {
+                wave(p.ops[op].wave, phase[op] + f64::from(modulation)) * level[op] * env[op]
+            };
             let ph = phase[op] + step[op];
             phase[op] = ph - ph.floor();
             if alg.is_carrier(op) {
@@ -1983,7 +1991,7 @@ impl Device for FmSynth {
                 .iter()
                 .any(|v| v.is_active(self.shared.algorithm))
         {
-            crate::shortcuts::took();
+            crate::shortcuts::took(crate::shortcuts::Shortcut::Lfo);
             self.lfo.skip(BATCH);
         } else {
             for s in &mut lfo {

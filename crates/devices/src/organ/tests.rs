@@ -1014,14 +1014,17 @@ fn scanner_scenario(sr: f64, first_scanner: f32) -> Vec<u32> {
 fn a_silent_scanner_rests_without_changing_a_bit() {
     for sr in [48_000.0, 44_100.0, 96_000.0, 22_050.0] {
         for kind in [0.0, 2.0, 4.0, 6.0] {
-            crate::shortcuts::taken();
+            crate::shortcuts::taken(crate::shortcuts::Shortcut::Scanner);
             let rested = scanner_scenario(sr, kind);
             assert!(
-                crate::shortcuts::taken() > 0,
+                crate::shortcuts::taken(crate::shortcuts::Shortcut::Scanner) > 0,
                 "{sr} Hz: the scanner never rested"
             );
             let full = crate::shortcuts::with_full(|| scanner_scenario(sr, kind));
-            assert_eq!(crate::shortcuts::taken(), 0);
+            assert_eq!(
+                crate::shortcuts::taken(crate::shortcuts::Shortcut::Scanner),
+                0
+            );
             assert!(
                 rested == full,
                 "{sr} Hz, scanner {kind}: the output differs"

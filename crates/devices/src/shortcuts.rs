@@ -13,21 +13,37 @@ use std::cell::Cell;
 #[cfg(test)]
 thread_local! {
     static FULL: Cell<bool> = const { Cell::new(false) };
-    static TAKEN: Cell<u64> = const { Cell::new(0) };
+    static TAKEN: [Cell<u64>; 3] = const { [Cell::new(0), Cell::new(0), Cell::new(0)] };
+}
+
+/// The shortcuts that are counted.
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum Shortcut {
+    /// An LFO that moves on without being evaluated.
+    Lfo,
+    /// The organ's scanner at rest.
+    Scanner,
+    /// An FM operator that is not computed.
+    Operator,
 }
 
 /// Counts a shortcut taken (test builds only: a test checks that its scenario reaches the
 /// shortcut, and that [`with_full`] never does).
 #[inline]
-pub(crate) fn took() {
+pub(crate) fn took(which: Shortcut) {
     #[cfg(test)]
-    TAKEN.with(|c| c.set(c.get() + 1));
+    TAKEN.with(|c| {
+        let c = &c[which as usize];
+        c.set(c.get() + 1);
+    });
+    #[cfg(not(test))]
+    let _ = which;
 }
 
-/// The shortcuts taken on this thread since the last call (test builds only).
+/// The `which` shortcuts taken on this thread since the last call (test builds only).
 #[cfg(test)]
-pub(crate) fn taken() -> u64 {
-    TAKEN.with(|c| c.replace(0))
+pub(crate) fn taken(which: Shortcut) -> u64 {
+    TAKEN.with(|c| c[which as usize].replace(0))
 }
 
 /// Whether the shortcuts may be taken (always, outside tests).
@@ -59,7 +75,7 @@ pub(crate) fn with_full<R>(f: impl FnOnce() -> R) -> R {
 /// The scenario every instrument with a device LFO runs, shortcut on against shortcut off.
 #[cfg(test)]
 pub(crate) mod lfo_check {
-    use super::{taken, with_full};
+    use super::{Shortcut, taken, with_full};
     use crate::test_support::{off, on};
     use atomik_testkit::harness::DeviceHarness;
 
@@ -133,11 +149,11 @@ pub(crate) mod lfo_check {
         for wave in [0.0, 1.0, 2.0, 3.0, 4.0] {
             for hz in [7.3, 3_000.0] {
                 for cabled in [false, true] {
-                    taken();
+                    taken(Shortcut::Lfo);
                     let shortcut = run(make, c, wave, hz, cabled);
-                    let used = taken();
+                    let used = taken(Shortcut::Lfo);
                     let full = with_full(|| run(make, c, wave, hz, cabled));
-                    assert_eq!(taken(), 0, "the full run took a shortcut");
+                    assert_eq!(taken(Shortcut::Lfo), 0, "the full run took a shortcut");
                     assert!(
                         shortcut == full,
                         "wave {wave} at {hz} Hz, cabled {cabled}: the outputs differ"

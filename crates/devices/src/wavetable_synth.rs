@@ -1680,7 +1680,7 @@ impl Device for WavetableSynth {
             && events.is_empty()
             && !self.voices.iter().any(Voice::is_active)
         {
-            crate::shortcuts::took();
+            crate::shortcuts::took(crate::shortcuts::Shortcut::Lfo);
             self.lfo.skip(BATCH);
         } else {
             for s in &mut lfo {
