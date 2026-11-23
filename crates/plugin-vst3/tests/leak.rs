@@ -158,18 +158,24 @@ fn five_hundred_strict_split_instances_leave_both_halves_destroyed() {
     let lib = TestLib::open_path(&path);
     let mut m = manager_for(Format::Vst3, &[path]);
     let plugin = vst3_ref(&variant_id(V_STRICT));
-    // A first round warms everything up (no restart: the restart hand-shake is not what this
-    // test is about).
-    cycle(&mut m, &plugin, false);
+    // A first round warms everything up. Every round restarts the plugin once (deactivate and
+    // activate again with the halves connected), a real path of a split plugin.
+    cycle(&mut m, &plugin, true);
     let base = |i| lib.counter(i);
+    let (activated, deactivated) = (base(counter::ACTIVATED), base(counter::DEACTIVATED));
     let (created, destroyed) = (base(counter::CREATED), base(counter::DESTROYED));
     let (controllers, controllers_destroyed) = (
         base(counter::CONTROLLERS_CREATED),
         base(counter::CONTROLLERS_DESTROYED),
     );
     for _ in 0..500 {
-        cycle(&mut m, &plugin, false);
+        cycle(&mut m, &plugin, true);
     }
+    assert_eq!(
+        base(counter::ACTIVATED) - activated,
+        base(counter::DEACTIVATED) - deactivated,
+        "every activation deactivated"
+    );
     assert_eq!(base(counter::CREATED) - created, 500);
     assert_eq!(
         base(counter::DESTROYED) - destroyed,

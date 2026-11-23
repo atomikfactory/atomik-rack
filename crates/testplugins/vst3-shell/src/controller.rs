@@ -552,10 +552,14 @@ impl ControllerCore {
             && let Some(found) = find_by_number(number as u64)
         {
             // Adopt the component's probes; keep what this half already learned.
+            // A second activation links again: nothing is adopted twice.
             let old = std::mem::replace(&mut *lock(&self.shared), Arc::clone(&found));
-            found.add(probe::CONNECTS, old.get(probe::CONNECTS));
-            if let Some(h) = lock(&old.handler).take() {
-                *lock(&found.handler) = Some(h);
+            if !Arc::ptr_eq(&old, &found) {
+                found.add(probe::CONNECTS, old.get(probe::CONNECTS));
+                let handler = lock(&old.handler).take();
+                if let Some(h) = handler {
+                    *lock(&found.handler) = Some(h);
+                }
             }
             let peer = lock(&self.peer).clone();
             let host = lock(&self.host).clone();
