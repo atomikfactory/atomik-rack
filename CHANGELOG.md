@@ -502,6 +502,12 @@ may break APIs and the patch and project formats.
   plain library load, which does not look in the plugin's own folder for the libraries it depends on, so such a
   plugin failed to load and a scan listed it as failed. It is now opened with the folder of its file searched first,
   as a VST3 plugin already was. Other platforms are unchanged.
+- **A plugin whose saved state changes its parameter list starts with the right list.** The device of a plugin was
+  built from the parameter list the plugin had before its state was restored. A plugin whose state changes its
+  parameters says so while it activates, and its audio half is made for the new list, so the device could be
+  installed with a descriptor that did not match it until some later restart. The manager now takes that change
+  once the plugin is active and builds the device and the listed layout from the new list, when it loads
+  in the app's own process and when it loads in the background; the change is not reported a second time.
 
 ## [0.5.0-rc.1] - 2026-11-18
 

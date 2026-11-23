@@ -585,3 +585,33 @@ fn one_poll_asks_every_instance_before_it_polls_any_of_them() {
         "every ask comes before the first poll, and a parked instance is asked and polled too"
     );
 }
+
+#[test]
+fn a_polled_creation_of_a_plugin_whose_layout_changed_while_it_activated_has_the_layout_it_has() {
+    let (mut m, stats) = manager();
+    stats.set_background_create(Some(1));
+    stats.set_activate_delay(2);
+    let mut grown = fx_layout();
+    grown.sidechain = true;
+    grown.aux_out = 2;
+    stats.change_layout(grown.clone());
+    let (answer, _) = create(&mut m, &request(None), 50);
+    let handle = answer.unwrap();
+    let id = handle.id;
+    assert_eq!(handle.layout, grown, "the handle");
+    assert_eq!(m.layout(id).unwrap(), &grown, "the manager's list");
+    let (mut h, _) = harness_of(handle);
+    m.restart(id).unwrap();
+    let mut events = Vec::new();
+    for _ in 0..10 {
+        h.process();
+        events.extend(m.poll());
+    }
+    assert!(events.contains(&ManagerEvent::Restarted(id)), "{events:?}");
+    assert!(
+        !events
+            .iter()
+            .any(|e| matches!(e, ManagerEvent::LayoutChanged { .. })),
+        "{events:?}"
+    );
+}

@@ -1011,11 +1011,7 @@ impl PluginManager {
                 Stage::Activating(mut boot, prepared) => match boot.instance.poll_activate() {
                     None => return Stage::Activating(boot, prepared),
                     Some(Err(e)) => return Stage::Failed(Box::new(e.into())),
-                    Some(Ok(processor)) => Stage::Ready(Box::new(Readied {
-                        boot,
-                        prepared,
-                        processor,
-                    })),
+                    Some(Ok(processor)) => self.ready(request, boot, prepared, processor),
                 },
             };
         }
@@ -1055,13 +1051,53 @@ impl PluginManager {
             Err(e) => return Stage::Failed(Box::new(e.into())),
         };
         match activate_now_or_later(boot.instance.as_mut(), &activate_config(request)) {
-            Ok(Some(processor)) => Stage::Ready(Box::new(Readied {
+            Ok(Some(processor)) => self.ready(request, boot, prepared, processor),
+            Ok(None) => Stage::Activating(boot, prepared),
+            Err(e) => Stage::Failed(Box::new(e.into())),
+        }
+    }
+
+    /// What the descriptor and the listed layout are once the plugin is active. A plugin whose
+    /// restored state changes its param list reports it while it activates (a VST3 plugin reads
+    /// its table again then, and its processor is made for that table): the device is then made
+    /// for the list the plugin has now, not the one it had before its state was restored. The
+    /// change is taken here, so it is not reported again as a layout change after the device is
+    /// installed. A descriptor that cannot be built fails the creation as before (the plugin is
+    /// deactivated first).
+    fn settle_layout(
+        &self,
+        plugin: &PluginRef,
+        instance: &mut dyn PluginInstance,
+        prepared: Prepared,
+        processor: Box<dyn PluginProcessor>,
+    ) -> Result<(Prepared, Box<dyn PluginProcessor>), ManagerError> {
+        if !instance.take_layout_changed() {
+            return Ok((prepared, processor));
+        }
+        match descriptor_of(plugin, instance.layout(), &self.pins_of(plugin)) {
+            Ok(settled) => Ok((settled, processor)),
+            Err(e) => {
+                instance.deactivate(processor);
+                Err(e.into())
+            }
+        }
+    }
+
+    /// The stage of an instance that is active: see [`PluginManager::settle_layout`].
+    fn ready(
+        &self,
+        request: &InstantiateRequest,
+        mut boot: Booting,
+        prepared: Prepared,
+        processor: Box<dyn PluginProcessor>,
+    ) -> Stage {
+        match self.settle_layout(&request.plugin, boot.instance.as_mut(), prepared, processor) {
+            Ok((prepared, processor)) => Stage::Ready(Box::new(Readied {
                 boot,
                 prepared,
                 processor,
             })),
-            Ok(None) => Stage::Activating(boot, prepared),
-            Err(e) => Stage::Failed(Box::new(e.into())),
+            Err(e) => Stage::Failed(Box::new(e)),
         }
     }
 
@@ -1108,12 +1144,14 @@ impl PluginManager {
             .and_then(|s| instance.restore_state(s).err())
             .map(|e| e.to_string());
         let restored = clock();
-        let (descriptor, layout) = descriptor_of(
+        let prepared = descriptor_of(
             &request.plugin,
             instance.layout(),
             &self.pins_of(&request.plugin),
         )?;
         let processor = instance.activate(&activate_config(request))?;
+        let ((descriptor, layout), processor) =
+            self.settle_layout(&request.plugin, instance.as_mut(), prepared, processor)?;
         let timing = CreateTiming {
             restore: restored.saturating_duration_since(began),
             activate: clock().saturating_duration_since(restored),

@@ -205,16 +205,28 @@ impl ControllerCore {
             return kInvalidArgument;
         };
         let mut dsp = lock(&self.dsp);
+        let before = dsp.params().len();
         if !dsp.load(&bytes) {
             return kResultFalse;
         }
+        // A state that brings params the plugin did not list yet (the run-time param) changes the
+        // table: the controller rebuilds it and, like a plugin whose state changes its
+        // parameters, tells the host.
+        let grew = dsp.params().len() != before;
         let mut table = self.sync();
+        if grew {
+            let rebuilt = build_table(&**dsp, self.info.midi, Some(&table));
+            *table = rebuilt;
+        }
         for i in 0..table.entries.len() {
             if let Some(spec) = table.entries[i].spec.clone() {
                 table.values[i] = norm_of(&spec, dsp.param(spec.id));
             }
         }
         drop((table, dsp));
+        if grew {
+            self.shared().announce(RestartFlags_::kParamTitlesChanged);
+        }
         if let Some((id, value)) = atomik_test_plugin_core::gui_edit_on_restore() {
             self.gui_edit(id, value);
         }
