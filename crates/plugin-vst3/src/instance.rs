@@ -455,6 +455,7 @@ impl HostInstance for Vst3Instance {
             expressions: self.read.expressions,
             mode: cfg.mode,
             param_capacity: self.read.layout.params.len() + crate::layout::MIDI_CONTROLLERS + 16,
+            out_ids: self.read.layout.params.iter().map(|p| p.id).collect(),
             hub: Arc::clone(&self.hub),
             edits: consumer,
             mirror: mirror_in,

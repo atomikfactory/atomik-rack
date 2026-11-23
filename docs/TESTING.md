@@ -485,6 +485,14 @@ libraries.
   before the notes; hung when it never answers), `plugin-hostd/tests/e2e_start.rs` does the same through a real
   child and device, `null_plugins.rs` and `real_plugins.rs` check the child side bit for bit, and
   `plugin_sandbox_bounce.rs` checks that a slow start leaves a bounce unchanged.
+- **What a plugin tells the app.** `plugin-host/tests/message_channel.rs` stalls the consumer and checks that every
+  message other than a parameter change or a log line arrives, in the order posted: flags, the queue of two threads
+  posting at once, a flood of changes inside `process` next to gestures and failures, tail replacement (never across
+  a begin, an end, another parameter or a message of the other road), the soft and hard caps, the reserve and the
+  one order; `device_sandbox.rs` checks that a failure a full ring refused is said again; `plugin-vst3/src/out_params.rs`
+  and `vst3_host.rs` (`a_metering_plugin_cannot_take_the_room_of_what_the_app_must_hear`, with the test plugin's
+  `OUT_PARAMS` command) check the output-parameter rule, and `plugin-hostd/tests/e2e_out_params.rs` does the same
+  through a real child (`ATOMIK_TEST_OUT_PARAMS`).
 - **Real plugins** are only for manual checks (the ignored tests in `app_core_plugins_real_tests.rs`
   and `plugin-vst3/tests/real_plugin.rs`, driven by the `ATOMIK_REAL_*` environment variables, and
   `plugin_scan_fallback.rs`, which scans the folders named by `ATOMIK_SCAN_SMOKE`, run against

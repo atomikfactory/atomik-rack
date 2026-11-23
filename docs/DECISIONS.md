@@ -1943,3 +1943,50 @@ synchronous wait with a longer deadline (a longer dropout); a separate offline p
 play follow different rules).
 
 **Status.** Default (not yet confirmed). Decided by: none yet.
+
+## BJ. Only a parameter change or a log line can be lost on the way from a plugin to the app
+
+**Question.** Everything a plugin or its device told the app went through one ring of 256 messages per instance, and
+`post` dropped a message when the ring was full or another thread was posting at that instant. The VST3 processor
+posted a change for every output parameter queue in every block. A stalled consumer plus a metering plugin filled the
+ring, and two threads posting at once lost one message even with an empty ring. What was lost included messages that
+must arrive: a request to save, a new latency, the end of a gesture (an undo gesture stays open), a failure, the news
+that the plugin's process died (the single automatic reload depends on it).
+
+**Decision.** Three roads, one order. (1) The five messages that carry no data (`StateDirty`, `LatencyChanged`,
+`RescanParams`, `RequestRestart`, `RequestCallback`) are bits in an atomic: posting sets the bit from any thread and is
+always accepted; the receiver takes them all at once and hands them out first, in a fixed order. (2) A thread that is
+not inside `process` posts to a queue under a mutex it waits for, so two such threads never lose a message to each
+other; a change that follows a change of the same parameter, with nothing posted since, replaces it (a drag in a
+window is one message and its end still carries the last value); from 1 024 waiting messages a change and a log line
+are dropped and counted, every other message is queued, and 65 536 is a cap against a plugin that never stops (only
+a runaway stream of window-move or callback messages with a consumer gone for good could reach it). (3) A thread
+inside `process` keeps the wait-free ring and its `try_lock`, with one rule added: a change is pushed only while more
+than 64 slots are free, so a flood of changes cannot take the room of a begin or an end, a log line or a failure. Each
+message of the ring and the queue is stamped from one counter and the receiver hands out the older head, locking the
+queue before it looks at the ring so that a message posted later on the other road is never handed out first. The
+device keeps a failure the ring refused in a plain field and says it again on the next blocks.
+
+**Why a change may still be lost.** A change outside a gesture only feeds MIDI learn and the camera touch, and inside
+a gesture the merger keeps the last value, so a later value of the same parameter makes an earlier one worthless. What
+is done so that the latest value survives: a queued change is replaced by the next of the same parameter, the VST3
+processor keeps the latest value of every parameter it reports and offers it again, also with nothing new written,
+until the ring takes it, and the reserve keeps the ring from being full of changes. A change that is refused is
+counted in the dropped counter.
+
+**Output parameters of a VST3 plugin.** The processor builds the sorted list of the ids of the layout the app shows
+when the plugin is activated, and reports a value written during `process` only for those ids, only when it differs
+from the last one reported, and at most once every 15 blocks (about 20 ms at 48 kHz; blocks are counted, a clock is
+never read, so a bounce and a live run report at the same blocks). A value the plugin wrote before the user edited the
+same parameter in the plugin's window is not reported over the edit. For a parameter the plugin automates out while
+the user drags it, the app sees the begin, the edits and the plugin's own values in the order they were posted, and
+the gesture's last value is the last one posted.
+
+**Limits.** Flags no longer keep their place among the other messages: the app's restart request is one boolean and
+`StateDirty` only stamps a time, and the plugin process forwards each flag as it takes it. Log lines a plugin writes
+from its audio thread still use the small ring (they can be shed there).
+
+**Rejected.** A bigger ring (the same loss, later); waiting for the lock on the audio thread; one queue for every
+thread (the audio thread would lock); counting each flag (the app does not need it).
+
+**Status.** Default (not yet confirmed). Decided by: none yet.

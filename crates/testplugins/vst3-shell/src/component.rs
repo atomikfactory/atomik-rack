@@ -393,6 +393,40 @@ impl ComponentCore {
 
     // ----- process -----------------------------------------------------------------------------
 
+    /// Writes the output parameters a test asked for (`command::OUT_PARAMS`) into the host's
+    /// list, one queue each, as a metering plugin does in every block.
+    fn write_out_params(&self, d: &ProcessData) {
+        let count = self.shared.get(probe::OUT_COUNT);
+        if count == 0 {
+            return;
+        }
+        // SAFETY: the host passes null or a valid list for the call.
+        let Some(list) = (unsafe { ComRef::from_raw(d.outputParameterChanges) }) else {
+            return;
+        };
+        let base = self.shared.get(probe::OUT_BASE) as u32;
+        let calls = self.shared.get(probe::PROCESS_CALLS);
+        let fixed = f64::from_bits(self.shared.get(probe::OUT_VALUE));
+        let ramp = self.shared.get(probe::OUT_RAMP) != 0;
+        for k in 0..count {
+            let id = base.wrapping_add(k as u32);
+            let value = if ramp {
+                ((calls + k) % 997) as f64 / 997.0
+            } else {
+                fixed
+            };
+            let mut index = 0i32;
+            // SAFETY: calling methods of the host's list with valid arguments.
+            let queue = unsafe { list.addParameterData(&id, &mut index) };
+            // SAFETY: null or a queue of the host's list.
+            if let Some(queue) = unsafe { ComRef::from_raw(queue) } {
+                let mut at = 0i32;
+                // SAFETY: valid out pointer.
+                unsafe { queue.addPoint(0, value, &mut at) };
+            }
+        }
+    }
+
     pub unsafe fn process(&self, data: *mut ProcessData) -> tresult {
         // SAFETY: the host passes a valid ProcessData for the call.
         let d = unsafe { &*data };
@@ -539,6 +573,7 @@ impl ComponentCore {
 
         self.shared.add(probe::PROCESS_CALLS, 1);
         self.shared.set(probe::FRAMES, d.numSamples as u64);
+        self.write_out_params(d);
         if !d.processContext.is_null() {
             // SAFETY: non-null and valid for the call.
             let c = unsafe { &*d.processContext };

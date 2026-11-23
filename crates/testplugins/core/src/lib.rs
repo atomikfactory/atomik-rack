@@ -19,6 +19,7 @@
 //!   sleep rule.
 //! * [`gui_edit_on_restore`]: the edit a shell reports as if made in its editor when its state
 //!   is loaded, for tests that drive a plugin in another process.
+//! * [`out_params_from_env`]: output parameters a VST3 shell writes in every block, the same way.
 
 mod gain;
 mod noteshift;
@@ -183,6 +184,23 @@ pub fn parse_gui_edit(text: &str) -> Option<(u32, f64)> {
     let value: f64 = value.trim().parse().ok()?;
     let id = id.trim().parse().ok()?;
     value.is_finite().then_some((id, value))
+}
+
+/// The environment variable that makes the VST3 test plugin write output parameters in every
+/// block, as a metering plugin does: `<count>:<first id>`, the parameters `first id` and the
+/// `count - 1` ids after it, each with a value that changes from block to block.
+pub const OUT_PARAMS_ENV: &str = "ATOMIK_TEST_OUT_PARAMS";
+
+/// The `(count, first id)` [`OUT_PARAMS_ENV`] asks for, `None` when it is unset or not
+/// `<count>:<id>`.
+pub fn out_params_from_env() -> Option<(u32, u32)> {
+    parse_out_params(&std::env::var(OUT_PARAMS_ENV).ok()?)
+}
+
+/// `<count>:<first id>` as the pair.
+pub fn parse_out_params(text: &str) -> Option<(u32, u32)> {
+    let (count, id) = text.trim().split_once(':')?;
+    Some((count.trim().parse().ok()?, id.trim().parse().ok()?))
 }
 
 /// The environment variable that makes a test plugin take this many milliseconds to start

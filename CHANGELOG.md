@@ -443,6 +443,18 @@ may break APIs and the patch and project formats.
   that is woken by a note is started the same way, and its first note sounds. A stop is sent without waiting. A plugin
   that refuses to start still fails once with the same message, and one whose start never returns is still ended as
   hung. A bounce is unchanged.
+- **What a plugin tells the app is no longer lost to a full or busy message ring.** Everything a plugin or its device
+  said went through one ring of 256 messages that dropped a message when it was full or when two threads posted at
+  the same instant, so a plugin that wrote parameters in every block, with the app busy for a moment, could cost a
+  change of latency, a request to save, the end of a gesture or the news that its process had died (and with it the
+  automatic reload). The requests that carry no data (save, latency, parameter table, restart, callback) are now flags
+  that are always accepted; every other message posted outside a plugin's `process` goes to a queue its threads wait
+  for, where a drag in a plugin's window is held as one message and only a parameter change or a log line is shed,
+  after a thousand are waiting; inside `process` the ring keeps room for gestures, log lines and failures that a flood
+  of changes cannot take. The messages come out in the order they were posted, flags first, and a failure the ring
+  refused is said again on the next blocks. A VST3 plugin's own parameter writes are reported only for the parameters
+  the app shows, only when the value moved, and at most about once every 20 ms, instead of every parameter in every
+  block.
 
 ## [0.5.0-rc.1] - 2026-11-18
 

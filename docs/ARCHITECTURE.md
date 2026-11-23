@@ -5107,8 +5107,13 @@ take the app down; Settings > Plugins can switch back to running plugins inside 
   engine is rebuilt only when another live instance of the same plugin was built with the old shape
   (the registry describes the new one now, and that instance is created again as after any restart).
   A plugin opened over an older scan whose ports differ is learned without an engine restart too. Plugin callbacks
-  into the host only post to a bounded message ring that `poll` drains; a full ring drops and
-  counts.
+  into the host only post to the instance's message channel that `poll` drains: flags for the requests
+  that carry no data (always accepted), a queue for the threads outside `process` (a thread waits for its
+  lock; only a parameter change or a log line is shed, past 1 024 waiting messages, and everything past 65 536),
+  and a 256-slot ring for `process` itself (wait-free, a change is pushed only while 64 slots are free, a full
+  ring drops and counts). Every message is stamped when posted and comes out in that order, flags first. A VST3
+  processor reports the parameters the plugin wrote only for ids of the layout, when the value moved, and at
+  most once every 15 blocks.
 - **Latency and PDC.** The reported latency (clamped to 1 s) is an atomic on the slot;
   `Device::latency_frames` reads it and the engine's existing PDC does the rest. A plugin announces
   a change (CLAP `latency.changed`, VST3 `restartComponent(kLatencyChanged)`), the manager restarts

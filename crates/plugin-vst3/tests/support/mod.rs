@@ -88,6 +88,8 @@ pub mod command {
     pub const MIDI_MAPPING_CHANGED: u32 = 14;
     pub const PARAM_VALUES_CHANGED: u32 = 15;
     pub const IO_CHANGED: u32 = 16;
+    pub const OUT_PARAMS: u32 = 17;
+    pub const OUT_VALUE: u32 = 18;
 }
 
 /// The process-wide counters of a test library.

@@ -117,8 +117,18 @@ pub mod probe {
     pub const LAST_SET_ID: u32 = 46;
     /// The value of the last `setParamNormalized` (f64 bits).
     pub const LAST_SET_VALUE: u32 = 47;
+    /// How many output parameters `process` writes in every block (0: none); see
+    /// [`super::command::OUT_PARAMS`].
+    pub const OUT_COUNT: u32 = 48;
+    /// The id of the first of them (the others follow, one id each).
+    pub const OUT_BASE: u32 = 49;
+    /// The value written for all of them when they do not ramp (f64 bits).
+    pub const OUT_VALUE: u32 = 50;
+    /// Non-zero: the value written for the parameter `k` in the block `n` (the number of
+    /// `process` calls so far) is `((n + k) % 997) / 997`.
+    pub const OUT_RAMP: u32 = 51;
     /// Number of probe slots.
-    pub const COUNT: usize = 48;
+    pub const COUNT: usize = 52;
 }
 
 /// Commands of `atomik_test_command`.
@@ -141,6 +151,12 @@ pub mod command {
     pub const PARAM_VALUES_CHANGED: u32 = 15;
     /// `restartComponent(kIoChanged)`.
     pub const IO_CHANGED: u32 = 16;
+    /// Makes every `process` call write `a` output parameters with the ids `b`, `b + 1`, ...
+    /// (0: none). They write their value as `probe::OUT_VALUE`, or as the ramp of
+    /// `probe::OUT_RAMP`.
+    pub const OUT_PARAMS: u32 = 17;
+    /// Sets the value the output parameters write (`a`: f64 bits) and whether they ramp (`b`).
+    pub const OUT_VALUE: u32 = 18;
 }
 
 static COUNTERS: [AtomicU64; counter::COUNT] = [const { AtomicU64::new(0) }; counter::COUNT];
@@ -178,6 +194,13 @@ impl Shared {
             view: AtomicU64::new(0),
             grown: AtomicBool::new(false),
         };
+        // A test that drives the plugin from another process asks for output parameters through
+        // the environment: they ramp, so that every block writes new values.
+        if let Some((count, base)) = atomik_test_plugin_core::out_params_from_env() {
+            s.set(probe::OUT_COUNT, u64::from(count));
+            s.set(probe::OUT_BASE, u64::from(base));
+            s.set(probe::OUT_RAMP, 1);
+        }
         s.set(probe::RENDER_MODE, u64::MAX);
         s.set(probe::MASK_SIDECHAIN, u64::MAX);
         s.set(probe::TRANSPORT_FLAGS, u64::MAX);

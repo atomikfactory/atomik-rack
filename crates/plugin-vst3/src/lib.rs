@@ -33,6 +33,7 @@ mod ids;
 mod instance;
 mod layout;
 mod module;
+mod out_params;
 mod params;
 mod presets;
 mod processor;

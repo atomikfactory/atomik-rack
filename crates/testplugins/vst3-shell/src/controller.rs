@@ -708,6 +708,16 @@ pub fn command_run(handle: usize, cmd: u32, a: u64, b: u64) -> u64 {
             .and_then(|h| h.cast::<IComponentHandler2>())
             // SAFETY: a live handler.
             .map_or(u64::MAX, |h| unsafe { h.setDirty(1) as u64 }),
+        command::OUT_PARAMS => {
+            shared.set(probe::OUT_COUNT, a);
+            shared.set(probe::OUT_BASE, b);
+            0
+        }
+        command::OUT_VALUE => {
+            shared.set(probe::OUT_VALUE, a);
+            shared.set(probe::OUT_RAMP, b);
+            0
+        }
         command::GUI_EDIT => handler.as_ref().map_or(u64::MAX, |h| {
             // SAFETY: a live handler.
             unsafe {

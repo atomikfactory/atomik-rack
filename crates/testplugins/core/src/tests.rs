@@ -587,6 +587,15 @@ fn the_normalised_mapping_is_linear_clamped_and_inverts_on_exact_values() {
 }
 
 #[test]
+fn an_output_params_request_is_a_count_and_a_first_id() {
+    assert_eq!(parse_out_params("64:1"), Some((64, 1)));
+    assert_eq!(parse_out_params(" 3 : 900 "), Some((3, 900)));
+    assert_eq!(parse_out_params("64"), None);
+    assert_eq!(parse_out_params("x:1"), None);
+    assert_eq!(parse_out_params("1:-2"), None);
+}
+
+#[test]
 fn a_gui_edit_request_is_an_id_and_a_finite_value() {
     assert_eq!(parse_gui_edit("1:0.75"), Some((1, 0.75)));
     assert_eq!(parse_gui_edit(" 2 : -6 "), Some((2, -6.0)));
