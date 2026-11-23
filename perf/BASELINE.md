@@ -608,9 +608,13 @@ tree with them. A row that did not move says so.
 | organ, idle | 997.5 us, 1018 us | 234.0 us, 236.7 us |
 | organ, chord | 2.569 ms, 2.555 ms | 2.596 ms, 2.535 ms (did not move) |
 | fm-synth, chord (default patch), silent operators skipped | 11.660 ms, 11.685 ms | 7.217 ms, 7.209 ms |
+| fm-synth, chord, key scale of zero without `exp2` (on top of the row above) | 8.215 ms, 8.367 ms | 8.269 ms, 8.511 ms (did not move) |
 
 The LFO that an idle instrument no longer evaluates is 64 sine calls a batch, about 0.3 us on this machine: 85 to
 100 us of the 256 batches, which is a quarter of an idle sampler or granular synth and a tenth of the other three. What
 remains of an idle poly, FM and wavetable synth is outside this item (the output stage runs for every sample). The
 organ's scanner was three quarters of an idle organ. In the default FM patch two of the four operators have level 0, and
-the sine series of an operator is the largest part of a voice sample: skipping the silent ones takes 38 % off the chord.
+the sine series of an operator is the largest part of a voice sample: skipping the silent ones takes 38 % off the chord. The key scale shortcut is four `exp2` calls per voice every 16 samples against four sine series
+a sample: it is below what the bench resolves, and it is the last row of the table above only because the machine
+was busier for it (the two rows around it were taken with the other software on the machine running: compare a row only
+with the row next to it, which is why before and after were taken one after the other).

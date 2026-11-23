@@ -2113,7 +2113,7 @@ fn an_idle_batch_without_a_cable_on_the_lfo_output_skips_the_lfo_bit_for_bit() {
     );
 }
 
-// ---------------------------------------------------------------------------- silent operators
+// ----------------------------------------------------------------- silent operators, key scale
 
 /// One scenario for a silent-operator comparison: `algorithm`, the operators in `zero` (a bit
 /// each) at level 0, `feedback`, `unison` copies, each operator on its own wave. A level is
@@ -2196,4 +2196,46 @@ fn a_silent_operator_is_not_computed_and_not_a_bit_changes() {
             }
         }
     }
+}
+
+/// The key scaling as it was written before the shortcut for a scale of zero.
+fn key_scale_gain_before(scale: f32, key: f32) -> f32 {
+    let d = key - 60.0;
+    let steps = if scale >= 0.0 {
+        d.max(0.0)
+    } else {
+        (-d).max(0.0)
+    };
+    (-scale.abs() * KEY_SCALE_DB * steps * DB_TO_LOG2).exp2()
+}
+
+#[test]
+fn key_scaling_at_zero_gives_the_same_bits_without_the_exp2() {
+    let mut keys: Vec<f32> = (0..=127).map(|k| k as f32).collect();
+    // The fractional keys of a glide, and the keys a key could never be.
+    keys.extend((0..2_000).map(|i| i as f32 * 0.0635));
+    keys.extend([f32::NAN, f32::INFINITY, f32::NEG_INFINITY, -1.0e30, 1.0e30]);
+    for scale in [
+        0.0,
+        -0.0,
+        0.25,
+        -0.25,
+        1.0,
+        -1.0,
+        3.0,
+        -3.0,
+        f32::MIN_POSITIVE,
+    ] {
+        for &key in &keys {
+            assert_eq!(
+                Voice::key_scale_gain(scale, key).to_bits(),
+                key_scale_gain_before(scale, key).to_bits(),
+                "scale {scale}, key {key}"
+            );
+        }
+    }
+    assert_eq!(
+        Voice::key_scale_gain(0.0, 100.0).to_bits(),
+        1.0f32.to_bits()
+    );
 }

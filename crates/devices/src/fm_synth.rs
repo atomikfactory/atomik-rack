@@ -1164,6 +1164,11 @@ impl Voice {
 
     /// The gain of a key's level scaling.
     fn key_scale_gain(scale: f32, key: f32) -> f32 {
+        // No scaling is exp2(+-0.0) = 1 exactly; a key that is not finite would make the exponent
+        // NaN, so it keeps the full computation (a voice's key is a MIDI key, always finite).
+        if scale == 0.0 && key.is_finite() {
+            return 1.0;
+        }
         let d = key - 60.0;
         let steps = if scale >= 0.0 {
             d.max(0.0)

@@ -264,6 +264,7 @@ may break APIs and the patch and project formats.
   to evaluate its sine series all the same. It is skipped now, its phase still advances, and no output bit changes.
   The default patch with a three-note chord costs about 38 % less per batch (about 11.7 ms to 7.2 ms per 256 batches
   on the bench machine).
+  A key scale of zero no longer costs an `exp2` per operator at every control step: the gain is exactly 1 either way.
 
 ### Fixed
 - **Dropping an instrument above its mix channel.** An instrument dragged to the place above its own mix channel
