@@ -94,12 +94,12 @@ impl DelayLine {
         } else {
             delay.clamp(1.0, max)
         };
-        let whole = d.floor();
+        let (whole, index) = crate::floor::split_floor(d);
         let frac = d - whole;
         let len = self.active;
         let mask = len - 1;
         // `whole + 1 <= max + 1 < len`, so the subtraction below never underflows.
-        let i0 = (self.write + len - whole as usize) & mask;
+        let i0 = (self.write + len - index) & mask;
         let i1 = i0.wrapping_sub(1) & mask;
         let a = self.buf[i0];
         a + (self.buf[i1] - a) * frac
@@ -225,6 +225,113 @@ mod ring_tests {
                 old[w] = if x.abs() < 1e-20 { 0.0 } else { x };
                 w = (w + 1) % len;
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod floor_tests {
+    use super::*;
+
+    /// `DelayLine::read` as it was when it called `floor`.
+    fn read_with_floor(line: &DelayLine, delay: f32) -> f32 {
+        let max = line.max as f32;
+        let d = if delay.is_nan() {
+            1.0
+        } else {
+            delay.clamp(1.0, max)
+        };
+        let whole = d.floor();
+        let frac = d - whole;
+        let len = line.active;
+        let mask = len - 1;
+        let i0 = (line.write + len - whole as usize) & mask;
+        let i1 = i0.wrapping_sub(1) & mask;
+        let a = line.buf[i0];
+        a + (line.buf[i1] - a) * frac
+    }
+
+    /// A line of `max` filled with `count` samples of seeded noise.
+    fn noisy(max: usize, count: usize) -> DelayLine {
+        let mut line = DelayLine::new(max);
+        let mut state = 0x2545_F491u32;
+        for _ in 0..count {
+            state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            line.write((state >> 8) as f32 / (1u32 << 24) as f32 - 0.5);
+        }
+        line
+    }
+
+    fn delays(max: usize) -> Vec<f32> {
+        let m = max as f32;
+        let mut v = vec![
+            f32::NAN,
+            f32::INFINITY,
+            f32::NEG_INFINITY,
+            f32::MAX,
+            f32::MIN,
+            -1.0,
+            -0.0,
+            0.0,
+            f32::MIN_POSITIVE,
+            0.5,
+            0.999_999_9,
+            1.0,
+            1.000_000_1,
+            1.5,
+            2.0,
+            2.5,
+            m - 1.5,
+            m - 1.0,
+            m - 0.5,
+            m,
+            m + 0.5,
+            m + 1.0,
+            m * 2.0,
+            8_388_607.5,
+            8_388_608.0,
+            8_388_609.0,
+            16_777_215.0,
+            16_777_216.0,
+            16_777_218.0,
+        ];
+        let mut state = 99u32;
+        for _ in 0..2_000 {
+            state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            v.push(1.0 + (state >> 8) as f32 / (1u32 << 24) as f32 * m.min(2.0e7));
+        }
+        v
+    }
+
+    #[test]
+    fn read_gives_the_bits_it_gave_with_floor() {
+        // A line of 1, short ones, a second's worth, and ones above what `f32` counts exactly.
+        for max in [1usize, 2, 3, 7, 100, 4_800, 48_000, 1 << 20, (1 << 24) + 5] {
+            let line = noisy(max, 10_000);
+            for d in delays(max) {
+                assert_eq!(
+                    line.read(d).to_bits(),
+                    read_with_floor(&line, d).to_bits(),
+                    "max {max} delay {d:e}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn read_follows_a_moving_delay_bit_for_bit() {
+        let mut line = DelayLine::new(2_000);
+        let mut old = line.clone();
+        for n in 0..20_000u32 {
+            let x = ((n * 37 % 101) as f32 - 50.0) * 0.013;
+            let d = 1.0 + (n as f32 * 0.37).sin().abs() * 1_990.0;
+            assert_eq!(
+                line.read(d).to_bits(),
+                read_with_floor(&old, d).to_bits(),
+                "n {n}"
+            );
+            line.write(x);
+            old.write(x);
         }
     }
 }

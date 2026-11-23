@@ -270,6 +270,10 @@ may break APIs and the patch and project formats.
   changes. The oversampler alone is 3.0 to 3.9 times faster (4x round trip 292 to 88 us per 4,096 samples), a
   distortion, saturation or clipper 23 to 51 % cheaper per batch, the level meters with a true-peak detector 38 to
   49 % and the mastering device 25 to 34 %. An oversampler keeps about 8.5 KB more buffer memory.
+- **A delay line splits its delay without a library call.** On the baseline x86-64 build `floor` was a call into the
+  C runtime, made for every read; the whole part is now cut out of the delay's bits (and `aarch64` still uses its
+  instruction), with no output bit changed. The two reverbs are about 10 % cheaper per batch (about 4.1 to 3.7 ms per
+  256 batches), a granular synth about 10 % and the rotary speaker about 6 %.
 
 ### Fixed
 - **Dropping an instrument above its mix channel.** An instrument dragged to the place above its own mix channel
