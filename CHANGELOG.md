@@ -254,6 +254,11 @@ may break APIs and the patch and project formats.
   the same sample & hold draws) without evaluating its shape, so the next note finds it exactly where it was and
   every output sample is unchanged. An idle sampler or granular synth costs about a quarter less per batch (about
   370 us to 280 us per 256 batches on the bench machine), the other three about a tenth.
+- **The organ's scanner rests while the organ is silent.** The scanner swung a delay by two sines and read and
+  wrote two lines at every sample, also with no key down. When what it is fed is exactly zero and both lines hold
+  only zeros (from a silent start, or once the tails and the lines have emptied) it now skips the sines, the reads and
+  the writes, and keeps its phase, depth and mix moving as before, so the output is the same bits. An idle organ
+  costs about a quarter of what it did (about 1.0 ms to 0.23 ms per 256 batches on the bench machine).
 
 ### Fixed
 - **Dropping an instrument above its mix channel.** An instrument dragged to the place above its own mix channel

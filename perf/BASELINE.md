@@ -590,3 +590,25 @@ every request first and then collects the answers.
 The wall time falls by about 28 % and the three runs of each column lie within 1.5 s of each other. The WAV is the same
 bytes before and after. The polls still take most of the bounce: each batch still waits for one round trip to the
 slowest process, and the ten processes share one machine.
+
+## Idle instruments and shortcuts in the FM synth and the organ (2026-11-23)
+
+`cargo bench -p atomik-devices --bench process -- <device>` on the machine above, release profile with debug info,
+nothing else running: median of 256 batches, two runs each. The `idle` rows are the same rig without notes (every input
+cabled with noise); the other rows hold a three-note chord. **before** is the tree without these changes, **after** the
+tree with them. A row that did not move says so.
+
+| row | before, runs | after, runs |
+|---|---|---|
+| poly-synth, idle | 1.349 ms, 1.384 ms | 1.232 ms, 1.260 ms |
+| fm-synth, idle | 1.401 ms, 1.380 ms | 1.273 ms, 1.243 ms |
+| wavetable-synth, idle | 1.420 ms, 1.385 ms | 1.245 ms, 1.246 ms |
+| sampler, idle | 369.9 us, 368.1 us | 285.7 us, 288.0 us |
+| granular, idle | 375.3 us, 400.2 us | 275.5 us, 277.7 us |
+| organ, idle | 997.5 us, 1018 us | 234.0 us, 236.7 us |
+| organ, chord | 2.569 ms, 2.555 ms | 2.596 ms, 2.535 ms (did not move) |
+
+The LFO that an idle instrument no longer evaluates is 64 sine calls a batch, about 0.3 us on this machine: 85 to
+100 us of the 256 batches, which is a quarter of an idle sampler or granular synth and a tenth of the other three. What
+remains of an idle poly, FM and wavetable synth is outside this item (the output stage runs for every sample). The
+organ's scanner was three quarters of an idle organ.
