@@ -431,6 +431,9 @@ pub struct Organ {
     /// zero once it passes their reach, see `Organ::scanner_rests`).
     scan_zero_run: usize,
     ctl: ControllerState,
+    /// Whether the device said at the end of its last batch that it is quiescent (see `at_rest`);
+    /// cleared by everything that changes the state outside `process`.
+    rest: bool,
 }
 
 impl Default for Organ {
@@ -493,6 +496,7 @@ impl Organ {
             line_r: DelayLine::new(line_len(48_000.0)),
             scan_zero_run: 0,
             ctl: ControllerState::new(),
+            rest: false,
         };
         o.derive();
         o.retune(0.0);
@@ -858,6 +862,7 @@ impl Device for Organ {
 
     fn reset(&mut self) {
         self.fresh = true;
+        self.rest = false;
         self.voices = [Voice::EMPTY; MAX_VOICES];
         self.clock = 0;
         self.perc_env = 0.0;
@@ -880,6 +885,7 @@ impl Device for Organ {
     }
 
     fn set_param(&mut self, id: ParamId, plain: f32) {
+        self.rest = false;
         let v = finite(plain);
         match id.0 {
             P_SOUND => {}
@@ -971,10 +977,67 @@ impl Device for Organ {
         *ctx.output(OUT_L) = left;
         *ctx.output(OUT_R) = right;
         *ctx.output(WHEEL_CV) = wheel_cv;
+        self.rest = self.at_rest();
+    }
+
+    /// At rest when a silent batch would write `+0.0` to every output and change nothing but the
+    /// scanner phase and the percussion envelope, which `idle_advance` moves on: no key sounds or
+    /// releases, the click envelope is spent (it draws noise while it runs), the percussion envelope
+    /// multiplies a sum of nothing (`+0.0` at any level, so it may still be falling), every smoother sits on its
+    /// target, the scan lines hold only zeros (the scanner then reads `+0.0` at any swing), the
+    /// tone-wheel phasors are a fixed point of the per-batch normalisation, and the wheel output is
+    /// `+0.0` (the mod wheel on the rotary speed holds a value it would write every sample). The
+    /// drive, the level, the soft limit and the volume gain all map `+0.0` to `+0.0`. A param change
+    /// clears it at once; every note, controller and tuning event reaches the device as a batch it
+    /// runs. The wheel output is a function of held state, not a source, so a cable on it does not
+    /// keep the organ awake while the wheel is at zero.
+    fn quiescent(&self) -> bool {
+        self.rest
+    }
+
+    /// What a silent batch changes: the scanner phase and the fall of the percussion envelope,
+    /// sample by sample as `render` does.
+    fn idle_advance(&mut self, frames: usize) {
+        if self.perc_env > 0.0 {
+            for _ in 0..frames {
+                if self.perc_env > 0.0 {
+                    self.perc_env *= self.perc_coef;
+                    if self.perc_env < 1e-5 {
+                        self.perc_env = 0.0;
+                    }
+                }
+            }
+        }
+        let sr = f64::from(self.sample_rate);
+        let step = f64::from(self.scanner_rate) / sr;
+        for _ in 0..frames {
+            let p = self.scan_phase + step;
+            self.scan_phase = p - p.floor();
+        }
     }
 }
 
 impl Organ {
+    /// The conditions of `quiescent` that read the state (see there). The cheap ones come first: a
+    /// sounding key ends the check at once.
+    fn at_rest(&self) -> bool {
+        let steady = !self.any_sounding()
+            && self.click_env.to_bits() == 0
+            && (self.wheel_target != WHEEL_ROTARY || self.wheel.to_bits() == 0)
+            && self.ctl.gain_settled()
+            && self.bars.iter().all(Smoother::is_settled)
+            && self.scan_depth.is_settled()
+            && self.scan_mix.is_settled()
+            && self.scan_spread.is_settled()
+            && self.scanner_rests(0.0);
+        // The normalisation of the batch must change no phasor (its factor is exactly one).
+        steady
+            && self.wheel_x[..self.live]
+                .iter()
+                .zip(&self.wheel_y[..self.live])
+                .all(|(x, y)| (1.5 - 0.5 * (x * x + y * y)).to_bits() == 1.0f64.to_bits())
+    }
+
     /// Jumps the smoothed values to their targets (the start of a run, after a reset).
     fn settle(&mut self) {
         for b in 0..BARS {
@@ -988,5 +1051,7 @@ impl Organ {
     }
 }
 
+#[cfg(test)]
+mod idle_tests;
 #[cfg(test)]
 mod tests;

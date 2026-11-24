@@ -499,6 +499,14 @@ Rotary, else 0).
 - **Output.** The drawbar sum is scaled by 0.15 (one key at full registration stays below 1), then the
   scanner, the drive (a rational soft clipper with up to 18 dB of gain in front), the level and a soft
   limit that keeps every sample below 2, then volume and expression.
+- **Idle.** With no key down or releasing, the key click spent and nothing that still has to glide (the drawbars,
+  the scanner, the volume), the scan lines holding only zeros and the tone wheels settled (the per-batch
+  normalisation changes no phasor), the organ says it is quiescent and the engine leaves it uncalled while it gets
+  no note, controller or parameter message. It only moves the scanner phase and the fall of the percussion
+  envelope on, with the same additions as a processed batch (the percussion decay multiplies a sum of nothing,
+  so it does not keep the organ awake), and every output is `+0.0` either way. A mod wheel above zero on the
+  rotary speed holds a value on `wheel_cv_out` and keeps the organ awake. The default patch rests 28 batches
+  after the last key is released (about 37 ms). The audio is bit for bit the same.
 
 ### Sounds
 

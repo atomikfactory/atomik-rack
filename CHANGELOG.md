@@ -314,6 +314,11 @@ may break APIs and the patch and project formats.
   so the sweep is where it would have been when sound returns; an effect synced to a playing transport is always
   processed. The audio is byte for byte the same. Twenty idle modulation effects cost 136 us a batch before and 5.1 us
   after.
+- **An idle organ is no longer processed.** An organ with no key down or releasing, its click spent, its scan lines
+  empty and its drawbars, scanner and volume settled is left uncalled by the engine while no note, controller or
+  parameter message reaches it; only its scanner phase and its percussion decay are moved on, so the vibrato and the
+  chorus are where they would have been when a key returns, and the audio is byte for byte the same. A mod wheel held
+  above zero on the rotary speed keeps it running. Twenty idle organs cost 21.6 us a batch before and 4.2 us after.
 
 ### Fixed
 - **Dropping an instrument above its mix channel.** An instrument dragged to the place above its own mix channel

@@ -856,3 +856,24 @@ default (the device bench default mode and an unsynced LFO); the allpass states 
 hundred samples to empty, so an idle modulation effect is quiescent from its first batch. An LFO locked to a playing
 transport is never skipped, so the row of a project that plays a synced chorus is the busy row. Four more runs of the
 busy row after the change read 1.727 to 1.702 ms against 1.759 to 1.741 ms before: no cost that the machine can see.
+
+## Instruments that go quiet (2026-11-24)
+
+The engine rows of the effects above, now for the instruments that say they are quiescent
+(`cargo bench -p atomik-render --bench render_batch -- idle/<name>`): twenty of them, nothing cabled and no note, 256
+batches, skip off and on, median of 21 samples, one run each. What the answer must not cost a playing instrument is
+the device bench's chord row (`cargo bench -p atomik-devices --bench process -- device/<name>/256batches`: a held
+three-note chord), before (the tree without the change) and after; the limit is a rise of 2 % of the busy row.
+
+| instrument | idle row, skip off | idle row, skip on | busy row before | busy row after |
+|---|---|---|---|---|
+| organ | 5.530 ms | 1.082 ms | 2.526 ms | 2.493, 2.493 ms (-1.3 %, noise) |
+
+Organ: the answer is computed once at the end of a batch and only when no key sounds (a chord ends the check at the
+first voice). What it reads then is a handful of flags and settled-smoother tests, the scan-line zero counter the
+scanner shortcut already keeps, and (last) one test per tone wheel that the per-batch normalisation would change
+nothing, a fixed point the phasors reach a batch or two after the last key. The percussion envelope is not a
+condition: it multiplies a sum of nothing, so `idle_advance` lets it fall with the same multiplications. The default
+patch is quiescent 28 batches after the last key is released (the key envelope's 4 ms release down to 1e-4) and 2
+batches from the start. The skip-on row is the scanner phase stepped sample by sample (64 additions and wraps a
+batch), which is what keeps it bit-exact.
