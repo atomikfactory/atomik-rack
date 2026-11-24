@@ -66,6 +66,9 @@ fn saved(t: &Tmp) -> Shell<NullBackend> {
     s.core_mut().set_backup(Some(t.path("Backups")), 10, true);
     tune(&mut s, 1.0);
     s.core_mut().save_as(&t.path("song.atomik")).unwrap();
+    // A copy holds what the file holds when its worker runs: the first one is taken before the
+    // second save, or both copies could hold the later state.
+    s.core_mut().wait_background();
     tune(&mut s, 2.0);
     s.core_mut().save().unwrap();
     s.core_mut().wait_background();
