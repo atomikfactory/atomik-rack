@@ -65,6 +65,28 @@ impl ModDelay {
         self.tracking && self.zero_run >= self.buf.len()
     }
 
+    /// Length of the ring, in samples: the number of writes after which none of the earlier
+    /// content is left.
+    #[inline]
+    pub fn ring_len(&self) -> usize {
+        self.buf.len()
+    }
+
+    /// Whether the latest `n` samples written (at most one ring's worth) were all stored as
+    /// `+0.0`: a look at that stretch of the ring, vectorised, for a caller that asks once a
+    /// batch of `n` writes and not once a sample.
+    pub fn last_written_zero(&self, n: usize) -> bool {
+        let len = self.buf.len();
+        let n = n.min(len);
+        let end = self.write;
+        let zero = |s: &[f32]| s.iter().fold(0u32, |a, x| a | x.to_bits()) == 0;
+        if end >= n {
+            zero(&self.buf[end - n..end])
+        } else {
+            zero(&self.buf[len - (n - end)..len]) && zero(&self.buf[..end])
+        }
+    }
+
     /// Reads the input from `delay` samples ago (clamped to `2..=max_delay`).
     #[inline]
     pub fn read(&self, delay: f32) -> f32 {
@@ -201,6 +223,30 @@ mod tests {
                     read_with_floor(&line, d).to_bits(),
                     "max {max} delay {d:e}"
                 );
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod last_written_tests {
+    use super::*;
+
+    #[test]
+    fn the_latest_writes_are_looked_at_across_the_wrap_of_the_ring() {
+        let mut d = ModDelay::new(4); // a ring of 8
+        assert_eq!(d.ring_len(), 8);
+        for k in 0..60usize {
+            let x = match k % 11 {
+                3 => 0.5,
+                7 => -0.0,
+                9 => 1e-30,
+                _ => 0.0,
+            };
+            d.write(x);
+            for n in [1, 2, 3, 5, 8, 64] {
+                let want = (1..=n.min(8)).all(|age| d.buf[(d.write + 8 - age) % 8].to_bits() == 0);
+                assert_eq!(d.last_written_zero(n), want, "k {k} n {n}");
             }
         }
     }

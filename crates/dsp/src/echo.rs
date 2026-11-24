@@ -32,6 +32,11 @@ pub struct Echo {
     mod_depth: f32,
     invert_right: bool,
     max_samples: f32,
+    /// The bits of every value [`Echo::write_pair`] stored since the last [`Echo::end_batch`],
+    /// ORed together: zero when they were all `+0.0`.
+    written: u32,
+    /// Samples written in a row, up to the end of the last batch, that were all `+0.0`.
+    zero_run: usize,
 }
 
 impl Echo {
@@ -51,7 +56,10 @@ impl Echo {
             mod_depth: 0.0,
             invert_right: true,
             max_samples: max as f32,
+            written: 0,
+            zero_run: 0,
         };
+        e.zero_run = e.lines[0].ring_len();
         e.set_time_ms(250.0);
         e.current = e.target;
         e
@@ -109,11 +117,49 @@ impl Echo {
         self.current
     }
 
+    /// Closes a batch of `frames` calls of [`Echo::write_pair`] for [`Echo::holds_only_zeros`]:
+    /// the run of zero writes grows by `frames` if every one of them stored `+0.0`, and starts
+    /// again otherwise. A device that asks the question calls it after each batch it writes.
+    #[inline]
+    pub fn end_batch(&mut self, frames: usize) {
+        self.zero_run = if self.written == 0 {
+            self.zero_run.saturating_add(frames)
+        } else {
+            0
+        };
+        self.written = 0;
+    }
+
+    /// Whether both lines hold only `+0.0`: the writes of the batches closed by
+    /// [`Echo::end_batch`] since the last non-zero one cover the whole ring, or the lines were
+    /// cleared. (Only a batch in which every write stored zero counts, so a batch that held a
+    /// value at its start never claims more than it knows.)
+    #[inline]
+    pub fn holds_only_zeros(&self) -> bool {
+        self.zero_run >= self.lines[0].ring_len()
+    }
+
+    /// Whether the sounding time sits on the target, bit for bit: the glide then adds `0` every
+    /// sample.
+    #[inline]
+    pub fn time_settled(&self) -> bool {
+        self.current.to_bits() == self.target.to_bits()
+    }
+
+    /// Moves the modulation phase on by `frames` samples, exactly as that many calls of
+    /// [`Echo::read_pair`] would. With [`Echo::time_settled`], lines of zeros and a silent input
+    /// that is all they change.
+    pub fn skip_silent(&mut self, frames: usize) {
+        self.lfo.skip(frames);
+    }
+
     /// Clears the lines and the modulation phase; the sounding time snaps to the target.
     pub fn reset(&mut self) {
         for l in &mut self.lines {
             l.clear();
         }
+        self.written = 0;
+        self.zero_run = self.lines[0].ring_len();
         self.lfo.set_phase(0.0);
         self.current = self.target;
     }
@@ -137,8 +183,10 @@ impl Echo {
     /// [`Echo::read_pair`].
     #[inline]
     pub fn write_pair(&mut self, l: f32, r: f32) {
-        self.lines[0].write(flush_denormal(l));
-        self.lines[1].write(flush_denormal(r));
+        let (l, r) = (flush_denormal(l), flush_denormal(r));
+        self.lines[0].write(l);
+        self.lines[1].write(r);
+        self.written |= l.to_bits() | r.to_bits();
     }
 
     /// Processes one stereo sample.
@@ -299,6 +347,72 @@ mod tests {
             &a,
             &b,
         );
+    }
+
+    /// Processes `n` batches of 64 samples of `x` (a constant) and closes each.
+    fn run_batches(e: &mut Echo, n: usize, x: f32) -> Vec<f32> {
+        let mut out = Vec::new();
+        for _ in 0..n {
+            for _ in 0..64 {
+                out.push(e.process(x, x).0);
+            }
+            e.end_batch(64);
+        }
+        out
+    }
+
+    #[test]
+    fn the_zero_run_claims_the_lines_hold_only_zeros_exactly_when_they_do() {
+        let mut e = Echo::new(SR, 50.0);
+        e.set_time_ms(3.0);
+        e.snap_time();
+        e.set_feedback(0.5);
+        let ring = e.lines[0].ring_len();
+        assert!(e.holds_only_zeros(), "a new echo holds nothing");
+        run_batches(&mut e, 1, 0.5);
+        assert!(!e.holds_only_zeros());
+        let mut batches = 0;
+        while !e.holds_only_zeros() {
+            run_batches(&mut e, 1, 0.0);
+            batches += 1;
+            assert!(batches < 1_000);
+            // Whenever it claims zeros, a scan of the ring agrees.
+            let scan = (1..=e.lines[0].max_delay()).all(|d| {
+                e.lines[0].read(d as f32).to_bits() == 0 && e.lines[1].read(d as f32).to_bits() == 0
+            });
+            assert!(!e.holds_only_zeros() || scan, "batch {batches}");
+        }
+        assert!(batches * 64 >= ring, "{batches} batches of 64, ring {ring}");
+        e.reset();
+        run_batches(&mut e, 1, 0.5);
+        e.reset();
+        assert!(e.holds_only_zeros(), "a reset empties the lines");
+    }
+
+    #[test]
+    fn skipping_silent_samples_leaves_the_modulation_where_processing_them_does() {
+        let make = || {
+            let mut e = Echo::new(SR, 50.0);
+            e.set_time_ms(3.0);
+            e.snap_time();
+            e.set_feedback(0.3);
+            e.set_modulation(3.0, 1.0);
+            e
+        };
+        let (mut a, mut b) = (make(), make());
+        run_batches(&mut a, 2, 0.5);
+        run_batches(&mut b, 2, 0.5);
+        // Enough silence for the lines to run dry, which is when a skip is allowed.
+        run_batches(&mut a, 300, 0.0);
+        run_batches(&mut b, 200, 0.0);
+        assert!(b.holds_only_zeros() && b.time_settled());
+        for _ in 0..100 {
+            b.skip_silent(64);
+            b.end_batch(64);
+        }
+        let (ya, yb) = (run_batches(&mut a, 2, 0.4), run_batches(&mut b, 2, 0.4));
+        assert!(ya.iter().zip(&yb).all(|(x, y)| x.to_bits() == y.to_bits()));
+        assert!(ya.iter().any(|v| v.abs() > 0.1));
     }
 
     proptest::proptest! {

@@ -15,8 +15,9 @@
 //! with 4 FX returns), `console-64` (64 strips, gate and compressor on), `lanes-200` and
 //! `lanes-2000` (automation lanes), `large-song` (100 tracks, 500 clips, 2,000 notes).
 //! Every scenario bounces `BARS` bars plus the release tail, so a run is a few seconds of audio.
-//! The `idle` rows (`idle/stereo-delay-x20/skip-off` and `skip-on`) render 256 batches of twenty silent stereo
-//! delays through the engine with the idle skip off and on; only the render loop is timed.
+//! The `idle` rows (`idle/stereo-delay-x20/skip-off` and `skip-on`, and one pair for each other effect that can be
+//! skipped) render 256 batches of twenty silent effects through the engine with the idle skip off and on; only the
+//! render loop is timed.
 #![allow(
     clippy::disallowed_methods,
     reason = "wall-clock timing is the point of a benchmark"
@@ -76,14 +77,22 @@ fn bounce(doc: &RackDoc, workers: u16, block: usize) -> usize {
 /// Batches one run of the idle rows renders (a third of a second of audio at 48 kHz, as the
 /// device bench).
 const IDLE_BATCHES: usize = 256;
-/// Stereo delays in the idle rows.
+/// Effects in each idle row.
 const IDLE_DELAYS: usize = 20;
+/// The effects that have an idle row (`idle/<name>-x20/skip-off|on`).
+const IDLE_TYPES: [&str; 5] = [
+    "atomik.stereo-delay",
+    "atomik.echo",
+    "atomik.reverb",
+    "atomik.space-reverb",
+    "atomik.modulation",
+];
 
-/// The engine of the idle rows: twenty stereo delays with nothing connected, so every one reads
-/// silence, with the idle skip on or off, rendered once so each is past its first batch. The
-/// device bench's `idle` rows call `process` directly and cannot see what the engine skips; this
-/// one can. Only the render loop is timed (`render_idle`).
-fn idle_engine(skip: bool) -> (atomik_engine::Engine, atomik_engine::EngineHandle) {
+/// The engine of an idle row: twenty effects of `type_id` with nothing connected, so every one
+/// reads silence, with the idle skip on or off, rendered once so each is past its first batch.
+/// The device bench's `idle` rows call `process` directly and cannot see what the engine skips;
+/// this one can. Only the render loop is timed (`render_idle`).
+fn idle_engine(type_id: &str, skip: bool) -> (atomik_engine::Engine, atomik_engine::EngineHandle) {
     use atomik_core::{SampleRate, Tempo};
     use atomik_engine::{EngineConfig, Graph, new_engine};
     let config = EngineConfig {
@@ -96,7 +105,7 @@ fn idle_engine(skip: bool) -> (atomik_engine::Engine, atomik_engine::EngineHandl
     let registry = default_registry();
     let mut graph = Graph::new(&config);
     for _ in 0..IDLE_DELAYS {
-        graph.add_device(registry.create("atomik.stereo-delay").expect("registered"));
+        graph.add_device(registry.create(type_id).expect("registered"));
     }
     let (mut engine, mut handle) = new_engine(config);
     engine.set_idle_skip(skip);
@@ -149,10 +158,12 @@ fn main() {
             let secs = time_once(|| bounce(doc, 0, 256));
             println!("{name}: once {secs:.3} s");
         }
-        for skip in [false, true] {
-            let (mut engine, _handle) = idle_engine(skip);
-            let secs = time_once(|| render_idle(&mut engine));
-            println!("idle skip {skip}: once {secs:.3} s");
+        for type_id in IDLE_TYPES {
+            for skip in [false, true] {
+                let (mut engine, _handle) = idle_engine(type_id, skip);
+                let secs = time_once(|| render_idle(&mut engine));
+                println!("idle {type_id} skip {skip}: once {secs:.3} s");
+            }
         }
         return;
     }
@@ -179,17 +190,20 @@ fn main() {
             }
         }
     }
-    for skip in [false, true] {
-        let id = format!(
-            "idle/stereo-delay-x{IDLE_DELAYS}/skip-{}",
-            if skip { "on" } else { "off" }
-        );
-        let (mut engine, _handle) = idle_engine(skip);
-        let rec = Recorder::new();
-        c.bench_function(&id, |bench| {
-            bench.iter_custom(rec.runner(|| render_idle(&mut engine)));
-        });
-        rec.report(&id);
+    for type_id in IDLE_TYPES {
+        for skip in [false, true] {
+            let id = format!(
+                "idle/{}-x{IDLE_DELAYS}/skip-{}",
+                type_id.trim_start_matches("atomik."),
+                if skip { "on" } else { "off" }
+            );
+            let (mut engine, _handle) = idle_engine(type_id, skip);
+            let rec = Recorder::new();
+            c.bench_function(&id, |bench| {
+                bench.iter_custom(rec.runner(|| render_idle(&mut engine)));
+            });
+            rec.report(&id);
+        }
     }
     c.final_summary();
 }

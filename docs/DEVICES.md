@@ -1401,6 +1401,13 @@ the delay line in [crates/dsp/src/echo.rs](../crates/dsp/src/echo.rs).
   (with colour, crush or diffusion on it evolves).
 - **Mix.** Output = dry × (1 − mix) + wet × duck × gate × mix; `mix` 0 is the dry input bit for bit.
   Feedback and mix are smoothed over 5 ms.
+- **Idle.** Once both lines hold only zeros (every write of the last 2^18 samples was `+0.0`: about 5.5 s of silence
+  after the last repeat at 48 kHz), the loop filters that are on, the diffusers and the trigger gate have settled,
+  the glide and the smoothers sit on their targets and no trigger cable is connected, the device says it is
+  quiescent and the engine leaves it uncalled while its inputs stay silent; it then only moves the wobble phase and
+  the duck follower on, as a processed silent batch would. Sound, a note, a parameter, tempo or transport change,
+  or a new cabling wakes it. A loop at full feedback (roll) holding sound never rests. The audio is bit for bit
+  the same either way.
 - **Not built.** The loop send and return breakout jacks (they need a staged device, which
   the bypass wrapper does not support).
 
@@ -1506,6 +1513,15 @@ A stereo algorithmic reverb with three algorithms. Source:
 - **Meter values.** `[output peak L, output peak R, tail RMS]`, linear, of the last batch.
 - **Buffers** are allocated in `prepare` for the largest size at the sample rate (about 0.17 s per
   FDN line, 0.25 s for the pre-delay).
+- **Idle.** Once every delay has been written nothing but `+0.0` for as long as its longest ring (the pre-delay,
+  a third of a second), the low cut, the damping filters and the allpasses hold exact zeros (the tail decays
+  until the 1e-20 flush: 400 dB down, about 13 s at a decay of 2 s), every smoothed control sat on its target
+  when the batch began (a size change takes a few seconds to settle) and the key duck and gate are off and no mix
+  CV is connected, the device says it is quiescent and the engine leaves it uncalled while its inputs stay
+  silent; it then only moves the eight modulation LFOs on and zeroes the meter values, as a processed silent
+  batch does. Sound, a note, a parameter, tempo or transport change, or a new cabling wakes it. A frozen tail
+  holds its sound and never rests, and a reverb with the key duck or gate on is always processed. The audio is
+  bit for bit the same either way.
 
 ---
 
@@ -1576,6 +1592,12 @@ The last seven before `bypass` (`duck` to `key_gate_hold`) are the reverb's keye
 - **Duck and key gate.** As the reverb, after the high cut and the gate.
 - **Mix and latency.** As the reverb: latency 0, and at `mix` 0 the input is copied bit for bit.
 - **Meter values.** `[output peak L, output peak R, tail RMS]`.
+- **Idle.** The rule of the reverb (every delay empty for its whole ring, the largest algorithm's early-reflection
+  ring being 1.4 s at 48 kHz; filters, allpasses and controls settled; no key duck or gate, no mix CV), and in
+  addition the high cut holds exact zeros and the gate does not move on another silent sample: with a hold set it
+  has closed (about half a second after the hold ran out), with no hold it is open. The device then says it is
+  quiescent and the engine leaves it uncalled while its inputs stay silent; the modulation oscillators and the
+  meters are moved on, so the audio is bit for bit the same either way.
 
 ---
 
@@ -2150,6 +2172,14 @@ Chorus, flanger and phaser with tempo sync. Source:
   the feedback tails decay to silence after the input stops. Delay times never leave the allocated
   line (at most 1.9 × `delay` for the flanger, 1.905 × `delay` for the chorus; the line holds 57.2
   ms plus margin).
+- **Idle.** Chorus and flanger are at rest once both delay lines hold only zeros (every write of the last ring,
+  about 2,760 samples or 43 batches at 48 kHz, was `+0.0`), the phaser once its allpass states and its feedback
+  state are exactly zero; the five smoothed controls must sit on their targets, no mix CV may be connected and the
+  LFO must not be locked to a playing transport. The device then says it is quiescent and the engine leaves it
+  uncalled while its inputs stay silent; it only moves the free-running LFO phase on, with the same additions
+  and wraps as a processed batch, so the sweep is where it would have been when sound returns. An LFO synced to a
+  playing transport takes its phase from the frame and is always processed; synced to a stopped transport it
+  free-runs at the synced rate and rests like an unsynced one. The audio is bit for bit the same either way.
 
 ---
 

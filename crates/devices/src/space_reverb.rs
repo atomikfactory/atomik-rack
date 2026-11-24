@@ -23,6 +23,10 @@
 //!
 //! Latency is 0 and `mix == 0` copies the input bit-exactly, like the classic reverb. Meter
 //! values are the same three (output peaks and tail RMS).
+//!
+//! Idle: the rule of the classic reverb (see [`crate::reverb`]), and in addition the high cut must hold exact
+//! zeros and the gate must not move on another silent sample (it has closed, or it never was on). The wrapper
+//! forwards `quiescent` and `idle_advance` to the shared engine.
 
 use crate::bypass::{Bypassable, bypass_param};
 use crate::reverb::keyed;
@@ -335,6 +339,14 @@ impl Device for SpaceReverb {
 
     fn process(&mut self, ctx: &mut ProcessContext<'_>) {
         self.core.process(ctx);
+    }
+
+    fn quiescent(&self) -> bool {
+        self.core.quiescent()
+    }
+
+    fn idle_advance(&mut self, frames: usize) {
+        self.core.idle_advance(frames);
     }
 
     fn has_meter_values(&self) -> bool {

@@ -41,6 +41,18 @@ impl ParabolicLfo {
         }
         y
     }
+
+    /// Leaves the LFO where `n` calls of [`ParabolicLfo::next_sample`] would, without evaluating
+    /// the wave: the same additions and wraps, one by one.
+    #[inline]
+    pub fn skip(&mut self, n: usize) {
+        for _ in 0..n {
+            self.phase += self.inc;
+            if self.phase >= 1.0 {
+                self.phase -= 1.0;
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -59,6 +71,23 @@ mod tests {
         assert!(crossings.abs_diff(10) <= 1);
         let max_step = x.windows(2).fold(0.0f32, |m, w| m.max((w[1] - w[0]).abs()));
         assert!(max_step < 4.0 * 2.0 * 10.0 / 48_000.0 * 1.05, "{max_step}");
+    }
+
+    #[test]
+    fn skipping_leaves_the_phase_where_stepping_does() {
+        for (phase, hz) in [(0.0f32, 0.3f32), (0.77, 1.3), (0.999, 24_000.0), (0.4, 0.0)] {
+            let (mut a, mut b) = (
+                ParabolicLfo::new(phase, hz, 48_000.0),
+                ParabolicLfo::new(phase, hz, 48_000.0),
+            );
+            for n in [1usize, 63, 64, 5_000] {
+                for _ in 0..n {
+                    a.next_sample();
+                }
+                b.skip(n);
+                assert_eq!(a.phase.to_bits(), b.phase.to_bits(), "{phase} {hz} {n}");
+            }
+        }
     }
 
     #[test]

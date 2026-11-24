@@ -42,6 +42,16 @@
 //! lines and allpass states. Latency 0. The feedback signal is clamped to +-8 (a hard bound that
 //! only matters if an interpolator overshoots at the maximum feedback), and all state is flushed
 //! below 1e-20, so the output is finite and bounded for any parameters.
+//!
+//! # Idle
+//!
+//! Chorus and flanger are at rest once both delay lines hold only zeros (the latest ring's worth of writes were all
+//! `+0.0`, 43 batches at 48 kHz after the last repeat), the phaser once its allpass states and its feedback state are
+//! exactly zero (the 1e-20 flush gets them there); in every mode the five smoothed controls must sit on their
+//! targets, no mix CV may be connected and the LFO must not be locked to a playing transport (its phase is then a
+//! function of the frame and a skipped stretch would leave the free-running phase behind). A silent batch then
+//! changes nothing but the free-running LFO phase, which `idle_advance` moves on with the same additions and wraps
+//! as `process`.
 
 use crate::bypass::{Bypassable, bypass_param};
 use crate::cv_in::{add_norm, batch_mean};
@@ -52,6 +62,8 @@ use atomik_device_sdk::{
 };
 use atomik_dsp::{BlockSmoother, ModDelay, exp2_det, flush_denormal};
 
+#[cfg(test)]
+mod idle_tests;
 #[cfg(test)]
 mod tests;
 
@@ -344,6 +356,14 @@ pub struct Modulation {
     delay_sm: BlockSmoother,
     mix_sm: BlockSmoother,
     out_sm: BlockSmoother,
+    /// The LFO phase step of the last batch (cycles per sample), for `idle_advance`.
+    idle_inc: f64,
+    /// Samples written to the delay lines in a row, up to the end of the last chorus or flanger
+    /// batch, that were all `+0.0`.
+    zero_run: usize,
+    /// The state the last batch left is a fixed point of a silent batch up to the LFO phase
+    /// (see `quiescent`).
+    rest: bool,
 }
 
 impl Default for Modulation {
@@ -378,6 +398,9 @@ impl Modulation {
             delay_sm: BlockSmoother::new(7.0),
             mix_sm: BlockSmoother::new(0.5),
             out_sm: BlockSmoother::new(1.0),
+            idle_inc: 0.0,
+            zero_run: 0,
+            rest: false,
         };
         m.alloc_lines();
         m
@@ -393,6 +416,28 @@ impl Modulation {
         self.lines[1].clear();
         self.ap = [[0.0; MAX_STAGES]; 2];
         self.fb_state = [0.0; 2];
+        self.zero_run = self.lines[0].ring_len();
+    }
+
+    /// The conditions of `quiescent` that read the state (see there): the five controls on their
+    /// targets (the mix target is the knob: no CV is connected), and the mode's own state empty.
+    fn at_rest(&self, out_target: f32) -> bool {
+        let on = |s: &BlockSmoother, target: f32| s.value().to_bits() == target.to_bits();
+        let controls = on(&self.depth_sm, self.depth)
+            && on(&self.fb_sm, self.feedback)
+            && on(&self.delay_sm, self.delay_ms)
+            && on(&self.mix_sm, self.mix)
+            && on(&self.out_sm, out_target);
+        controls
+            && if self.mode == 2 {
+                self.fb_state.iter().all(|x| x.to_bits() == 0)
+                    && self
+                        .ap
+                        .iter()
+                        .all(|st| st[..self.stages].iter().all(|x| x.to_bits() == 0))
+            } else {
+                self.zero_run >= self.lines[0].ring_len()
+            }
     }
 
     /// The LFO phase (left channel, cycles) of the last processed sample (test hook).
@@ -426,9 +471,11 @@ impl Device for Modulation {
         self.clear_state();
         self.phase = 0.0;
         self.fresh = true;
+        self.rest = false;
     }
 
     fn set_param(&mut self, id: ParamId, plain: f32) {
+        self.rest = false;
         let v = if plain.is_finite() { plain } else { 0.0 };
         match id.0 {
             P_MODE => {
@@ -559,6 +606,45 @@ impl Device for Modulation {
         self.phase = ph;
         *ctx.output(OUT_L) = out[0];
         *ctx.output(OUT_R) = out[1];
+        self.idle_inc = inc;
+        if mode != 2 {
+            // A batch with a sample on an input wrote it to the lines; otherwise look at what
+            // each line stored (a flushed sample is not looked for: that only makes the claim
+            // smaller).
+            let silent = in_l.iter().chain(&in_r).all(|x| x.to_bits() == 0)
+                && self.lines[0].last_written_zero(BATCH)
+                && self.lines[1].last_written_zero(BATCH);
+            self.zero_run = if silent {
+                self.zero_run.saturating_add(BATCH)
+            } else {
+                0
+            };
+        }
+        self.rest = !locked && !ctx.is_connected(MIX_CV) && self.at_rest(out_target);
+    }
+
+    /// At rest when a silent batch would write `+0.0` to both outputs and change nothing but the
+    /// free-running LFO phase. The delay reads of empty lines are `+0.0` whatever the sweep asks
+    /// for, and the lines, the allpass chain and the feedback state are written exact zeros back
+    /// (an allpass fed `+0.0` with states of `+0.0` gives `+0.0` for any coefficient); the five
+    /// smoothed controls sit on their targets, so their ramps are flat and finite and the sum is
+    /// `+0.0`. A param change clears it at once, the engine runs the batch of a tempo, a transport
+    /// or a cabling change, and a mix CV is read every batch. An LFO locked to a playing transport
+    /// takes its phase from the frame, which a skipped stretch would not update, so it never rests.
+    fn quiescent(&self) -> bool {
+        self.rest
+    }
+
+    /// What a silent batch changes: the LFO phase, one addition and wrap at a time as `process`
+    /// does it for a free-running LFO (the step is that of the last batch: a change of rate or
+    /// tempo runs one).
+    fn idle_advance(&mut self, frames: usize) {
+        let mut ph = self.phase;
+        for _ in 0..frames {
+            ph += self.idle_inc;
+            ph -= ph.floor();
+        }
+        self.phase = ph;
     }
 
     fn latency_frames(&self) -> u32 {

@@ -80,6 +80,13 @@ impl DelayLine {
         self.max
     }
 
+    /// Length of the ring in use, in samples: the number of writes after which none of the
+    /// earlier content is left.
+    #[inline]
+    pub fn ring_len(&self) -> usize {
+        self.active
+    }
+
     /// Longest delay [`DelayLine::grow`] can reach.
     pub fn reserve(&self) -> usize {
         self.reserve
@@ -122,6 +129,20 @@ impl DelayLine {
     #[inline]
     pub fn holds_only_zeros(&self) -> bool {
         self.tracking && self.zero_run >= self.active
+    }
+
+    /// Whether the latest `n` samples written (at most one ring's worth) were all stored as
+    /// `+0.0`: a look at that stretch of the ring, vectorised, for a caller that asks once a
+    /// batch of `n` writes and not once a sample.
+    pub fn last_written_zero(&self, n: usize) -> bool {
+        let n = n.min(self.active);
+        let end = self.write;
+        let zero = |s: &[f32]| s.iter().fold(0u32, |a, x| a | x.to_bits()) == 0;
+        if end >= n {
+            zero(&self.buf[end - n..end])
+        } else {
+            zero(&self.buf[self.active - (n - end)..self.active]) && zero(&self.buf[..end])
+        }
     }
 
     /// Reads the input from `delay` samples ago (clamped to `1..=max_delay`), linearly interpolated.
@@ -241,6 +262,36 @@ mod tests {
             b.write(0.0);
         }
         assert_eq!(b.read(1_000.0).to_bits(), 1.0f32.to_bits());
+    }
+}
+
+#[cfg(test)]
+mod last_written_tests {
+    use super::*;
+
+    /// What `last_written_zero(n)` must say, by reading the samples back.
+    fn by_reading(d: &DelayLine, n: usize) -> bool {
+        let n = n.min(d.ring_len());
+        (1..=n).all(|age| d.buf[(d.write + d.active - age) % d.active].to_bits() == 0)
+    }
+
+    #[test]
+    fn the_latest_writes_are_looked_at_across_the_wrap_of_the_ring() {
+        let mut d = DelayLine::new(5); // a ring of 8
+        assert_eq!(d.ring_len(), 8);
+        for k in 0..60usize {
+            // One value now and then, `-0.0` and a flushed one included.
+            let x = match k % 11 {
+                3 => 0.5,
+                7 => -0.0,
+                9 => 1e-30,
+                _ => 0.0,
+            };
+            d.write(x);
+            for n in [1, 2, 3, 5, 8, 64] {
+                assert_eq!(d.last_written_zero(n), by_reading(&d, n), "k {k} n {n}");
+            }
+        }
     }
 }
 

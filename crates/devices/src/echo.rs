@@ -35,6 +35,11 @@
 //!   the loop has a gain of at most 1, so the loop is stable (a `roll` held forever stays bounded).
 //! * `mix = 0` is the dry input, bit for bit. Latency is 0. The buffers are allocated in
 //!   `prepare`.
+//! * Idle: once both lines hold only zeros (every write of the last 2^18 samples at 48 kHz, about 5.5 s, stored
+//!   `+0.0`), the loop filters, the diffusers and the trigger gate have arrived, the glide and the smoothers
+//!   sit on their targets and no trigger cable is connected, a silent batch changes nothing but the wobble phase and
+//!   the duck follower, and the device says it is quiescent: the engine then leaves it uncalled while its inputs
+//!   stay silent and calls `idle_advance`, which moves those two on exactly as `process` would.
 
 use crate::bypass::{Bypassable, bypass_param};
 use crate::stereo_delay::SYNC_BEATS;
@@ -380,6 +385,9 @@ pub struct Echo {
     gate: f32,
     gate_k: f32,
     fresh: bool,
+    /// The state the last batch left is a fixed point of a silent batch up to the wobble phase
+    /// and the duck follower (see `quiescent`).
+    rest: bool,
 }
 
 impl Default for Echo {
@@ -418,6 +426,7 @@ impl Echo {
             gate: 1.0,
             gate_k: 0.0,
             fresh: true,
+            rest: false,
         };
         e.setup(48_000.0);
         e
@@ -507,9 +516,11 @@ impl Device for Echo {
         self.env = 0.0;
         self.gate = 1.0;
         self.fresh = true;
+        self.rest = false;
     }
 
     fn set_param(&mut self, id: ParamId, plain: f32) {
+        self.rest = false;
         match id.0 {
             P_MODE => self.sync = plain >= 0.5,
             P_MS => self.time_ms = plain.clamp(1.0, MAX_ECHO_MS),
@@ -617,6 +628,61 @@ impl Device for Echo {
         }
         *ctx.output(OUT_L) = out_l;
         *ctx.output(OUT_R) = out_r;
+        self.line.end_batch(BATCH);
+        self.rest = !ctx.is_connected(TRIGGER) && self.at_rest();
+    }
+
+    /// At rest when a silent batch would write `+0.0` to both outputs and change nothing but the
+    /// wobble phase and the duck follower, which `idle_advance` moves on. The reads of the lines
+    /// are `+0.0` whatever the glide and the wobble ask for; the loop is then `+0.0` all the way
+    /// (the saturator and the quantiser map `+0.0` to `+0.0` at every setting, and a filter that
+    /// is switched off is neither read nor written, so it may hold any value), and the lines are
+    /// written `+0.0` again. What is left to be at its resting value is checked in `at_rest`.
+    /// A param change clears it at once; the engine runs the batch of a tempo change and of a new
+    /// cabling. A connected trigger is read every sample, so it never rests.
+    fn quiescent(&self) -> bool {
+        self.rest
+    }
+
+    /// What a silent batch changes: the wobble phase and the duck follower, step by step as
+    /// `process` does (the follower falls with its release coefficient until it stops changing).
+    fn idle_advance(&mut self, frames: usize) {
+        self.line.skip_silent(frames);
+        let k = self.env_release;
+        for _ in 0..frames {
+            let next = self.env + k * (0.0 - self.env);
+            if next.to_bits() == self.env.to_bits() {
+                break;
+            }
+            self.env = next;
+        }
+    }
+}
+
+impl Echo {
+    /// The conditions of `quiescent` that read the state (see there).
+    fn at_rest(&self) -> bool {
+        // Smoothers on their targets, finite (a NaN knob would make NaN of the dry path); the
+        // trigger gate, whose target is 1 with no trigger cabled, must not move on one more step.
+        let steady = self.feedback.is_settled()
+            && self.mix.is_settled()
+            && self.feedback.value().is_finite()
+            && self.mix.value().is_finite()
+            && self.duck.is_finite()
+            && self.gate.is_finite()
+            && (self.gate + self.gate_k * (1.0 - self.gate)).to_bits() == self.gate.to_bits()
+            && self.line.holds_only_zeros()
+            && self.line.time_settled();
+        if !steady {
+            return false;
+        }
+        let low = self.low_hz > LOW_OFF_HZ;
+        let high = self.high_hz < HIGH_OFF_HZ;
+        self.loops.iter().all(|st| {
+            (!high || st.lp.to_bits() == 0)
+                && (!low || st.hp.to_bits() == 0)
+                && (self.diffusion <= 0.0 || st.diffusers.iter().all(Allpass::holds_only_zeros))
+        })
     }
 }
 
@@ -955,5 +1021,185 @@ mod tests {
         a.device_mut().reset();
         let yc = run(&mut a);
         assert_eq!(bits(&ya[1]), bits(&yc[1]));
+    }
+}
+
+#[cfg(test)]
+mod idle_tests {
+    use super::*;
+    use crate::test_support::{IdleRun, harness, skip_matches_process};
+    use atomik_testkit::harness::DeviceHarness;
+
+    fn noise(state: &mut u32) -> [f32; BATCH] {
+        let mut b = [0.0; BATCH];
+        for x in &mut b {
+            *state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            *x = (*state >> 8) as f32 / (1u32 << 24) as f32 - 0.5;
+        }
+        b
+    }
+
+    fn feed(h: &mut DeviceHarness, l: [f32; BATCH], r: [f32; BATCH]) {
+        *h.input_mut("in_l") = l;
+        *h.input_mut("in_r") = r;
+        h.process();
+    }
+
+    fn quiet(h: &DeviceHarness) -> bool {
+        h.device().quiescent()
+    }
+
+    /// Everything that colours the loop switched on, the wobble up.
+    fn coloured(h: &mut DeviceHarness) {
+        for (k, v) in [
+            ("time.mode", 0.0),
+            ("time.ms", 20.0),
+            ("feedback", 0.4),
+            ("mix", 0.5),
+            ("color.drive", 0.6),
+            ("color.low", 300.0),
+            ("color.high", 6_000.0),
+            ("crush.bits", 8.0),
+            ("diffusion", 0.5),
+            ("wobble.depth", 0.8),
+            ("wobble.rate", 3.0),
+            ("duck", 0.6),
+        ] {
+            h.set_param(k, v);
+        }
+    }
+
+    #[test]
+    fn it_is_quiescent_only_after_the_tail_ran_dry() {
+        let mut h = harness(Box::new(Echo::new()));
+        coloured(&mut h);
+        assert!(!quiet(&h), "nothing has run");
+        let silence = [0.0; BATCH];
+        feed(&mut h, silence, silence);
+        assert!(quiet(&h), "a fresh echo has nothing in it");
+        let mut s = 1;
+        for _ in 0..20 {
+            feed(&mut h, noise(&mut s), noise(&mut s));
+            assert!(!quiet(&h));
+        }
+        let mut batches = 0;
+        while !quiet(&h) {
+            feed(&mut h, silence, silence);
+            batches += 1;
+            assert!(batches < 6_000, "it never settled");
+        }
+        // The ring is 2^18 samples: 4,096 batches of zeros after the last non-zero write.
+        assert!(batches >= 4_000, "{batches} batches");
+        for (k, v) in [("mix", 0.4), ("color.high", 5_000.0), ("duck", 0.2)] {
+            h.set_param(k, v);
+            assert!(!quiet(&h), "a change of {k} is heard first");
+            // The mix smoother needs its 5 ms.
+            for _ in 0..8 {
+                feed(&mut h, silence, silence);
+            }
+            assert!(quiet(&h), "and nothing is left to settle after {k}");
+        }
+        h.set_param("mix", 0.1);
+        feed(&mut h, silence, silence);
+        assert!(!quiet(&h), "the mix smoother has not arrived");
+        h.set_connected("trigger_in", true);
+        for _ in 0..8 {
+            feed(&mut h, silence, silence);
+        }
+        assert!(!quiet(&h), "a connected trigger is read every sample");
+        h.set_connected("trigger_in", false);
+        feed(&mut h, silence, silence);
+        assert!(quiet(&h));
+    }
+
+    #[test]
+    fn a_loop_at_full_feedback_never_rests() {
+        let mut h = harness(Box::new(Echo::new()));
+        coloured(&mut h);
+        h.set_param("color.low", 20.0);
+        h.set_param("color.high", 20_000.0);
+        h.set_param("diffusion", 0.0);
+        h.set_param("color.drive", 0.0);
+        h.set_param("crush.bits", 16.0);
+        let mut s = 5;
+        for _ in 0..40 {
+            feed(&mut h, noise(&mut s), noise(&mut s));
+        }
+        h.set_param("mode", 2.0); // roll: the input is cut off and the feedback is 100 %
+        let silence = [0.0; BATCH];
+        for _ in 0..6_000 {
+            feed(&mut h, silence, silence);
+            assert!(!quiet(&h), "the loop circulates without decay");
+        }
+    }
+
+    /// One echo processed through the silence, one skipped through it, with a parameter change,
+    /// a tempo change and the wobble running, and sound again after it.
+    #[test]
+    fn skipping_it_in_silence_leaves_what_processing_the_silence_would() {
+        let make = || {
+            let mut h = harness(Box::new(Echo::new()));
+            coloured(&mut h);
+            h.set_param("time.mode", 1.0); // synced: the tempo matters
+            h.set_param("time.sync", 2.0);
+            h
+        };
+        let skipped = skip_matches_process(
+            &make,
+            &IdleRun {
+                ins: &["in_l", "in_r"],
+                outs: &["out_l", "out_r"],
+                batches: 20_000,
+                sound: &|n| n < 30 || (12_000..12_040).contains(&n),
+                edit: &|n, h| match n {
+                    8_000 => {
+                        h.set_param("feedback", 0.2);
+                        true
+                    }
+                    9_000 => {
+                        h.time_mut().tempo = atomik_core::Tempo::new(133.0).unwrap();
+                        true
+                    }
+                    10_000 => {
+                        h.set_param("wobble.rate", 5.0);
+                        true
+                    }
+                    _ => false,
+                },
+            },
+        );
+        assert!(skipped > 6_000, "the scenario skips a lot: {skipped}");
+    }
+
+    #[test]
+    fn the_duck_follower_is_left_where_processing_leaves_it() {
+        // A loud burst, then silence, with a deep duck: the follower falls for a long time after
+        // the lines have run dry, and the first sound after it is ducked by what is left.
+        let make = || {
+            let mut h = harness(Box::new(Echo::new()));
+            for (k, v) in [
+                ("time.mode", 0.0),
+                ("time.ms", 10.0),
+                ("mix", 1.0),
+                ("duck", 1.0),
+                ("wobble.depth", 1.0),
+                ("wobble.rate", 8.0),
+                ("mode", 1.0), // triggered, no cable: always heard
+            ] {
+                h.set_param(k, v);
+            }
+            h
+        };
+        let skipped = skip_matches_process(
+            &make,
+            &IdleRun {
+                ins: &["in_l", "in_r"],
+                outs: &["out_l", "out_r"],
+                batches: 9_000,
+                sound: &|n| n < 40 || (8_000..8_030).contains(&n),
+                edit: &|_, _| false,
+            },
+        );
+        assert!(skipped > 3_000, "{skipped}");
     }
 }

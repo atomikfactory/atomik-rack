@@ -197,7 +197,8 @@ may break APIs and the patch and project formats.
   never put to sleep (it may sound on its own after a silence, like a long feedback delay). CLAP plugins that answer
   "continue if not quiet" rest too (one that answers "tail" or "continue" is still called). A bounce is unchanged for
   plugins that make silence from silence.
-- **A bypassed plugin uses no CPU after a while.** An effect that has been bypassed for 10 seconds without a break is
+
+- **A bypassed plugin uses no CPU after a while.** An effect that has been bypassed for 10 seconds without a break is
   no longer run; its delay compensation, the dry signal and the end of held notes are unchanged, and a value you set
   meanwhile reaches the plugin (and so a saved project) within a twentieth of a second. Switching the bypass off
   after that clears the plugin and runs it for 20 ms (or its latency, if longer) with the output still dry before
@@ -296,7 +297,23 @@ may break APIs and the patch and project formats.
   away and whose input is silent is left uncalled by the engine until sound, a note, a parameter or tempo change, a
   new cabling or a transport change reaches it; the rendered audio is byte for byte the same. Twenty idle stereo
   delays cost 27 us a batch before and 3.2 us after. The device contract has two new methods for this (`quiescent`,
-  `idle_advance`), and no other device uses them yet.
+  `idle_advance`); the stereo delay is the first device to use them.
+- **An idle echo is no longer processed either.** Once an echo's repeats have died away (every write of its 5.5 s ring
+  was zero, its loop filters and diffusers are empty) and its input is silent, the engine leaves it uncalled and only
+  moves its wobble and its duck follower on; the audio is byte for byte the same. Twenty idle echoes cost 83 us a
+  batch before and 4.8 us after.
+- **An idle reverb is no longer processed.** A reverb whose tail has run dry (each delay has written only zeros for its
+  whole length, the filters empty, the controls settled) and whose input is silent is left uncalled by the engine;
+  only its eight modulation oscillators and its meters are moved on, so the audio is byte for byte the same when sound
+  returns. A frozen tail, a keyed duck or gate and a mix CV keep it running. Twenty idle reverbs cost 314 us a batch
+  before and 21 us after.
+- **An idle space reverb is no longer processed.** The same for the space reverb, which also needs its high cut empty
+  and its gate settled. Twenty idle space reverbs cost 322 us a batch before and 21 us after.
+- **An idle chorus, flanger or phaser is no longer processed.** The modulation effect, once its delay lines or its
+  allpass states have run dry and its input is silent, is left uncalled by the engine and only its sweep is moved on,
+  so the sweep is where it would have been when sound returns; an effect synced to a playing transport is always
+  processed. The audio is byte for byte the same. Twenty idle modulation effects cost 136 us a batch before and 5.1 us
+  after.
 
 ### Fixed
 - **Dropping an instrument above its mix channel.** An instrument dragged to the place above its own mix channel
