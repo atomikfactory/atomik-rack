@@ -286,6 +286,12 @@ may break APIs and the patch and project formats.
   tables and built all sixteen preset chains once more to check them, on the thread that inserts the device. The
   tables are now parsed and checked once per process and shared: creating a device takes about 40 % less time
   (1.5 to 0.9 ms) and makes a fifth of the allocations (2,961 to 601), and its output is unchanged.
+- **The audio of a deleted clip is freed when nothing can bring it back.** It used to stay in memory until the next
+  save. Now it goes as soon as the undo history drops the last step that held it (an old step trimmed away, or the redo
+  steps a new edit replaces), unless a copied clip on the clipboard still needs it. Undo and redo are unchanged.
+- **The interface keeps the tempo map, not a copy of the compiled song.** It only needs the tempos and time signatures
+  to convert between time and position, so a project with many notes no longer holds its notes twice; every position
+  shown is the same number as before.
 - **An idle stereo delay is no longer processed.** A stereo delay (alone or inside its bypass) whose repeats have died
   away and whose input is silent is left uncalled by the engine until sound, a note, a parameter or tempo change, a
   new cabling or a transport change reaches it; the rendered audio is byte for byte the same. Twenty idle stereo

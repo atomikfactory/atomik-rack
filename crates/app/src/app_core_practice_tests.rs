@@ -147,7 +147,7 @@ fn the_count_in_belongs_to_a_plain_play() {
     do_practice(&mut c, PracticeAction::CountIn(1));
     c.handle_action(UiAction::Transport(TransportAction::Play));
     let plan = c
-        .song_snapshot()
+        .song_timing()
         .unwrap()
         .pre_roll(Ticks(0), 1, f64::from(c.doc().sample_rate))
         .unwrap();

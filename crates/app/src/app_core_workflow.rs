@@ -498,6 +498,7 @@ impl<S: EngineSink> AppCore<S> {
     pub(super) fn commit_stretch(&mut self) {
         if std::mem::take(&mut self.stretch_open) {
             self.document.commit_trial();
+            self.release_dropped_assets();
         }
     }
 

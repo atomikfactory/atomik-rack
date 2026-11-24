@@ -191,7 +191,10 @@ fn start_up_submits_the_song_and_the_transport_setup_after_the_rack() {
             },
         ]
     );
-    assert!(c.song_snapshot().is_some(), "a clone is kept for recording");
+    assert!(
+        c.song_timing().is_some(),
+        "the timing is kept for recording"
+    );
 }
 
 #[test]
@@ -288,7 +291,7 @@ fn tempo_changes_recompile_the_song_and_resend_the_loop() {
     );
     assert_eq!(kinds(&calls), ["tempo", "song", "transport"]);
     assert_eq!(songs(&calls)[0].tempo.len(), 2);
-    let snap = c.song_snapshot().unwrap();
+    let snap = c.song_timing().unwrap();
     assert!((snap.tempo_at(Ticks(BAR)).bpm() - 140.0).abs() < 1e-12);
 }
 
@@ -601,7 +604,7 @@ fn recording_with_a_pre_count_records_nothing_before_the_song_starts() {
     c.sink_mut().take();
     let calls = transport(&mut c, TransportAction::ToggleRecord);
     let plan = c
-        .song_snapshot()
+        .song_timing()
         .unwrap()
         .pre_roll(Ticks(0), 1, f64::from(c.doc().sample_rate))
         .unwrap();
@@ -683,7 +686,7 @@ fn the_pre_count_counts_in_from_the_position_and_not_when_already_playing() {
     transport(&mut c, TransportAction::Locate(BAR));
     c.sink_mut().take();
     let calls = transport(&mut c, TransportAction::ToggleRecord);
-    let plan = c.song_snapshot().unwrap().pre_roll(Ticks(BAR), 2, 48_000.0);
+    let plan = c.song_timing().unwrap().pre_roll(Ticks(BAR), 2, 48_000.0);
     assert_eq!(
         transports(&calls),
         [TransportCommand::PlayWithPreRoll(plan.unwrap())]

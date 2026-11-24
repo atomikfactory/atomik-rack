@@ -1242,6 +1242,9 @@ pub struct Document {
     trial_redo: Vec<Edit>,
     /// The names of the steps above, in the same order (see [`Document::undo_label`]).
     labels: Labels,
+    /// The assets that steps the history has let go of (trimmed, or redo steps a new edit
+    /// replaced) referenced: candidates for [`Document::release_dropped_assets`].
+    dropped_assets: BTreeSet<String>,
 }
 
 /// A drag-merge group that ends with the guard (see [`Document::begin_gesture`]). It reads and
@@ -1399,6 +1402,7 @@ impl Document {
             trial: Vec::new(),
             trial_redo: Vec::new(),
             labels: Labels::default(),
+            dropped_assets: BTreeSet::new(),
         }
     }
 
@@ -1410,6 +1414,14 @@ impl Document {
     pub fn set_undo_limits(&mut self, steps: usize, bytes: usize) {
         self.undo_limits = (steps.max(1), bytes);
         self.trim_undo();
+    }
+
+    /// Forgets the redo steps (a new edit replaces them), noting the assets they referenced.
+    fn drop_redo(&mut self) {
+        for edit in self.redo.drain(..) {
+            edit.collect_assets(&mut self.dropped_assets);
+        }
+        self.labels.redo.clear();
     }
 
     /// Records `edit`, named `label`, as the latest undo step and forgets the oldest steps
@@ -1459,6 +1471,7 @@ impl Document {
         let (steps, bytes) = self.undo_limits;
         while self.undo.len() > 1 && (self.undo.len() > steps || self.undo_bytes > bytes) {
             if let Some(old) = self.undo.pop_front() {
+                old.collect_assets(&mut self.dropped_assets);
                 self.labels.undo.pop_front();
                 self.undo_bytes = self.undo_bytes.saturating_sub(old.approx_bytes());
             }
@@ -1509,7 +1522,9 @@ impl Document {
         registry: &Registry,
     ) -> Result<Vec<SyncOp>, ModelError> {
         if let Command::RegisterAsset { hash, meta } = command {
-            // Not an undo step; leaves history, redo and the merge group alone.
+            // Not an undo step; leaves history, redo and the merge group alone. An asset that is
+            // registered again is wanted again, whatever the history let go of.
+            self.dropped_assets.remove(&hash);
             return rules::register_asset(&mut self.doc, hash, meta).map(|()| Vec::new());
         }
         // The plugin data syncs are not undo steps either.
@@ -1719,8 +1734,7 @@ impl Document {
             },
             None => edit,
         };
-        self.redo.clear();
-        self.labels.redo.clear();
+        self.drop_redo();
         let merged = merge.is_some() && merge == self.merge;
         let before = if merged {
             self.undo.back().map_or(0, Edit::approx_bytes)
@@ -1930,7 +1944,9 @@ impl Document {
     /// Accepts the open trial: its steps become one undo step (none when it changed nothing).
     pub fn commit_trial(&mut self) {
         self.merge = None;
-        self.trial_redo.clear();
+        for edit in self.trial_redo.drain(..) {
+            edit.collect_assets(&mut self.dropped_assets);
+        }
         self.labels.trial_redo.clear();
         let labels = std::mem::take(&mut self.labels.trial);
         let step_name = labels
@@ -2085,6 +2101,35 @@ impl Document {
         if self.doc.assets.len() != before {
             self.revision = next_revision();
         }
+    }
+
+    /// Lets go of the pool assets that the history has dropped since the last call, once nothing
+    /// can bring them back: the document, every step still in the undo, redo and trial history
+    /// ([`Document::referenced_assets`]) and the assets in `keep` (the caller's own holders, such
+    /// as a clipboard) do not reference them. Returns the assets removed from the pool, for the
+    /// caller to free their audio. The same rule as [`Document::prune_unreferenced_assets`], but
+    /// only for the assets a dropped step referenced, so it is cheap to call after every edit;
+    /// undo and redo stay valid. An asset in `keep` is not looked at again before the next
+    /// prune.
+    pub fn release_dropped_assets(&mut self, keep: &BTreeSet<String>) -> Vec<String> {
+        if self.dropped_assets.is_empty() {
+            return Vec::new();
+        }
+        let dropped = std::mem::take(&mut self.dropped_assets);
+        let referenced = self.referenced_assets();
+        let gone: Vec<String> = dropped
+            .into_iter()
+            .filter(|h| {
+                self.doc.assets.contains_key(h) && !referenced.contains(h) && !keep.contains(h)
+            })
+            .collect();
+        for hash in &gone {
+            self.doc.assets.remove(hash);
+        }
+        if !gone.is_empty() {
+            self.revision = next_revision();
+        }
+        gone
     }
 
     /// How many undo steps there are (a count for tests; merged commands share a step).

@@ -2444,7 +2444,8 @@ the project bounce (2.7) with one tap on the rack; neither changes the engine or
   leave the render as a clip on a new audio track, in the same step) and `AddRenderedTrack` (bounce
   in place: a new audio track with one clip, the originals muted when asked) are single undo steps
   with their own `Edit` (`Edit::Frozen`); the asset counts as referenced while the track is frozen
-  and while the undo history holds it, so it goes at the first save after that. A relink swaps it.
+  and while the undo history or the clipboard holds it, so it goes when the history lets go of it (or at the first
+  save after that). A relink swaps it.
   Commands that would change a frozen track (its clips, notes and automation), a device it freezes
   (parameters, cables, removal; a device inside a frozen container counts, and so does the channel
   of a baked strip), the console channel it plays through (removal), the frozen part of

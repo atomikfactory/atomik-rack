@@ -203,6 +203,21 @@ impl Clipboard {
         self.data.as_ref().map(ClipboardData::kind)
     }
 
+    /// The ids of the audio assets the contents need in a document's pool (the audio clips and
+    /// sampler zones they hold): a paste fetches them again when the pool let them go.
+    pub fn asset_hashes(&self) -> std::collections::BTreeSet<String> {
+        let assets = match &self.data {
+            Some(ClipboardData::Clips(s)) => Some(&s.assets),
+            Some(ClipboardData::Takes(s)) => Some(&s.assets),
+            Some(
+                ClipboardData::Devices(s) | ClipboardData::Tracks(s) | ClipboardData::Settings(s),
+            ) => Some(&s.assets),
+            Some(ClipboardData::Strips(s)) => Some(&s.devices.assets),
+            _ => None,
+        };
+        assets.map_or_else(Default::default, |a| a.keys().cloned().collect())
+    }
+
     /// Empties the clipboard.
     pub fn clear(&mut self) {
         self.data = None;
