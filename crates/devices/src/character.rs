@@ -39,6 +39,7 @@
 //!
 //! `data/character-voicing.csv` and `data/character-routes.csv` are embedded at compile time and
 //! carry every number of the voicing (see [`voicing`]).
+//! They are parsed and checked once per process and shared by every instance.
 //! All 16 presets are voiced; presets 0 to 15 are rack presets except `wide`.
 
 pub mod chain;
@@ -61,6 +62,7 @@ use atomik_device_sdk::{
 use atomik_dsp::rng::hash64;
 use atomik_dsp::{PresenceGate, Smoother2, SmootherClass};
 use chain::{Bus, Ctx, IMPLEMENTED_PRESETS, PresetChain, Routing, SUB};
+use std::sync::{Arc, OnceLock};
 use voicing::{ChainSpec, Morph, Voicing, VoicingError};
 
 pub use chain::short_latency;
@@ -293,9 +295,9 @@ pub(crate) fn load_voicing(voicing_csv: &str, routes_csv: &str) -> Result<Voicin
     Voicing::load(voicing_csv, routes_csv, &specs)
 }
 
-/// The embedded tables, or the first reason they are rejected (the unit tests make that
-/// impossible).
-fn embedded_voicing() -> Result<Voicing, String> {
+/// The embedded tables checked against every chain, or the first reason they are rejected (the
+/// unit tests make that impossible).
+fn parse_embedded_voicing() -> Result<Voicing, String> {
     let v = load_voicing(VOICING_CSV, ROUTES_CSV).map_err(|e| format!("{e:?}"))?;
     for i in 0..16 {
         build_chain(i)
@@ -303,6 +305,16 @@ fn embedded_voicing() -> Result<Voicing, String> {
             .map_err(|e| format!("preset {i}: {e}"))?;
     }
     Ok(v)
+}
+
+/// The embedded tables, parsed and checked once per process (they are constants: nothing in
+/// them depends on an instance or a sample rate). The first call, made by `Character::new` on
+/// the thread that inserts the device, does the work; the audio path never reads it.
+fn embedded_voicing() -> Result<Arc<Voicing>, String> {
+    static EMBEDDED: OnceLock<Result<Arc<Voicing>, String>> = OnceLock::new();
+    EMBEDDED
+        .get_or_init(|| parse_embedded_voicing().map(Arc::new))
+        .clone()
 }
 
 /// Length of the dry ring (a power of two above the largest latency a chain may declare).
@@ -339,7 +351,7 @@ pub struct Character {
     sample_rate: f32,
     seed: u64,
     build: fn(usize) -> Box<dyn PresetChain>,
-    voicing: Voicing,
+    voicing: Arc<Voicing>,
     chains: Vec<Box<dyn PresetChain>>,
     // Parameters.
     gain_knob: f32,
@@ -387,7 +399,10 @@ impl Character {
         let voicing = embedded_voicing();
         debug_assert!(voicing.is_ok(), "embedded voicing rejected: {voicing:?}");
         let failed = voicing.is_err();
-        let mut c = Self::assemble(build_chain, voicing.unwrap_or_else(|_| Voicing::empty()));
+        let mut c = Self::assemble(
+            build_chain,
+            voicing.unwrap_or_else(|_| Arc::new(Voicing::empty())),
+        );
         c.voicing_failed = failed;
         c
     }
@@ -402,16 +417,16 @@ impl Character {
     /// shell with stand-in chains).
     #[cfg(test)]
     pub(crate) fn with_chains(build: fn(usize) -> Box<dyn PresetChain>) -> Self {
-        Self::assemble(build, Voicing::empty())
+        Self::assemble(build, Arc::new(Voicing::empty()))
     }
 
     /// A Character with the given tables (tests).
     #[cfg(test)]
     pub(crate) fn with_voicing(v: Voicing) -> Self {
-        Self::assemble(build_chain, v)
+        Self::assemble(build_chain, Arc::new(v))
     }
 
-    fn assemble(build: fn(usize) -> Box<dyn PresetChain>, voicing: Voicing) -> Self {
+    fn assemble(build: fn(usize) -> Box<dyn PresetChain>, voicing: Arc<Voicing>) -> Self {
         let sr = 48_000.0;
         let mut c = Self {
             sample_rate: sr,

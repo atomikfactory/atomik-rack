@@ -1236,6 +1236,16 @@ impl Voice {
         (left, right)
     }
 
+    /// The stored cycles of each oscillator's current and old table.
+    fn tables_of<'a>(&self, p: &'a Shared, user: Option<&'a [f32]>) -> [[&'a [f32]; 2]; 2] {
+        [0, 1].map(|o| {
+            [
+                table_data(p.bank, self.table[o], user),
+                table_data(p.bank, self.old_table[o], user),
+            ]
+        })
+    }
+
     /// Adds this voice into `left` and `right`. The modulation slices are aligned with them.
     fn render(
         &mut self,
@@ -1245,6 +1255,10 @@ impl Voice {
         p: &Shared,
         user: Option<&[f32]>,
     ) {
+        // The cycles each oscillator reads change only where `table` and `old_table` are written:
+        // in `control` and in `start`, so they are resolved again after those two and not per
+        // sample.
+        let mut tables = self.tables_of(p, user);
         for (n, (lo, ro)) in left.iter_mut().zip(right.iter_mut()).enumerate() {
             if self.countdown == 0 {
                 let c = Ctl {
@@ -1255,6 +1269,7 @@ impl Voice {
                     resonance: m.resonance[n],
                 };
                 self.control(c, p);
+                tables = self.tables_of(p, user);
                 self.countdown = CONTROL_INTERVAL;
             }
             self.countdown -= 1;
@@ -1268,13 +1283,6 @@ impl Voice {
                     f.set_coefficients(self.g, k);
                 }
             }
-            // Resolved per sample: a table change (or a fade) inside the segment is seen at once.
-            let tables = [0, 1].map(|o| {
-                [
-                    table_data(p.bank, self.table[o], user),
-                    table_data(p.bank, self.old_table[o], user),
-                ]
-            });
             let (mut xl, mut xr) = self.oscillators(&tables, p);
             if p.sub > 0.0 {
                 let s = p.sub * sin_cycles(self.sub_phase) as f32;
@@ -1303,7 +1311,10 @@ impl Voice {
             *ro += yr * gain;
             if !self.amp.is_active() {
                 match self.pending.take() {
-                    Some((key, velocity)) => self.start(key, velocity, p),
+                    Some((key, velocity)) => {
+                        self.start(key, velocity, p);
+                        tables = self.tables_of(p, user);
+                    }
                     None => return,
                 }
             }
