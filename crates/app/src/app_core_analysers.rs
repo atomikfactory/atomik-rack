@@ -33,6 +33,21 @@
 //! reset counter (another published value) starts the view's copy over. The feed only copies
 //! them into [`AnalyserData`]; the distribution reaches the panel as ordinary meter values.
 //!
+//! # Panels nobody looks at
+//!
+//! In the windowed app ([`AppCore::set_analyse_only_shown`]) a device is analysed only while its
+//! panel is on screen ([`atomik_ui::RackView::is_panel_visible`]): the front face of the rack is
+//! up, the panel is not folded and not scrolled out of the rack area, the container that holds it
+//! is open, and the window that holds the rack is neither minimized nor covered (a detached rack
+//! window answers the same way as the main window does). A panel that is not shown costs no tap
+//! read, no FFT, no spectrogram row and no loudness work. The state of the device is kept, so a
+//! panel that is shown again carries on: the averaging, the held peaks, the reference and the
+//! loudness meter's own history are unchanged, and the first analysis after the gap counts no
+//! time (the spectrogram has no rows for the hidden time; the phase meter's loudness graph and
+//! range cover the time the panel was shown). A Spectrum device that is not shown does not keep
+//! the tap of its second curve's strip live either. A headless core never sets the flag and
+//! analyses everything, as does [`AppCore::probe_meters`], which does not use the live feed.
+//!
 //! The FFT and the drawing therefore cost the audio thread nothing. A device whose tap did not
 //! move since the last feed (a paused engine) is skipped, so an idle project costs no view work;
 //! a bypassed device is skipped too, so its panel freezes on what it last showed.
@@ -212,6 +227,9 @@ struct State {
     integrated: f32,
     /// The loudness meter's reset counter at the previous feed.
     loud_epoch: f32,
+    /// The panel was off screen at the previous feed: the next analysis starts from this read
+    /// instead of counting the hidden time as played (like the very first one).
+    stale: bool,
     /// `reference.capture` was on at the previous feed.
     capture_on: bool,
     /// What the reference of `data` was built for: the choice, the stored curve's serial and
@@ -256,6 +274,7 @@ impl State {
             history_age: 0,
             integrated: FLOOR_DB,
             loud_epoch: -1.0,
+            stale: false,
             capture_on: false,
             reference_key: None,
             overlay: Spectrum::new(),
@@ -328,7 +347,8 @@ impl State {
     ) {
         let reference = extra.reference;
         let elapsed = head.saturating_sub(self.head);
-        let first = !self.fed;
+        let first = !self.fed || self.stale;
+        self.stale = false;
         self.head = head;
         self.fed = true;
         let d = &mut self.data;
@@ -440,6 +460,12 @@ pub(super) struct Analysers {
     reference_path: Option<PathBuf>,
     /// The file was written by a newer version or cannot be read: never overwrite it.
     reference_locked: bool,
+    /// Only the devices whose panel is on screen are analysed (the windowed app sets it; a
+    /// headless core analyses every device).
+    only_shown: bool,
+    /// Scratch for the strip a Spectrum device reads as its second curve, reused.
+    curve_left: Vec<f32>,
+    curve_right: Vec<f32>,
 }
 
 impl Analysers {
@@ -544,6 +570,14 @@ impl<S: EngineSink> AppCore<S> {
             if param(desc, dev, "bypass") >= 0.5 {
                 continue;
             }
+            if a.only_shown && !self.view.is_panel_visible(key) {
+                // Nobody looks: no read, no analysis. The state stays, so the panel carries on
+                // when it is shown again.
+                if let Some(state) = a.states.get_mut(key) {
+                    state.stale = true;
+                }
+                continue;
+            }
             let settings = spectrum_settings(desc, dev);
             let reference = tuner_reference(desc, dev, tune_cents);
             let view = spectrum_view(desc, dev);
@@ -560,7 +594,14 @@ impl<S: EngineSink> AppCore<S> {
             };
             let state = a.states.entry(key.clone()).or_insert_with(State::new);
             if *kind == FxKind::Spectrum {
-                if self.feed_second_curve(key, state, &settings, view, sample_rate) {
+                if self.feed_second_curve(
+                    key,
+                    state,
+                    (&mut a.curve_left, &mut a.curve_right),
+                    &settings,
+                    view,
+                    sample_rate,
+                ) {
                     self.view.set_analyser(key, &state.data);
                 }
                 if capture && !state.capture_on && state.fed {
@@ -623,6 +664,7 @@ impl<S: EngineSink> AppCore<S> {
         &self,
         key: &DeviceKey,
         state: &mut State,
+        (left, right): (&mut Vec<f32>, &mut Vec<f32>),
         settings: &Settings,
         view: SpectrumView,
         sample_rate: f32,
@@ -662,10 +704,9 @@ impl<S: EngineSink> AppCore<S> {
                 Some(atomik_model::CurveFrom::Strip(strip)) => {
                     if let Some(other) = self.ids.get(strip).copied() {
                         let size = settings.size;
-                        let mut left = vec![0.0f32; size];
-                        let mut right = vec![0.0f32; size];
-                        if let Some((n, head)) =
-                            self.sink.read_device_scope(other, &mut left, &mut right)
+                        left.resize(size, 0.0);
+                        right.resize(size, 0.0);
+                        if let Some((n, head)) = self.sink.read_device_scope(other, left, right)
                             && head != 0
                             && head != state.second_head
                         {
@@ -716,7 +757,10 @@ impl<S: EngineSink> AppCore<S> {
             let Some((dev, desc)) = self.analyser_device(key) else {
                 continue;
             };
-            if param(desc, dev, "bypass") >= 0.5 || spectrum_view(desc, dev).spectrogram {
+            if param(desc, dev, "bypass") >= 0.5
+                || spectrum_view(desc, dev).spectrogram
+                || (self.analysers.only_shown && !self.view.is_panel_visible(key))
+            {
                 continue;
             }
             out.push((strip.clone(), spectrum_settings(desc, dev).size));
@@ -775,6 +819,26 @@ impl<S: EngineSink> AppCore<S> {
     /// The stored spectrum reference curve: 31 band levels in dB.
     pub fn spectrum_reference(&self) -> Option<&[f32; BAND_COUNT]> {
         self.analysers.reference.as_ref()
+    }
+
+    /// Makes the feed analyse only the devices whose panel is on screen (module docs). Off by
+    /// default: a headless core, a test and the QA server analyse every device. The windowed app
+    /// turns it on.
+    pub fn set_analyse_only_shown(&mut self, on: bool) {
+        self.analysers.only_shown = on;
+    }
+
+    /// Whether the feed analyses only what is shown ([`Self::set_analyse_only_shown`]).
+    pub fn analyse_only_shown(&self) -> bool {
+        self.analysers.only_shown
+    }
+
+    /// Tells the rack view whether its window is on screen (not minimized, the rack pane drawn):
+    /// see [`atomik_ui::RackView::set_window_shown`]. The windowed app says it every frame.
+    pub fn set_rack_window_shown(&mut self, shown: bool) {
+        if self.view.window_shown() != shown {
+            self.view.set_window_shown(shown);
+        }
     }
 
     /// The analyser devices of the flat rack (flat key, kind).

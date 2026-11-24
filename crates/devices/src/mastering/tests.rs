@@ -1148,3 +1148,103 @@ fn the_new_params_are_allocation_free_and_finite_under_automation() {
         assert!(l.iter().chain(&r).all(|v| v.is_finite()));
     }
 }
+
+// ---------------------------------------------------------------- the observed flag
+
+fn flag(h: &DeviceHarness, observed: bool) {
+    h.device()
+        .scope_tap()
+        .expect("a tap that carries the flag")
+        .set_observed(observed);
+}
+
+/// One batch of noise from `start`; returns the output and the meters.
+fn step(h: &mut DeviceHarness, start: usize) -> (Vec<u32>, [f32; 8]) {
+    thread_local! {
+        static SCENARIO: (Vec<f32>, Vec<f32>) = {
+            let (n, m) = (noise(21, 0.8), noise(22, 0.6));
+            ((0..100_000).map(&n).collect(), (0..100_000).map(&m).collect())
+        };
+    }
+    let (l, r) =
+        SCENARIO.with(|(a, b)| run(h, &|i| a[i % a.len()], &|i| b[i % b.len()], start, BATCH));
+    let bits = l.iter().chain(&r).map(|v| v.to_bits()).collect();
+    (bits, meters(h))
+}
+
+fn same(a: &[f32], b: &[f32]) -> bool {
+    a.len() == b.len() && a.iter().zip(b).all(|(x, y)| x.to_bits() == y.to_bits())
+}
+
+#[test]
+fn the_default_is_observed_and_measures_exactly_as_before() {
+    let (mut a, mut b) = (plain(48_000.0), plain(48_000.0));
+    assert!(a.device().scope_tap().unwrap().is_observed());
+    // An explicit "yes" is the default.
+    flag(&b, true);
+    for i in 0..700 {
+        let (oa, ma) = step(&mut a, i * BATCH);
+        let (ob, mb) = step(&mut b, i * BATCH);
+        assert_eq!(oa, ob);
+        assert!(same(&ma, &mb), "batch {i}: {ma:?} {mb:?}");
+    }
+    let m = meters(&a);
+    assert!(
+        m[0] > -40.0 && m[1] > -40.0 && m[2] > -40.0 && m[3] > -40.0,
+        "{m:?}"
+    );
+}
+
+#[test]
+fn not_observed_the_sound_and_the_limiter_are_the_same_and_the_display_values_are_reset() {
+    let (mut on, mut off) = (plain(48_000.0), plain(48_000.0));
+    // Loud enough for the limiter to work.
+    for h in [&mut on, &mut off] {
+        h.set_param("ceiling", -6.0);
+    }
+    flag(&off, false);
+    let mut limited = false;
+    for i in 0..80 {
+        let (oa, ma) = step(&mut on, i * BATCH);
+        let (ob, mb) = step(&mut off, i * BATCH);
+        assert_eq!(oa, ob, "batch {i}: the audio is the same");
+        assert!(same(&ma[4..], &mb[4..]), "batch {i}: gain reduction");
+        assert!(
+            mb[..4].iter().all(|v| v.to_bits() == FLOOR_DB.to_bits()),
+            "batch {i}: {mb:?}"
+        );
+        limited |= ma[7] > 0.1;
+    }
+    assert!(limited, "the limiter worked in the scenario");
+    assert!(meters(&on)[0] > -40.0, "the observed one measured");
+}
+
+#[test]
+fn observed_again_the_meters_measure_from_that_moment() {
+    let (mut gated, mut control) = (plain(48_000.0), plain(48_000.0));
+    flag(&gated, true);
+    for i in 0..40 {
+        step(&mut gated, i * BATCH);
+        step(&mut control, i * BATCH);
+    }
+    flag(&gated, false);
+    for i in 40..120 {
+        step(&mut gated, i * BATCH);
+        step(&mut control, i * BATCH);
+    }
+    // The control had the same audio and a reset of the meter right where the flag came back.
+    control.set_param("meter.reset", 1.0);
+    flag(&gated, true);
+    for i in 120..200 {
+        let (og, mg) = step(&mut gated, i * BATCH);
+        let (oc, mc) = step(&mut control, i * BATCH);
+        assert_eq!(og, oc);
+        assert!(same(&mg, &mc), "batch {i}: {mg:?} {mc:?}");
+        if i == 120 {
+            control.set_param("meter.reset", 0.0);
+        }
+    }
+    // It covers the 80 batches since, not the 200 of the whole run.
+    let m = meters(&gated);
+    assert!(m[0] > -40.0 && m[3] > -40.0, "{m:?}");
+}

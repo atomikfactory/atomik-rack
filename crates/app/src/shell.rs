@@ -10887,6 +10887,7 @@ impl<B: AudioBackend> Shell<B> {
     /// Per-frame work: engine garbage, the transport position and recorded notes.
     pub fn frame(&mut self) {
         self.sync_language();
+        self.sync_rack_shown();
         let busy = self.core.is_busy();
         self.core.frame();
         if let Some(ms) = self.core.take_listen_offset_change() {

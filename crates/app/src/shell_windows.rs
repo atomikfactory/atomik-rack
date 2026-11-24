@@ -50,6 +50,9 @@ pub(super) struct WinState {
     pub(super) last_focus: Pane,
     /// The window has changes to paint.
     pub(super) dirty: bool,
+    /// The system says the window is minimized (the platform reports it, see
+    /// [`Shell::set_window_minimized`]).
+    pub(super) minimized: bool,
 }
 
 impl WinState {
@@ -60,6 +63,7 @@ impl WinState {
             hover: None,
             last_focus,
             dirty: true,
+            minimized: false,
         }
     }
 }
@@ -158,6 +162,32 @@ impl<B: AudioBackend> Shell<B> {
 
     pub(super) fn rack_detached(&self) -> bool {
         self.detached(WindowKind::Rack)
+    }
+
+    /// The platform tells whether the system has the window of `kind` minimized (a window with
+    /// no area, or one the system reports as minimized). A minimized window shows nothing, so
+    /// the analysis for the panels in it stops (see [`AppCore::set_analyse_only_shown`]).
+    pub fn set_window_minimized(&mut self, kind: WindowKind, minimized: bool) {
+        if let Some(w) = self.win_mut(kind) {
+            w.minimized = minimized;
+        }
+    }
+
+    /// Tells the core whether the rack is on screen right now: its window is not minimized and
+    /// its pane is drawn (not behind the launcher, not left out of the main window). Only the
+    /// windowed app, which asked the core to analyse what is shown, is told: any other host keeps
+    /// the view as it was.
+    pub(super) fn sync_rack_shown(&mut self) {
+        if !self.core.analyse_only_shown() {
+            return;
+        }
+        let minimized = |kind| self.win(kind).is_some_and(|w| w.minimized);
+        let shown = if self.rack_detached() {
+            !minimized(WindowKind::Rack)
+        } else {
+            self.rack_in_main() && !self.launcher_on_top() && !minimized(WindowKind::Main)
+        };
+        self.core.set_rack_window_shown(shown);
     }
 
     pub(super) fn console_detached(&self) -> bool {

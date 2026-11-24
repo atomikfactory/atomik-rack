@@ -2174,3 +2174,39 @@ device has no free-running state).
 
 **Status.** The two methods: Decided by: the owner. The engine rule and its details: Default (not yet confirmed).
 Decided by: none yet.
+
+
+## BQ. The interface tells a device whether anything shows its display-only numbers: the observed flag
+
+**Question.** The mastering device and the phase meter measure loudness and true peak (the phase meter also the
+stereo image) on the audio thread every batch, for a panel that is often folded, scrolled out or in a minimized
+window. The sound never reads those numbers. How does the interface say that nobody looks, without losing a value
+that an offline report, a test or the QA server reads?
+
+**Decision.** `ScopeTap` (`atomik-device-sdk`) gets a second flag next to `live`: `observed`, with `set_observed`
+and `is_observed` (one relaxed load per batch), **on by default**. A device that carries it returns the tap from
+`Device::scope_tap`; the mastering device, which has no samples to show, carries it on a tap that is never written
+(`ScopeTap::flags_only`, the smallest ring). Only the windowed app clears it (`EngineSink::set_device_observed`,
+sent when it changes and again for a device with a new engine id), for a device whose panel is not on screen, and
+sets it again before the panel is, so the headless readers (an offline render, a bounce, the command-line tools,
+the QA server's sessions, every test) never see it change. It is not a parameter: it is not saved, automated, undone
+or routed through `set_param`.
+
+What a device skips is exactly what only the display reads. The mastering device skips the loudness meter and the
+two true-peak passes; the limiter, its detector and the gain-reduction values are never gated. The phase meter skips
+the stereo image, the RMS levels, the loudness and the true peak; its recent and held peaks and the sample peak since
+the last reset (a latched clip history, cheap) always run, and so do the audio and the scope tap. A skipped value
+reads as after a reset (-120, or 0 for the image), and when the flag is set again the meters start from nothing at
+that batch, so the integrated loudness and the true-peak maximum cover the time since the panel came back. The panel
+shows what it shows after a reset; no new text, and no value is invented for the hidden time. The same rule, at the
+view level, decides which analyser panels are analysed at all (`RackView::is_panel_visible`: unfolded, inside the
+rack area, in an open container, front face up, the window neither minimized nor covered).
+
+**Rejected.** A device parameter (it would be saved with the project and automated, and a project would sound the
+same but read differently); a new engine-wide channel for flags (the tap already travels from the device to the
+interface); keeping the meters running and only hiding the numbers (the cost is the point); gating the sample peak
+(a clip that happened while the panel was folded would not show when it opened). Stopping the engine's own level
+meters the same way was measured and left alone: the console strips, the track header meters and the record level
+read them and keep a latched peak, clip lamps and a held maximum, so a hidden mixer would lose a clip.
+
+**Status.** Default (not yet confirmed). Decided by: none yet.

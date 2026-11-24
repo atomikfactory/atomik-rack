@@ -8,8 +8,9 @@ use atomik_app::AppCore;
 use atomik_app::session::{LiveSession, NullBackend};
 use atomik_app::settings::AudioSettings;
 use atomik_app::shell::{Shell, ShellOptions};
+use atomik_app::windows::WindowKind;
 use atomik_model::{
-    Command, MapOptions, MidiMapCommand, MidiMapping, MidiSource, MidiTarget, SourceKind,
+    Command, DeviceKey, MapOptions, MidiMapCommand, MidiMapping, MidiSource, MidiTarget, SourceKind,
 };
 use atomik_ui::UiEvent;
 use atomik_ui::kurbo::Size;
@@ -95,4 +96,48 @@ fn an_idle_frame_with_midi_mappings_and_no_panel_allocates_nothing() {
     assert_eq!(s.core().doc().midi_maps.len(), 8);
     assert!(!s.midi_maps_open(), "the panel is closed");
     assert_eq!(idle_allocations(&mut s), 0);
+}
+
+/// A shell of the windowed app's kind (it analyses only what is shown) with every analyser and
+/// the two devices that carry the observed flag in its rack.
+fn shell_with_analysers() -> Shell<NullBackend> {
+    let mut s = shell();
+    s.core_mut().set_analyse_only_shown(true);
+    for (i, type_id) in [
+        "atomik.spectrum",
+        "atomik.phase-meter",
+        "atomik.loudness-meter",
+        "atomik.tuner",
+        "atomik.mastering",
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        s.core_mut()
+            .apply_command(Command::AddDevice {
+                index: usize::MAX,
+                type_id: type_id.into(),
+                key: Some(DeviceKey(format!("a{i}"))),
+            })
+            .unwrap();
+    }
+    s
+}
+
+#[test]
+fn an_idle_frame_with_analysers_on_screen_allocates_nothing() {
+    let mut s = shell_with_analysers();
+    assert_eq!(s.core().analyser_devices().len(), 4);
+    assert_eq!(idle_allocations(&mut s), 0);
+}
+
+#[test]
+fn an_idle_frame_with_analysers_in_a_minimized_window_allocates_nothing() {
+    let mut s = shell_with_analysers();
+    s.set_window_minimized(WindowKind::Main, true);
+    assert_eq!(idle_allocations(&mut s), 0);
+    assert!(
+        !s.core().view().window_shown(),
+        "the rack is told it is hidden"
+    );
 }
