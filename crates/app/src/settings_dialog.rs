@@ -88,6 +88,35 @@ impl DeviceLists {
     }
 }
 
+impl DeviceLists {
+    /// `previous` with the MIDI ports listed again; the audio hosts and devices are kept as they
+    /// were (listing them asks every driver, which the open dialog does not do on its own).
+    pub fn query_midi<B: AudioBackend>(backend: &B, previous: &Self) -> Self {
+        let mut errors: Vec<String> = previous
+            .errors
+            .iter()
+            .filter(|e| e.starts_with("audio devices:"))
+            .cloned()
+            .collect();
+        let midi_ports = backend.list_midi().unwrap_or_else(|e| {
+            errors.push(format!("MIDI ports: {e}"));
+            Vec::new()
+        });
+        let midi_outputs = backend.list_midi_out().unwrap_or_else(|e| {
+            errors.push(format!("MIDI output ports: {e}"));
+            Vec::new()
+        });
+        Self {
+            hosts: previous.hosts.clone(),
+            midi_ports,
+            midi_outputs,
+            errors,
+            input_note: None,
+            stream_notes: Vec::new(),
+        }
+    }
+}
+
 /// One option of a section.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Choice {
@@ -156,6 +185,8 @@ pub enum Choice {
     ClockInPort(Option<String>),
     /// Whether the transport follows the clock in.
     ClockFollow(bool),
+    /// Lists the audio hosts, devices and MIDI ports again (an action, not a setting).
+    Rescan,
     /// Opens the controller set-up wizard (an action, not a setting).
     SetUpController,
     /// Writes the profile of the surface being edited to a file to share.
@@ -351,6 +382,9 @@ pub enum DialogOutcome {
     /// The Camera tab asks for a twist calibration: the settings are applied as with
     /// [`DialogOutcome::Apply`], the dialog closes and the calibration starts.
     CalibrateCamera(AudioSettings),
+    /// The Audio tab's Rescan chip asks for the hosts, devices and ports to be listed again (the
+    /// dialog stays open).
+    Rescan,
     /// The Controllers tab asks for the set-up wizard (the dialog stays open).
     SetUpController,
     /// The Controllers tab asks for a file to export the controller profile to.
@@ -585,8 +619,9 @@ impl SettingsDialog {
         &self.lists
     }
 
-    /// Replaces the device lists (the shell lists the ports again while the dialog is open, so
-    /// a controller plugged in or removed shows without reopening it). The notes about the
+    /// Replaces the device lists (the shell lists the MIDI ports again while the dialog is open,
+    /// so a controller plugged in or removed shows without reopening it, and everything again on
+    /// Rescan). The notes about the
     /// running stream are kept when `lists` has none; the draft and the scroll stay as they are.
     pub fn set_lists(&mut self, mut lists: DeviceLists) {
         if lists.input_note.is_none() {
@@ -969,6 +1004,9 @@ impl SettingsDialog {
                 Choice::Host(d.host),
             ));
         }
+        // The lists are read when the dialog opens, not while it stays open: a device plugged
+        // in later shows after this.
+        host_options.push(("Rescan".to_string(), Choice::Rescan));
         let names = self.output_devices(d.host);
         let mut devices = vec![("Host default".to_string(), Choice::Device(None))];
         devices.extend(
@@ -1528,6 +1566,7 @@ impl SettingsDialog {
             Choice::SurfaceSelect(i) => self.surface_sel == *i,
             Choice::SurfaceAdd
             | Choice::SurfaceRemove
+            | Choice::Rescan
             | Choice::SetUpController
             | Choice::ExportController
             | Choice::ImportController => false,
@@ -1602,7 +1641,10 @@ impl SettingsDialog {
                 self.draft.set_midi_input_role(&p, role);
             }
             Choice::MidiMpe(p) => self.draft.cycle_midi_input_mpe(&p),
-            Choice::SetUpController | Choice::ExportController | Choice::ImportController => {}
+            Choice::Rescan
+            | Choice::SetUpController
+            | Choice::ExportController
+            | Choice::ImportController => {}
             Choice::ProfilePickup(on) => {
                 if let Some(o) = self.edited_options_mut() {
                     o.pickup = on;
@@ -1886,6 +1928,7 @@ impl SettingsDialog {
                     return DialogOutcome::Cancel;
                 }
                 match hit {
+                    Some(Choice::Rescan) => return DialogOutcome::Rescan,
                     Some(Choice::SetUpController) => return DialogOutcome::SetUpController,
                     Some(Choice::ExportController) => return DialogOutcome::ExportController,
                     Some(Choice::ImportController) => return DialogOutcome::ImportController,

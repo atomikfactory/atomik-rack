@@ -608,6 +608,7 @@ Rename Note Lane… => Renommer la voie de notes…
 Rename Track… => Renommer la piste…
 Replace Device => Remplacer l'appareil
 Report an Issue => Signaler un problème
+Rescan => Réanalyser
 Rescan MIDI Ports => Réanalyser les ports MIDI
 Reset Channel => Réinitialiser le canal
 Reset Default Song => Réinitialiser le morceau par défaut

@@ -26,6 +26,11 @@ may break APIs and the patch and project formats.
   software adapter; and a window is made hidden and shown right after its first frame, so none sits blank while the
   graphics start (the Rack and Mixer windows restored at start included). Other systems keep showing the window at
   once. Startup errors behave as before.
+- **Audio Settings no longer lists every audio device once a second.** While the dialog was open, each host and each
+  device was asked about its formats every second, which could stutter the window with a slow driver. The lists are
+  read when the dialog opens and when you press the new Rescan chip beside the audio hosts, which also looks for
+  MIDI inputs that appeared; the MIDI ports still refresh once a second. A device plugged in while the dialog is open
+  shows after Rescan or when the dialog is opened again.
 
 ## [0.5.0-rc.2] - 2026-11-24
 

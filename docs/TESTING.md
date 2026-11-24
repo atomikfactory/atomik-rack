@@ -2121,6 +2121,8 @@ Hand checks, not automated (they need two MIDI controllers):
 - Switch one off: it stops playing at once and the other keeps going. Switch it on again.
 - Unplug a controller while Audio Settings is open: the list drops it within a second; plug it in
   again: it reappears and, if switched on, opens (the status bar lists the open ports).
+- Plug in a USB audio interface while Audio Settings is open: it is not listed until you press Rescan
+  (next to the audio hosts); leave the dialog open for a minute: the window never stutters.
 - Unplug it with the dialog closed, plug it in again and use Audio > Rescan MIDI Ports.
 - Set a pad controller to mapping only, map a pad to Play: the pad runs the transport and plays no
   note; the keyboard still plays.

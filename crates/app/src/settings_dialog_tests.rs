@@ -132,7 +132,7 @@ fn the_sections_cover_every_setting() {
         ]
     );
     assert_eq!(labels(&d, "Pre-count (bars)"), ["Off", "1", "2", "3", "4"]);
-    assert_eq!(labels(&d, "Audio host"), ["WASAPI", "ASIO"]);
+    assert_eq!(labels(&d, "Audio host"), ["WASAPI", "ASIO", "Rescan"]);
     assert_eq!(
         labels(&d, "Output device"),
         [

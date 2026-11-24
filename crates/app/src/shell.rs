@@ -6972,6 +6972,7 @@ impl<B: AudioBackend> Shell<B> {
                     self.core.camera_delete_models();
                     dialog.set_camera_models(self.core.camera_models());
                 }
+                DialogOutcome::Rescan => self.rescan_devices(),
                 DialogOutcome::SetUpController => self.open_controller_wizard(),
                 DialogOutcome::ExportController => {
                     return vec![ShellRequest::PickExportController];
@@ -11670,13 +11671,14 @@ impl<B: AudioBackend> Shell<B> {
     }
 
     /// While the Audio Settings dialog is open, lists the MIDI ports again once a second so a
-    /// controller plugged in or removed shows without reopening the dialog, and opens the
-    /// enabled inputs that have appeared.
+    /// controller plugged in or removed shows without reopening the dialog. The audio hosts and
+    /// devices are not listed here: that asks every driver, some of them slowly, so it happens
+    /// when the dialog opens and on its Rescan chip ([`Self::rescan_devices`]).
     fn relist_ports(&mut self, at: std::time::Instant) {
-        if self.dialog.is_none() {
+        let Some(dialog) = &mut self.dialog else {
             self.ports_listed_at = None;
             return;
-        }
+        };
         let due = self
             .ports_listed_at
             .is_none_or(|last| at.saturating_duration_since(last) >= PORT_RELIST_EVERY);
@@ -11688,10 +11690,23 @@ impl<B: AudioBackend> Shell<B> {
         if !session.midi_complete() {
             session.rescan_midi();
         }
+        let lists = DeviceLists::query_midi(session.backend(), dialog.lists());
+        dialog.set_lists(lists);
+        self.repaint = true;
+    }
+
+    /// The Rescan chip of Audio Settings: lists the audio hosts, their devices and the MIDI ports
+    /// again, and opens the enabled MIDI inputs that have appeared.
+    fn rescan_devices(&mut self) {
+        let session = self.core.sink_mut();
+        if !session.midi_complete() {
+            session.rescan_midi();
+        }
         let lists = DeviceLists::query(session.backend());
         if let Some(dialog) = &mut self.dialog {
             dialog.set_lists(lists);
         }
+        self.ports_listed_at = Some(crate::session::clock_now());
         self.repaint = true;
     }
 

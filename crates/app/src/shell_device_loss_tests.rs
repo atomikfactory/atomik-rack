@@ -25,6 +25,8 @@ struct World {
     /// The output devices the host lists, and the host that lists them.
     plugged: RefCell<Vec<String>>,
     host: Cell<Option<atomik_audio_io::HostKind>>,
+    /// How many times the audio hosts and devices were listed.
+    audio_listings: Cell<u32>,
 }
 
 #[derive(Clone, Default)]
@@ -53,6 +55,7 @@ impl AudioBackend for Fake {
     type Midi = MidiConnection;
 
     fn list_audio(&self) -> Result<Vec<HostInfo>, IoError> {
+        self.0.audio_listings.set(self.0.audio_listings.get() + 1);
         let devices = self
             .0
             .plugged
@@ -481,6 +484,61 @@ fn the_open_settings_dialog_lists_the_midi_ports_again_every_second() {
     world.0.midi.borrow_mut().clear();
     s.poll_status_at(t0 + Duration::from_millis(5_000));
     assert!(s.ports_listed_at.is_none());
+}
+
+/// The centre of the Rescan chip of the open Audio Settings dialog.
+fn rescan_chip(s: &Shell<Fake>) -> Point {
+    let layout = s.dialog.as_ref().unwrap().layout(s.size());
+    let (rect, ..) = layout
+        .options
+        .iter()
+        .find(|(_, _, c)| *c == crate::settings_dialog::Choice::Rescan)
+        .expect("the Audio tab has a Rescan chip");
+    rect.center()
+}
+
+fn device_names(s: &Shell<Fake>) -> Vec<String> {
+    let lists = s.dialog.as_ref().unwrap().lists();
+    lists
+        .hosts
+        .iter()
+        .flat_map(|h| h.devices.iter().map(|d| d.name.clone()))
+        .collect()
+}
+
+#[test]
+fn the_open_settings_dialog_lists_the_audio_devices_once_and_again_only_on_rescan() {
+    let dir = scratch("device-rescan");
+    let world = Fake::default();
+    let mut s = shell(&world, &saved("Interface", false), &dir);
+    let before = world.0.audio_listings.get();
+    s.execute(AppCommand::AudioSettings);
+    assert_eq!(world.0.audio_listings.get(), before + 1, "listed on open");
+    // Ticks while the dialog stays open, a minute of them, list no audio device again...
+    let t0 = crate::session::clock_now();
+    for second in 0..60 {
+        s.poll_status_at(t0 + Duration::from_secs(second));
+    }
+    assert_eq!(world.0.audio_listings.get(), before + 1, "not while open");
+    // ...a USB interface plugged in meanwhile is not shown yet...
+    world.0.plugged.borrow_mut().push("USB Interface".into());
+    s.poll_status_at(t0 + Duration::from_secs(61));
+    assert!(!device_names(&s).contains(&"USB Interface".to_string()));
+    // ...and Rescan lists the audio devices again and shows it.
+    let at = rescan_chip(&s);
+    s.handle(&UiEvent::PointerDown {
+        pos: at,
+        button: PointerButton::Primary,
+        modifiers: Modifiers::NONE,
+        clicks: 1,
+    });
+    assert_eq!(world.0.audio_listings.get(), before + 2, "listed on Rescan");
+    assert!(device_names(&s).contains(&"USB Interface".to_string()));
+    // Reopening lists once more.
+    s.dialog = None;
+    s.execute(AppCommand::AudioSettings);
+    assert_eq!(world.0.audio_listings.get(), before + 3, "listed on reopen");
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]

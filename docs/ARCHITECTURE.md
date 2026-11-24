@@ -3242,7 +3242,10 @@ stale clock cannot hold back the notes behind it, since the engine only looks at
 queue. `LiveSession::sync_midi` opens and closes ports to match the settings and leaves the
 others alone; a port that is not there yet is reported in the status and opened by Audio > Rescan
 MIDI Ports (`audio.rescan_midi`) or, while Audio Settings is open, by the one second re-listing
-of the ports. The `session_midi_input` tool takes the name of the port a message comes from.
+of the MIDI ports (`DeviceLists::query_midi`: cheap, no driver is asked). The audio hosts and devices are
+listed when the dialog opens and when its Rescan chip is pressed (`Shell::rescan_devices`), never on a
+timer: listing them asks every driver, and a slow one stalled the window once a second.
+The `session_midi_input` tool takes the name of the port a message comes from.
 
 **MIDI output.** The MIDI Out device (`atomik.midi-out`, see [DEVICES.md](DEVICES.md)) sends notes and
 controllers to a port, and the audio thread never touches a port. The device turns what it
