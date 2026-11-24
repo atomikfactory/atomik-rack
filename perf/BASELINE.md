@@ -820,9 +820,24 @@ three runs each. What the skip must not cost a busy effect is measured with the 
 | effect | idle row, skip off | idle row, skip on | busy row before | busy row after |
 |---|---|---|---|---|
 | echo | 21.73 ms, 21.08 ms, 21.38 ms | 1.251 ms, 1.241 ms, 1.238 ms | 1.014 ms, 1.007 ms, 1.016 ms | 1.027 ms, 1.023 ms, 1.019 ms (+1.1 %) |
+| reverb | 80.29 ms, 80.39 ms, 80.58 ms | 5.270 ms, 5.363 ms, 5.317 ms | 3.547 ms, 3.549 ms, 3.542 ms | 3.578 ms, 3.541 ms, 3.554 ms (+0.3 %) |
 
 Echo: the first form, which asked both of its delay lines to count the zeros they store, cost the busy row 2.5 %
 (1.042 ms, 1.038 ms, 1.031 ms against the 1.012 ms above), so the echo ORs the bits of the two values it writes into one
 accumulator per batch instead and counts whole batches of zero writes against the ring length (a batch that held one
 value at its start does not count, so it can only claim less than it knows). That is the form that was kept. An idle
 echo needs its whole ring, 2^18 samples (5.5 s at 48 kHz), of zero writes before it is quiescent.
+
+Reverb: the delays do not each count their zeros (that is what cost 2.2 % when it was always on). A first form of
+this device ORed the bits of the values it wrote to its twelve delays inside the sample loop; it measured +1.1 % on the
+reverb, but the space reverb, which runs the same code in a copy of its own, moved by +4 % to +6 % (3.60 ms before, 3.74
+to 3.83 ms after, with a change that does not touch the loop at all: a layout effect of the compiler, not of the
+work), so that form was replaced by one that does nothing in the loop: at the end of a batch, if no input sample is
+non-zero, the stretch the batch wrote to each delay is looked at (a vectorised OR of at most 64 samples a delay) and
+whole zero batches are counted against the longest ring; a batch with a sound on an input costs one early-out test.
+The controls (about 50 one-pole block smoothers) are compared with their targets once a batch; the filters and
+allpasses are scanned only when the delays are already empty. An idle reverb needs its pre-delay ring (16,384 samples,
+a third of a second) and then the tail to fall below the 1e-20 flush; in the idle row it is quiescent from its first
+batch. The skip-on row is mostly the eight LFOs stepped sample by sample (512 additions a batch), which is what keeps
+their phases bit-exact. Busy rows of this form, three runs each against the base of 3.546 ms (reverb) and 3.599 ms
+(space reverb, below): 3.578, 3.541 and 3.554 ms; 3.622, 3.603 and 3.657 ms (+0.8 %).

@@ -42,6 +42,25 @@ impl Fdn8 {
         self.lp = [0.0; FDN_LINES];
     }
 
+    /// Whether the latest `n` samples written to every line were all stored as `+0.0` (see
+    /// [`ModDelay::last_written_zero`]).
+    pub fn last_written_zero(&self, n: usize) -> bool {
+        self.lines.iter().all(|l| l.last_written_zero(n))
+    }
+
+    /// The length of the longest line's ring, in samples.
+    pub fn ring_len(&self) -> usize {
+        self.lines.iter().map(ModDelay::ring_len).max().unwrap_or(0)
+    }
+
+    /// Whether the damping filters and the in-loop allpasses hold only `+0.0` (a scan of about
+    /// two thousand samples at 48 kHz: for a rest check, not for the per-sample path). A silent
+    /// input to lines that hold only zeros then gives `+0.0` everywhere and changes nothing.
+    pub fn filters_silent(&self) -> bool {
+        self.lp.iter().all(|x| x.to_bits() == 0)
+            && self.allpass.iter().all(Allpass::holds_only_zeros)
+    }
+
     /// Advances one sample and returns the filtered line outputs (before mixing).
     ///
     /// * `delays`: line delays in samples (clamped to the line range).
@@ -106,6 +125,35 @@ mod tests {
         let last: f64 = e[18_000..].iter().sum();
         assert!(first > 0.5, "first {first}");
         assert!((last / first - 1.0).abs() < 0.25, "{first} vs {last}");
+    }
+
+    #[test]
+    fn the_written_bits_and_the_filter_scan_say_when_the_network_holds_zeros() {
+        let mut f = Fdn8::new(400, [11, 13, 17, 19, 23, 29, 31, 37]);
+        assert_eq!(f.ring_len(), 404);
+        assert!(f.filters_silent());
+        let mut inj = [0.0f32; 8];
+        inj[3] = 1.0;
+        let zero = [0.0f32; 8];
+        f.tick(&D, &[0.5; 8], 0.2, 0.5, &inj);
+        assert!(!f.last_written_zero(1), "a value was written");
+        assert!(!f.last_written_zero(f.ring_len()));
+        // The claim of a caller: a run of zero writes as long as the ring, and silent filters.
+        let (mut run, mut quiet_at) = (0, None);
+        for s in 1..60_000 {
+            f.tick(&D, &[0.5; 8], 0.2, 0.5, &zero);
+            let zero = f.last_written_zero(1);
+            run = if zero { run + 1 } else { 0 };
+            if quiet_at.is_none() && run >= f.ring_len() && f.filters_silent() {
+                quiet_at = Some(s);
+            }
+            if quiet_at.is_some() {
+                assert!(zero && f.filters_silent(), "sample {s}");
+            }
+        }
+        assert!(quiet_at.is_some(), "the tail never ran dry");
+        f.clear();
+        assert!(f.filters_silent());
     }
 
     #[test]

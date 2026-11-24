@@ -1513,6 +1513,15 @@ A stereo algorithmic reverb with three algorithms. Source:
 - **Meter values.** `[output peak L, output peak R, tail RMS]`, linear, of the last batch.
 - **Buffers** are allocated in `prepare` for the largest size at the sample rate (about 0.17 s per
   FDN line, 0.25 s for the pre-delay).
+- **Idle.** Once every delay has been written nothing but `+0.0` for as long as its longest ring (the pre-delay,
+  a third of a second), the low cut, the damping filters and the allpasses hold exact zeros (the tail decays
+  until the 1e-20 flush: 400 dB down, about 13 s at a decay of 2 s), every smoothed control sat on its target
+  when the batch began (a size change takes a few seconds to settle) and the key duck and gate are off and no mix
+  CV is connected, the device says it is quiescent and the engine leaves it uncalled while its inputs stay
+  silent; it then only moves the eight modulation LFOs on and zeroes the meter values, as a processed silent
+  batch does. Sound, a note, a parameter, tempo or transport change, or a new cabling wakes it. A frozen tail
+  holds its sound and never rests, and a reverb with the key duck or gate on is always processed. The audio is
+  bit for bit the same either way.
 
 ---
 

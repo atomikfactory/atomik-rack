@@ -53,6 +53,14 @@
 //!   drive a duck and a gate of the wet path only, see [`keyed`]. The dry signal is never touched.
 //! * **Meter values** (`has_meter_values`): `[output peak L, output peak R, tail RMS]`, linear,
 //!   of the last batch.
+//! * **Idle.** Once every delay of the device (pre-delay, early reflections, the eight lines) has been written nothing
+//!   but `+0.0` for as long as its longest ring (a batch with silent inputs is looked at once, at its end; whole zero
+//!   batches are counted), the filters and allpasses hold exact zeros, every smoothed control sat on its target when the batch
+//!   began, the key duck and gate are off and no mix CV is connected, a silent batch changes nothing but the
+//!   modulation phases and the meters, and the device says it is quiescent: the engine leaves it uncalled while its
+//!   inputs stay silent and `idle_advance` moves the eight LFOs on and zeroes the meters, as a processed silent
+//!   batch does. A frozen tail holds its sound, so it never rests; the space reverb also needs its high cut and its
+//!   gate settled.
 
 use crate::bypass::{Bypassable, bypass_param};
 use crate::cv_in::{add_norm, batch_mean};
@@ -66,6 +74,8 @@ use atomik_dsp::{
     flush_denormal,
 };
 
+#[cfg(test)]
+mod idle_tests;
 pub(crate) mod keyed;
 #[cfg(test)]
 mod keyed_tests;
@@ -646,6 +656,11 @@ pub struct Reverb {
     gate: Gate,
     /// The key-driven duck and gate of the wet path.
     keyed: keyed::Keyed,
+    /// Samples written to the delays in a row, up to the end of the last batch, that were all `+0.0`.
+    zero_run: usize,
+    /// The state the last batch left is a fixed point of a silent batch up to the modulation
+    /// phases and the meters (see `quiescent`).
+    rest: bool,
 }
 
 /// The gated tail (Space only): the wet output closes `hold` after the input falls below the
@@ -683,6 +698,16 @@ impl Gate {
         self.env = 0.0;
         self.hold = 0;
         self.gain = 1.0;
+    }
+
+    /// Whether one more silent sample (level 0) leaves the gate as it is, bit for bit: then
+    /// every later one does.
+    fn is_fixed(&self, threshold: f32, hold_samples: u32) -> bool {
+        let mut next = *self;
+        next.tick(0.0, threshold, hold_samples);
+        next.env.to_bits() == self.env.to_bits()
+            && next.hold == self.hold
+            && next.gain.to_bits() == self.gain.to_bits()
     }
 
     /// Advances one sample and returns the wet gain. `hold_samples == 0` keeps it open.
@@ -768,6 +793,8 @@ impl Reverb {
             hc: [0.0; 2],
             gate: Gate::new(),
             keyed: keyed::Keyed::new(),
+            zero_run: 0,
+            rest: false,
         }
     }
 
@@ -835,6 +862,26 @@ impl Reverb {
             };
             c.set_time(tau, sr, BATCH);
         }
+    }
+
+    /// The longest ring of the delays, in samples.
+    fn longest_ring(&self) -> usize {
+        self.pre_l
+            .ring_len()
+            .max(self.er_l.ring_len())
+            .max(self.fdn.ring_len())
+    }
+
+    /// The conditions of `quiescent` that read the state (see there); the gate threshold and
+    /// hold are those of the batch.
+    fn at_rest(&self, gate_threshold: f32, gate_hold: u32) -> bool {
+        self.zero_run >= self.longest_ring()
+            && self.hp.iter().all(|x| x.to_bits() == 0)
+            && (self.variant != Variant::Space
+                || (self.hc.iter().all(|x| x.to_bits() == 0)
+                    && self.gate.is_fixed(gate_threshold, gate_hold)))
+            && self.fdn.filters_silent()
+            && self.in_ap.iter().flatten().all(Allpass::holds_only_zeros)
     }
 
     fn reseed(&mut self) {
@@ -905,9 +952,12 @@ impl Device for Reverb {
         self.keyed.clear();
         self.reseed();
         self.fresh = true;
+        self.zero_run = self.longest_ring();
+        self.rest = false;
     }
 
     fn set_param(&mut self, id: ParamId, plain: f32) {
+        self.rest = false;
         let v = if plain.is_finite() { plain } else { 0.0 };
         match id.0 {
             P_ALGORITHM => {
@@ -961,6 +1011,12 @@ impl Device for Reverb {
                 c.set_immediate(*t);
             }
         }
+        // Every control already on its target: this batch's ramps are flat, and so is every later one.
+        let flat = self
+            .ctl
+            .iter()
+            .zip(&target)
+            .all(|(c, t)| c.value().to_bits() == t.to_bits());
         let mut ramps = [Ramp::constant(0.0); NC];
         for i in 0..NC {
             ramps[i] = self.ctl[i].advance(target[i], BATCH);
@@ -1111,6 +1167,45 @@ impl Device for Reverb {
         self.tail_rms = (tail_sq / (2.0 * BATCH as f32)).sqrt();
         *ctx.output(OUT_L) = out_l;
         *ctx.output(OUT_R) = out_r;
+        // A batch with a sample on an input wrote it to the pre-delay (a flushed one is not looked
+        // for: that only makes the claim smaller); otherwise look at what every delay stored.
+        let silent = in_l.iter().chain(&in_r).all(|x| x.to_bits() == 0)
+            && self.pre_l.last_written_zero(BATCH)
+            && self.pre_r.last_written_zero(BATCH)
+            && self.er_l.last_written_zero(BATCH)
+            && self.er_r.last_written_zero(BATCH)
+            && self.fdn.last_written_zero(BATCH);
+        self.zero_run = if silent {
+            self.zero_run.saturating_add(BATCH)
+        } else {
+            0
+        };
+        self.rest =
+            flat && !keyed && !ctx.is_connected(MIX_CV) && self.at_rest(gate_threshold, gate_hold);
+    }
+
+    /// At rest when a silent batch would write `+0.0` to both outputs and change nothing but the
+    /// eight modulation phases and the meters, which `idle_advance` moves on. Every delay holds
+    /// only zeros, so the early taps, the pre-delay, the lines and the late taps read `+0.0` at
+    /// any time; the low cut, the damping filters, the allpasses and (space reverb) the high cut
+    /// hold exact zeros, so they and the sum stay `+0.0` and write `+0.0` back; every smoothed
+    /// control sat on its target when the batch began, so the ramps and the feedback gains of this
+    /// batch and of every later one are the same; the space reverb gate does not move on another
+    /// silent sample. A param change clears it at once; the engine runs the batch of a tempo
+    /// change (nothing here reads it) and of a new cabling. The key duck and gate are off, and a
+    /// mix CV is read every batch, so neither ever rests.
+    fn quiescent(&self) -> bool {
+        self.rest
+    }
+
+    /// What a silent batch changes: the eight LFOs, step by step as `process` takes them, and the
+    /// meters, which a silent batch leaves at zero.
+    fn idle_advance(&mut self, frames: usize) {
+        for l in &mut self.lfo {
+            l.skip(frames);
+        }
+        self.peak = [0.0; 2];
+        self.tail_rms = 0.0;
     }
 
     fn has_meter_values(&self) -> bool {

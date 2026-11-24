@@ -82,24 +82,42 @@ struct Case {
     min_skipped: [u64; 3],
 }
 
-const CASES: &[Case] = &[Case {
-    type_id: "atomik.echo",
-    params: &[
-        ("time.mode", 1.0),
-        ("time.sync", 0.0), // 1/32: a tempo change moves the time
-        ("feedback", 0.3),
-        ("mix", 0.5),
-        ("color.drive", 0.5),
-        ("color.high", 6_000.0),
-        ("diffusion", 0.5),
-        ("wobble.depth", 0.8),
-        ("wobble.rate", 3.0),
-        ("duck", 0.5),
-    ],
-    change: ("feedback", 0.2),
-    // The ring (5.5 s) and the repeats run dry about 7 s in; the noise comes back at 14 s.
-    min_skipped: [3_000, 1_500, 2_000],
-}];
+const CASES: &[Case] = &[
+    Case {
+        type_id: "atomik.echo",
+        params: &[
+            ("time.mode", 1.0),
+            ("time.sync", 0.0), // 1/32: a tempo change moves the time
+            ("feedback", 0.3),
+            ("mix", 0.5),
+            ("color.drive", 0.5),
+            ("color.high", 6_000.0),
+            ("diffusion", 0.5),
+            ("wobble.depth", 0.8),
+            ("wobble.rate", 3.0),
+            ("duck", 0.5),
+        ],
+        change: ("feedback", 0.2),
+        // The ring (5.5 s) and the repeats run dry about 7 s in; the noise comes back at 14 s.
+        min_skipped: [3_000, 1_500, 2_000],
+    },
+    Case {
+        type_id: "atomik.reverb",
+        params: &[
+            ("algorithm", 1.0),
+            ("decay", 0.3),
+            ("damping", 0.4),
+            ("modulation", 1.0),
+            ("mix", 0.5),
+            ("predelay", 20.0),
+            ("early", 0.5),
+        ],
+        change: ("decay", 0.4),
+        // The pre-delay ring (a third of a second) and the tail (400 dB down in about 2 s) run dry
+        // about 3.5 s in; the noise comes back at 14 s.
+        min_skipped: [8_000, 7_500, 7_500],
+    },
+];
 
 struct Rendered {
     bits: Vec<Vec<u32>>,
@@ -254,4 +272,9 @@ fn case(type_id: &str) -> &'static Case {
 #[test]
 fn the_echo_renders_the_same_bytes_skipped_or_not() {
     scenarios(case("atomik.echo"));
+}
+
+#[test]
+fn the_reverb_renders_the_same_bytes_skipped_or_not() {
+    scenarios(case("atomik.reverb"));
 }
