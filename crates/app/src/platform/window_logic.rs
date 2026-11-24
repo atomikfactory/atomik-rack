@@ -14,6 +14,18 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 use winit::dpi::{LogicalPosition, PhysicalPosition, Position};
 
+/// Whether a window is made hidden and shown after its first frame. Only where a hidden window
+/// still gets its redraw requests (Windows): elsewhere it is shown at once, as before.
+pub(super) const HIDE_UNTIL_FIRST_FRAME: bool = cfg!(windows);
+
+/// Whether a window made hidden is shown after a frame with this `result`: after any frame
+/// that was tried, except the one that only reconfigured the surface (the redraw it asks for
+/// comes right after). A frame that was skipped or lost shows the window too: it must never
+/// stay hidden.
+pub(super) fn reveals_window(result: &super::gpu::FrameResult) -> bool {
+    !matches!(result, super::gpu::FrameResult::Reconfigured)
+}
+
 /// What a window event says about the paint that follows it, for the paint counters (see
 /// [`crate::ui_activity`]); `None` for an event that explains no paint.
 pub(super) fn paint_cause_of(event: &winit::event::WindowEvent) -> Option<PaintReason> {
@@ -629,6 +641,17 @@ mod tests {
         assert!(held.any(), "a stray release does not owe a press");
         held.reset();
         assert!(!held.any());
+    }
+
+    #[test]
+    fn a_hidden_window_is_shown_after_any_frame_but_a_reconfigure() {
+        use super::super::gpu::FrameResult;
+        assert!(reveals_window(&FrameResult::Presented));
+        // A frame that was skipped or lost must not leave the window hidden.
+        assert!(reveals_window(&FrameResult::Skipped));
+        assert!(reveals_window(&FrameResult::Lost));
+        // The reconfigure asks for a redraw at once; the window is shown after that one.
+        assert!(!reveals_window(&FrameResult::Reconfigured));
     }
 
     #[test]

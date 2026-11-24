@@ -190,6 +190,8 @@ struct Devices {
     devices: Vec<DeviceHandle>,
     /// The adapters seen by the last selection, for the message of a start that found none.
     found: Vec<AdapterDesc>,
+    /// The adapters being listed on a worker since the start, taken by the first selection.
+    listing: Option<std::thread::JoinHandle<Vec<wgpu::Adapter>>>,
 }
 
 impl Devices {
@@ -207,7 +209,31 @@ impl Devices {
             instance,
             devices: Vec::new(),
             found: Vec::new(),
+            listing: None,
         }
+    }
+
+    /// Lists the adapters of the machine on a worker, so that the list is there (or nearly) when
+    /// the first window asks for a device: the driver's first look at the machine is the slowest
+    /// step of a start. Nothing is chosen here; the first selection joins the worker and falls
+    /// back to listing on its own thread when there is none or it failed.
+    fn start_listing(&mut self) {
+        let instance = self.instance.clone();
+        self.listing = std::thread::Builder::new()
+            .name("gpu-adapters".to_string())
+            .spawn(move || pollster::block_on(instance.enumerate_adapters(wgpu::Backends::all())))
+            .ok();
+    }
+
+    /// The adapters of the machine: from the worker the first time when it was started, listed
+    /// now otherwise.
+    async fn list_adapters(&mut self) -> Vec<wgpu::Adapter> {
+        if let Some(Ok(adapters)) = self.listing.take().map(std::thread::JoinHandle::join) {
+            return adapters;
+        }
+        self.instance
+            .enumerate_adapters(wgpu::Backends::all())
+            .await
     }
 
     /// The id of a device that can present to `surface` (any, without one), made when there is
@@ -228,10 +254,8 @@ impl Devices {
 
     /// Chooses an adapter by the rule and makes a device on it.
     async fn new_device(&mut self, surface: Option<&wgpu::Surface<'_>>) -> Result<usize, String> {
-        let adapters = self
-            .instance
-            .enumerate_adapters(wgpu::Backends::all())
-            .await;
+        let adapters = self.list_adapters().await;
+        crate::startup::mark(crate::startup::ADAPTERS_LISTED);
         let described: Vec<AdapterDesc> = adapters
             .iter()
             .map(|a| {
@@ -463,6 +487,12 @@ impl GpuContext {
         }
     }
 
+    /// Starts listing the adapters on a worker (see [`Devices::start_listing`]); the live app
+    /// calls it first thing, before the window that needs them exists.
+    pub fn start_listing(&mut self) {
+        self.context.start_listing();
+    }
+
     /// An empty context for the graphics of an app that lost its device.
     pub fn rebuilt() -> Self {
         Self {
@@ -551,6 +581,7 @@ impl GpuContext {
         // it for everything that follows.
         let dev_id = pollster::block_on(self.context.device(Some(&target)))
             .map_err(|e| format!("GPU surface: {e}"))?;
+        crate::startup::mark(crate::startup::DEVICE_CREATED);
         self.watch_new_devices();
         let (width, height) = clamp_size(width, height, self.max_side(dev_id));
         let surface = self

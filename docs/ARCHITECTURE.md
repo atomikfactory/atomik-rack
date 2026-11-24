@@ -7033,6 +7033,14 @@ winit and GPU code is not (it needs a window and a GPU).
   Every window has its own `Scene` and `SceneCache`; the `TextEngine` is shared. `render_offscreen`
   (`--screenshot`) is separate and writes one PNG per open window (`shot.png`, `shot-rack.png`,
   `shot-console.png`).
+- **The start overlaps the slow graphics step, and no window shows blank.** Once the audio stream runs, `run`
+  starts `GpuContext::start_listing`: a worker lists the graphics adapters while the application state, the fonts
+  and the event loop are built; the first selection joins it (`Devices::list_adapters`) and lists on its own
+  thread when there is no worker or it failed, so a start without the worker behaves as before. On Windows a window
+  is created hidden and `App::reveal` shows it after its first frame (`window_logic::reveals_window`: any tried
+  frame but a surface reconfigure; a window with no surface, a minimized one or a down device shows at once);
+  other systems keep showing it at creation (`window_logic::HIDE_UNTIL_FIRST_FRAME`). The `startup` log lines
+  name every stage (`startup.rs`).
 - **A lost graphics device is rebuilt, not fatal.** The context installs two callbacks on every device it makes
   (`GpuHealth`): the uncaptured-error handler and the device-lost callback only set an atomic flag and keep the
   reason text (running out of memory or an internal error loses the device; a rejected command is only noted, once

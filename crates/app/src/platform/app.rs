@@ -125,6 +125,11 @@ pub fn run(cli: Cli) -> Result<(), String> {
         }
     }
     let mut session = LiveSession::new(SystemBackend, settings, !cli.no_audio);
+    // The graphics driver's first look at the machine runs beside the rest of the start. It begins
+    // once the audio stream runs: both open devices of the system, and the stream starts sooner
+    // when it does not wait for the driver.
+    let mut gpu = GpuContext::new();
+    gpu.start_listing();
     // Before the first engine starts: the saved setting decides its automatic worker count.
     session.set_low_power(crate::performance::startup_level(settings_path.as_deref()).is_low());
     let mut core = AppCore::with_doc(session, doc, None);
@@ -330,6 +335,7 @@ pub fn run(cli: Cli) -> Result<(), String> {
     let status = shell.status_text().to_string();
     log::info!("{status}");
     let event_loop = EventLoop::new().map_err(|e| format!("event loop: {e}"))?;
+    crate::startup::mark(crate::startup::EVENT_LOOP_READY);
     // Live MIDI input wakes the loop at once: the idle loop sleeps between its slow polls, and
     // a mapped control or a transport command must not wait for the next one.
     let midi_wake = event_loop.create_proxy();
@@ -401,10 +407,13 @@ pub fn run(cli: Cli) -> Result<(), String> {
         crate::recovery::crashed_song_snapshots(&config.dir.join(crate::recovery::RECOVERY_FOLDER));
     shell.recover_songs(&crashed);
     let perf = shell.performance_level();
+    crate::startup::mark(crate::startup::STATE_BUILT);
+    let text = TextEngine::new();
+    crate::startup::mark(crate::startup::FONTS_READY);
     let mut app = App {
         ime_on: false,
         shell,
-        gpu: GpuContext::new(),
+        gpu,
         windows: BTreeMap::new(),
         custom_cursors: BTreeMap::new(),
         ids: BTreeMap::new(),
@@ -412,7 +421,7 @@ pub fn run(cli: Cli) -> Result<(), String> {
         last_focused: (DocId::FIRST, WindowKind::Main),
         drag_noted: false,
         foreign_hover: None,
-        text: TextEngine::new(),
+        text,
         modifiers: Modifiers::NONE,
         mod_events: translate::ModifierTracker::default(),
         buttons: translate::PointerMap::default(),
@@ -516,6 +525,8 @@ struct AppWindow {
     /// slots. The frame cap reads it; it is not the app-wide [`App::last_paint`], which only
     /// drives the paint tail.
     last_painted: Option<Instant>,
+    /// Made hidden, not yet shown: [`App::reveal`] shows it once a frame was tried.
+    hidden: bool,
 }
 
 struct App {
@@ -855,6 +866,8 @@ impl App {
             .with_inner_size(LogicalSize::new(placement.size.0, placement.size.1))
             .with_min_inner_size(LogicalSize::new(min_size.0, min_size.1))
             .with_maximized(placement.maximised)
+            // Shown after its first frame ([`App::reveal`]): not blank while the graphics start.
+            .with_visible(!window_logic::HIDE_UNTIL_FIRST_FRAME)
             .with_window_icon(window_logic::window_icon());
         // The desktop shell matches a window to its launcher (name and icon) by this id: the id of
         // the desktop entry of the Linux packages (packaging/linux).
@@ -940,11 +953,26 @@ impl App {
                 title: self.shell.title_in(kind),
                 zoom,
                 last_painted: None,
+                hidden: window_logic::HIDE_UNTIL_FIRST_FRAME,
             },
         );
         self.report_geom(key);
+        if self.windows.get(&key).is_some_and(|w| w.surface.is_none()) {
+            // Nothing will be drawn until the graphics are back: the window shows what it has.
+            self.reveal(key);
+        }
         window.request_redraw();
         Ok(())
+    }
+
+    /// Shows the window `key` if it was made hidden: the first frame is on its surface, or none
+    /// is coming soon.
+    fn reveal(&mut self, key: Key) {
+        if let Some(w) = self.windows.get_mut(&key)
+            && std::mem::take(&mut w.hidden)
+        {
+            w.window.set_visible(true);
+        }
     }
 
     /// Closes the window of `kind` (the shell attached its pane).
@@ -1280,6 +1308,7 @@ impl App {
         let kind = key.1;
         self.service_graphics();
         if self.recovery.is_down() {
+            self.reveal(key);
             return; // no surface until the graphics are back; the rebuild repaints everything
         }
         let Some(window) = self.windows.get(&key).map(|w| Arc::clone(&w.window)) else {
@@ -1287,6 +1316,7 @@ impl App {
         };
         let size = window.inner_size();
         if size.width == 0 || size.height == 0 {
+            self.reveal(key);
             return; // minimized
         }
         self.advance_activity();
@@ -1338,6 +1368,9 @@ impl App {
                 return;
             }
         };
+        if window_logic::reveals_window(&result) {
+            self.reveal(key);
+        }
         match result {
             FrameResult::Presented => crate::startup::mark(crate::startup::FIRST_FRAME),
             // Painted but not shown: the shell has marked the window clean, so ask again.

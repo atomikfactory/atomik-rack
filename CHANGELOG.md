@@ -21,6 +21,11 @@ may break APIs and the patch and project formats.
   the rack laid its values over a copy of the whole document on every paint; the copy is now kept while the
   document and the shown values are unchanged, so a stopped rack with automation paints with about a third fewer
   allocations. What the knobs show does not change.
+- **A faster start with no blank window (Windows).** The graphics adapters are listed on a worker thread while the
+  rest of the app builds its state, so the first frame comes about 200 to 250 ms sooner on a desktop and on a
+  software adapter; and a window is made hidden and shown right after its first frame, so none sits blank while the
+  graphics start (the Rack and Mixer windows restored at start included). Other systems keep showing the window at
+  once. Startup errors behave as before.
 
 ## [0.5.0-rc.2] - 2026-11-24
 

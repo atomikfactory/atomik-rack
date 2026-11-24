@@ -1091,3 +1091,37 @@ before (the revision is not declared); "kept" declares the document revision, as
 
 The document in this bench is small; a project with a console, assets, cables and macros copies more per build, so the
 gain there is larger. The 586 allocations left are the other per-paint work of `prepare` and the paint itself.
+
+## Start-up stages (2026-11-24)
+
+Release build, a clean settings folder and library, `--no-midi --quit-after 5`, no playback. Five starts per profile
+(normal; LP4 = affinity 0xF and `--workers 2`; WARP = `WGPU_BACKEND=dx12` with the Basic Render Driver). Times are
+milliseconds after the process began, from the `startup` log lines: median / max of the five. "Before" is the base of
+this change. "After" is the change with the adapter listing started at the very top of `run()`, before the audio
+stream; the shipped placement starts it right after the stream runs (a few lines later) and has NOT been measured, see
+the note below.
+
+| Stage | Normal before | Normal after | LP4 before | LP4 after | WARP before | WARP after |
+|---|---|---|---|---|---|---|
+| Audio stream running | 46 / 51 | 254 / 265 | 49 / 50 | 260 / 266 | 48 / 50 | 65 / 68 |
+| Event loop created | n/a | 388 / 398 | n/a | 396 / 412 | n/a | 207 / 217 |
+| State built, fonts read | n/a | 392 / 402 | n/a | 400 / 418 | n/a | 211 / 221 |
+| First window created | 452 / 496 | 402 / 414 | 476 / 591 | 416 / 433 | 250 / 307 | 226 / 232 |
+| Adapters listed | n/a | 459 / 529 | n/a | 471 / 503 | n/a | 282 / 292 |
+| Device created | n/a | 536 / 610 | n/a | 548 / 583 | n/a | 352 / 441 |
+| Adapter chosen | 975 / 1275 | 781 / 862 | 1026 / 1161 | 799 / 842 | 584 / 642 | 360 / 450 |
+| Device and renderer ready | 987 / 1911 | 794 / 873 | 1048 / 1180 | 814 / 858 | 3118 / 3179 | 2842 / 2968 |
+| First frame presented | 1019 / 1941 | 825 / 909 | 1076 / 1217 | 848 / 894 | 3166 / 3225 | 2917 / 3040 |
+
+What the table says. The window used to be visible and blank from its creation to the first present: about 570 ms
+(normal), 600 ms (LP4) and 2.9 s (WARP). Listing the adapters is the slow step on a real GPU (about 500 ms in the
+base, from window to adapter chosen); building the renderer is 12 to 20 ms there. On the software adapter the
+renderer build (shader compilation) is about 2.5 s of the 3.1 s: that is the shader compiler's cost and a worker
+cannot hide it, since the first frame needs it. Fonts take 2 to 4 ms, the event loop 130 to 180 ms.
+
+A first, cold run of the base measured 1456 ms to the first frame (normal); the table uses the warm second set.
+
+Note on the audio row: with the listing worker started before the audio stream, the stream came up at 254 ms instead
+of 46 ms (the driver's first look at the machine slows the opening of the audio device). The shipped change therefore
+starts the worker after the audio stream runs. That placement was not measured (the app was not started again); the
+owner's check: start time with the change, and the audio row.
