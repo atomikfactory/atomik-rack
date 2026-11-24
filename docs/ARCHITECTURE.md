@@ -613,6 +613,12 @@ new ones, so editing during playback does not retrigger a note that is already s
                 a refill request made by the audio thread alone after a long quiet waits up to 10 ms)
 ```
 
+Which assets stream is decided in the app, once, by one rule (`StreamRule` in `stream_source.rs`): an asset above
+the 64 MiB threshold streams, and when the audio a session keeps in RAM would pass its budget (a quarter of the
+machine's memory, at least 256 MiB; none when the memory is unknown) the largest assets above 4 MiB that no sampler
+zone uses stream too. A project opening decides for the whole list before it loads any asset; later imports,
+recordings and pastes decide one asset at a time; an asset already handed to the engine is never converted.
+
 ### 2.6 Recording
 
 ```

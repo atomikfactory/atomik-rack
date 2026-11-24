@@ -963,3 +963,21 @@ allocator and touched as an impulse is built, so it is private bytes first and w
 Latency lines of a channel strip: 4 MiB each (two lines of 2 MiB, 480 000 samples of reserve), 256 MiB for 64 strips,
 none of it touched until `latency.adjust` is raised. Private bytes of a process holding 64 strips: 271 MiB; working
 set 22.6 MiB.
+
+## A budget for the audio a session keeps in memory (2026-11-24)
+
+Forty mono stems of five minutes at 48 kHz (54.9 MiB decoded each, 2.15 GiB together; a stereo stem is 110 MiB and
+streams on its own already), decided by `stream_source::plan` (a pure function: no audio was built for these figures,
+and the allocation peak was not measured at this size).
+
+```text
+memory   budget   resident stems   resident audio   streamed (rings of ~770 KiB)
+none     none     40               2.15 GiB         0
+4 GiB    1 GiB    18               0.97 GiB         22 (16.5 MiB)
+8 GiB    2 GiB    37               1.98 GiB         3 (2.3 MiB)
+16 GiB   4 GiB    40               2.15 GiB         0
+```
+
+At 4 GiB the resident audio is under 1 GiB (the rings add 16.5 MiB); the working set of the
+process adds its own baseline to it. A project opens by reading the header of every file first (40 small reads) and
+then decoding only the files that stay: the tests check that a streamed file is never decoded.

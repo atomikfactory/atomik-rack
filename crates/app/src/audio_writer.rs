@@ -36,7 +36,7 @@
 
 use crate::audio_import::{Msg, RecDoneGuard};
 use crate::audio_record::{PlannedTrack, TakeRange, split_laps};
-use crate::stream_source::{open_stream_asset, should_stream};
+use crate::stream_source::{StreamRule, open_stream_asset};
 use atomik_audio_file::{AssetInfo, AudioData, Bundle, PeakPyramid, WavStreamReader};
 use atomik_engine::{RecordTap, SongAsset, SongPosition};
 use atomik_model::DeviceKey;
@@ -76,8 +76,9 @@ pub struct WriterConfig {
     pub bundle: Bundle,
     /// Session rate in Hz.
     pub sample_rate: u32,
-    /// Assets above this decoded size stream from disk instead of staying in RAM.
-    pub stream_threshold: u64,
+    /// How a recorded take reaches the engine: from RAM, or streamed from disk (the threshold and
+    /// the session budget, with what the session holds already).
+    pub stream: StreamRule,
     /// The document generation (messages of an older one are ignored).
     pub generation: u64,
     /// Take id (for the message).
@@ -489,6 +490,7 @@ fn store_laps(
     faults: Faults,
 ) -> Result<Vec<RecordedLap>, StoreError> {
     let mut bundle = config.bundle.clone();
+    let mut rule = config.stream;
     let mut laps = Vec::new();
     for track in &config.tracks {
         let range = TakeRange {
@@ -522,7 +524,7 @@ fn store_laps(
             let name = format!("{} take {}", track.name, seg.lap + 1);
             let info = bundle.add_recording(&data, &name).map_err(io)?;
             let peaks = Arc::new(bundle.load_peaks(&info.hash).map_err(io)?);
-            let asset = if should_stream(info.frames, info.channels, config.stream_threshold) {
+            let asset = if rule.admit(info.frames, info.channels, true) {
                 drop(data);
                 open_stream_asset(&bundle, &info.hash).map_err(io)?
             } else {

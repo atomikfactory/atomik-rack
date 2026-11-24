@@ -1031,7 +1031,7 @@ impl<S: EngineSink> AppCore<S> {
                 doc,
                 request: job.request.clone(),
                 bundle,
-                threshold: self.stream_threshold(),
+                rule: self.stream_rule(),
                 name: format!("{} ({label}).wav", job.name),
                 plugins: PluginEnv {
                     cache: self.plugins.cache.clone(),

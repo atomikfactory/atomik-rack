@@ -77,7 +77,8 @@
 //! so and offers Audio > Restart Audio); `device_loss.last_good` is the device configuration that
 //! last opened a stream, written when settings are applied: a configuration that fails to open
 //! is replaced by it, and is never saved. `stream_threshold_bytes` (hidden; for tests and the stress run) overrides the size above
-//! which audio assets stream from disk instead of loading into RAM. The file is written only when the user
+//! which audio assets stream from disk instead of loading into RAM; `stream_budget_bytes` (hidden too) overrides the
+//! decoded audio a session keeps in RAM before the largest assets stream. The file is written only when the user
 //! applies the settings dialog; command-line overrides are never saved. `keymap.json` and
 //! `workflow.json` (the Keyboard and Workflow tabs, see [`crate::keymap_store`]) live next to it.
 
@@ -651,6 +652,10 @@ pub struct AudioSettings {
     /// Hidden override of the streaming threshold in bytes of decoded f32 audio
     /// (`None` = [`crate::stream_source::STREAM_THRESHOLD_BYTES`]).
     pub stream_threshold_bytes: Option<u64>,
+    /// Hidden override of the audio budget in bytes: the decoded audio a session keeps in RAM
+    /// before the largest assets stream (`None` = a quarter of the machine's memory, see
+    /// [`crate::memory_limits::audio_budget_for`]).
+    pub stream_budget_bytes: Option<u64>,
     /// Third-party plugins: off by default, the search folders, the scan
     /// timeout and the plugins the user disabled.
     pub plugins: atomik_plugin_host::PluginSettings,
@@ -684,6 +689,7 @@ impl Default for AudioSettings {
             record_offset_frames: 0,
             pre_count_bars: 0,
             stream_threshold_bytes: None,
+            stream_budget_bytes: None,
             plugins: atomik_plugin_host::PluginSettings::default(),
             surfaces: Vec::new(),
             midi_out_port: None,
@@ -1251,6 +1257,7 @@ mod tests {
             record_offset_frames: -96,
             pre_count_bars: 2,
             stream_threshold_bytes: Some(1 << 20),
+            stream_budget_bytes: Some(1 << 30),
             plugins: atomik_plugin_host::PluginSettings {
                 enabled: true,
                 extra_paths: vec![PathBuf::from("D:/Plugins/CLAP")],

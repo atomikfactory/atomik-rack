@@ -284,6 +284,7 @@ fn zone_assets_count_as_referenced_and_survive_prune() {
         .unwrap();
     let want: BTreeSet<String> = [hash(1), hash(2)].into();
     assert_eq!(d.doc().referenced_assets(), want);
+    assert_eq!(d.doc().zone_assets(), want, "the zones alone, no clips");
     assert_eq!(d.referenced_assets(), want);
     d.prune_unreferenced_assets();
     assert_eq!(assets(&d), want, "asset 3 (unused) goes, zone assets stay");

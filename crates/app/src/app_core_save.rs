@@ -984,13 +984,13 @@ impl<S: EngineSink> AppCore<S> {
         if !back.is_empty()
             && let Some(bundle) = self.audio.bundle.as_ref().map(|b| b.bundle.clone())
         {
-            let threshold = self.stream_threshold();
+            let rule = self.stream_rule();
             let started = crate::audio_import::spawn_load(
                 self.audio.tx.clone(),
                 self.audio.generation,
                 bundle,
-                threshold,
-                back,
+                rule,
+                (self.doc().zone_assets(), back),
             );
             match started {
                 Ok(()) => self.audio.pending += 1,

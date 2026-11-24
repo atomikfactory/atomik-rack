@@ -12,7 +12,8 @@
 //! UI thread then registers the assets and replaces the sampler's zones in one undo step, see
 //! `app_core_instrument.rs`.
 
-use crate::audio_import::{Loaded, load_asset};
+use crate::audio_import::{Loaded, load_asset_for};
+use crate::stream_source::StreamRule;
 use atomik_audio_file::{
     Bundle, Instrument, InstrumentLimits, InstrumentRegion, SampleSource, read_instrument,
 };
@@ -56,7 +57,7 @@ pub(crate) fn load_instrument(
     bundle: &mut Bundle,
     path: &Path,
     rate: u32,
-    threshold: u64,
+    rule: &mut StreamRule,
 ) -> Result<ImportedInstrument, String> {
     let instrument =
         read_instrument(path, InstrumentLimits::default()).map_err(|e| e.to_string())?;
@@ -84,7 +85,7 @@ pub(crate) fn load_instrument(
             original_frames,
         }));
         if !loaded.iter().any(|l| l.hash == info.hash) {
-            let mut one = load_asset(bundle, &info.hash, threshold)?;
+            let mut one = load_asset_for(bundle, &info.hash, rule, false)?;
             one.info = Some(info);
             loaded.push(one);
         }

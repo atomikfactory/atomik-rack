@@ -281,7 +281,7 @@ impl<S: EngineSink> AppCore<S> {
             tracks,
             bundle,
             sample_rate: rate,
-            stream_threshold: self.stream_threshold(),
+            stream: self.stream_rule(),
             generation: self.audio.generation,
             take,
         };

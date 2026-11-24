@@ -50,6 +50,17 @@ pub fn import_limits_for(total: Option<u64>) -> ImportLimits {
     }
 }
 
+/// The least the audio budget is, however small the machine.
+const MIN_AUDIO_BUDGET: u64 = 256 << 20;
+
+/// The decoded audio a session may keep in RAM on a machine with `total` bytes of physical
+/// memory: a quarter of the [`nominal`] size, at least 256 MiB; `None` (no budget, only the
+/// per-asset threshold) when the memory is not known. A machine with 16 GiB or more gets 4 GiB
+/// and up, so a project of ordinary size is never touched there.
+pub fn audio_budget_for(total: Option<u64>) -> Option<u64> {
+    total.map(|t| (nominal(t) / 4).max(MIN_AUDIO_BUDGET))
+}
+
 /// A size for a message: binary units, one decimal ("3.2 GB", "640 MB").
 pub fn size_text(bytes: u64) -> String {
     if bytes >= GIB {
@@ -69,6 +80,19 @@ mod tests {
         assert_eq!(size_text(GIB), "1.0 GB");
         assert_eq!(size_text(640 << 20), "640 MB");
         assert_eq!(size_text(1), "1 MB");
+    }
+
+    #[test]
+    fn the_audio_budget_is_a_quarter_of_the_memory_with_a_floor() {
+        assert_eq!(audio_budget_for(None), None);
+        assert_eq!(audio_budget_for(Some(GIB)), Some(256 << 20));
+        assert_eq!(audio_budget_for(Some(4 * GIB)), Some(GIB));
+        assert_eq!(audio_budget_for(Some(8 * GIB)), Some(2 * GIB));
+        assert_eq!(audio_budget_for(Some(16 * GIB)), Some(4 * GIB));
+        assert_eq!(audio_budget_for(Some(32 * GIB)), Some(8 * GIB));
+        assert_eq!(audio_budget_for(Some(64 * GIB)), Some(16 * GIB));
+        // A machine sold with 16 GB reports a little less and still counts as one.
+        assert_eq!(audio_budget_for(Some(16 * GIB - 1)), Some(4 * GIB));
     }
 
     #[test]

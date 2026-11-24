@@ -9,11 +9,12 @@
 //! panics, so a counter of running workers can never get stuck.
 
 use crate::audio_writer::TakeResult;
-use crate::stream_source::{open_stream_asset, should_stream};
+use crate::stream_source::{Candidate, StreamRule, decoded_bytes, open_stream_asset, plan};
 use atomik_audio_file::{AssetInfo, Bundle, FileMeta, ImportLimits, PeakPyramid};
 use atomik_device_sdk::SampleBuffer;
 use atomik_engine::SongAsset;
 use atomik_model::Song;
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::mpsc::Sender;
@@ -592,16 +593,52 @@ pub(crate) fn display_name(path: &Path) -> String {
     )
 }
 
+/// The hashes of the assets decoded whole into memory by [`load_streamed_or_whole`], for tests
+/// that check a streamed asset was never decoded.
+#[cfg(test)]
+pub(crate) static DECODED_WHOLE: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+
 /// Prepares an asset of `bundle` for the engine, with its peaks: fully loaded into memory, or
-/// (decoded size above `threshold` bytes) opened for streaming from its file.
-pub(crate) fn load_asset(bundle: &Bundle, hash: &str, threshold: u64) -> Result<Loaded, String> {
+/// streamed from its file when `rule` says so (an asset above the threshold, or one the session
+/// budget moves to the disk). A loaded asset counts in `rule`'s resident bytes.
+pub(crate) fn load_asset(
+    bundle: &Bundle,
+    hash: &str,
+    rule: &mut StreamRule,
+) -> Result<Loaded, String> {
+    load_asset_for(bundle, hash, rule, true)
+}
+
+/// [`load_asset`] for an asset that `may_stream` or not (a sampler's audio stays in RAM
+/// whatever the budget).
+pub(crate) fn load_asset_for(
+    bundle: &Bundle,
+    hash: &str,
+    rule: &mut StreamRule,
+    may_stream: bool,
+) -> Result<Loaded, String> {
+    let (frames, channels) = asset_shape(bundle, hash)?;
+    let streamed = channels.is_some_and(|ch| rule.admit(frames, ch, may_stream));
+    load_streamed_or_whole(bundle, hash, streamed)
+}
+
+/// The frames and the channel count (`None` when it does not fit 16 bits) of an asset of
+/// `bundle`, from its file header.
+fn asset_shape(bundle: &Bundle, hash: &str) -> Result<(u64, Option<u16>), String> {
     let reader = bundle.stream_reader(hash).map_err(|e| e.to_string())?;
-    let streamed = u16::try_from(reader.channel_count())
-        .is_ok_and(|ch| should_stream(reader.frames(), ch, threshold));
-    drop(reader);
+    Ok((reader.frames(), u16::try_from(reader.channel_count()).ok()))
+}
+
+/// The asset `hash` as the engine plays it: streamed from its file, or decoded whole.
+fn load_streamed_or_whole(bundle: &Bundle, hash: &str, streamed: bool) -> Result<Loaded, String> {
     let asset = if streamed {
         open_stream_asset(bundle, hash).map_err(|e| e.to_string())?
     } else {
+        #[cfg(test)]
+        DECODED_WHOLE
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push(hash.to_owned());
         let data = bundle.load(hash).map_err(|e| e.to_string())?;
         SongAsset::memory(Arc::from(data.channels))
     };
@@ -620,12 +657,12 @@ pub(crate) fn import_file(
     bundle: &mut Bundle,
     path: &Path,
     (rate, limits): (u32, ImportLimits),
-    threshold: u64,
+    rule: &mut StreamRule,
 ) -> Result<Loaded, String> {
     let (info, _) = bundle
         .import_limited(path, rate, limits)
         .map_err(|e| e.to_string())?;
-    let mut loaded = load_asset(bundle, &info.hash, threshold)?;
+    let mut loaded = load_asset(bundle, &info.hash, rule)?;
     loaded.meta = atomik_audio_file::read_file_meta(path);
     loaded.info = Some(info);
     Ok(loaded)
@@ -638,7 +675,7 @@ pub(crate) fn spawn_import(
     batch: u64,
     mut bundle: Bundle,
     (rate, limits): (u32, ImportLimits),
-    threshold: u64,
+    mut rule: StreamRule,
     paths: Vec<PathBuf>,
 ) -> std::io::Result<()> {
     std::thread::Builder::new()
@@ -646,7 +683,7 @@ pub(crate) fn spawn_import(
         .spawn(move || {
             let _done = DoneGuard(tx.clone(), Some(Msg::BatchDone { generation }));
             for path in paths {
-                let result = import_file(&mut bundle, &path, (rate, limits), threshold);
+                let result = import_file(&mut bundle, &path, (rate, limits), &mut rule);
                 let _ = tx.send(Msg::Imported {
                     generation,
                     batch,
@@ -665,7 +702,7 @@ pub(crate) fn spawn_instrument(
     generation: u64,
     mut bundle: Bundle,
     rate: u32,
-    threshold: u64,
+    mut rule: StreamRule,
     device: atomik_model::DeviceKey,
     path: PathBuf,
 ) -> std::io::Result<()> {
@@ -674,7 +711,7 @@ pub(crate) fn spawn_instrument(
         .spawn(move || {
             let _done = DoneGuard(tx.clone(), Some(Msg::LoadDone));
             let result =
-                crate::instrument_import::load_instrument(&mut bundle, &path, rate, threshold);
+                crate::instrument_import::load_instrument(&mut bundle, &path, rate, &mut rule);
             let _ = tx.send(Msg::Instrument {
                 generation,
                 device,
@@ -707,20 +744,23 @@ pub(crate) fn spawn_scan(
         .map(|_| ())
 }
 
-/// Starts a worker that loads the assets `hashes` of `bundle`.
+/// Starts a worker that loads the assets `hashes` of `bundle`. The worker decides for the whole
+/// list before it loads any ([`decide_list`]), so an asset that will stream is never decoded;
+/// `ram_only` names the assets a sampler uses, which stay in RAM.
 pub(crate) fn spawn_load(
     tx: Sender<Msg>,
     generation: u64,
     bundle: Bundle,
-    threshold: u64,
-    hashes: Vec<String>,
+    rule: StreamRule,
+    (ram_only, hashes): (BTreeSet<String>, Vec<String>),
 ) -> std::io::Result<()> {
     std::thread::Builder::new()
         .name("atomik-load".into())
         .spawn(move || {
             let _done = DoneGuard(tx.clone(), Some(Msg::LoadDone));
+            let streams = decide_list(&bundle, &hashes, rule, &ram_only);
             for hash in hashes {
-                let result = load_asset(&bundle, &hash, threshold);
+                let result = load_streamed_or_whole(&bundle, &hash, streams.contains(&hash));
                 let _ = tx.send(Msg::Loaded {
                     generation,
                     hash,
@@ -731,6 +771,55 @@ pub(crate) fn spawn_load(
         .map(|_| ())
 }
 
+/// The assets of `hashes` that stream under `rule` ([`crate::stream_source::plan`], from the
+/// size in each file's header). When the budget moved some to the disk, one line in the log
+/// says how many and what stays resident.
+fn decide_list(
+    bundle: &Bundle,
+    hashes: &[String],
+    rule: StreamRule,
+    ram_only: &BTreeSet<String>,
+) -> BTreeSet<String> {
+    let items: Vec<Candidate<String>> = hashes
+        .iter()
+        .filter_map(|hash| {
+            let (frames, channels) = asset_shape(bundle, hash).ok()?;
+            Some(Candidate {
+                key: hash.clone(),
+                bytes: decoded_bytes(frames, channels?),
+                may_stream: !ram_only.contains(hash),
+            })
+        })
+        .collect();
+    let streams = plan(&items, rule);
+    if let Some(budget) = rule.budget {
+        let by_threshold = plan(
+            &items,
+            StreamRule {
+                budget: None,
+                ..rule
+            },
+        );
+        let moved = streams.len() - by_threshold.len();
+        if moved > 0 {
+            let resident: u64 = items
+                .iter()
+                .filter(|i| !streams.contains(&i.key))
+                .map(|i| i.bytes)
+                .sum::<u64>()
+                .saturating_add(rule.resident);
+            log::info!(
+                "audio memory: {moved} of {} files stream from disk to keep {} of audio in memory \
+                 (budget {})",
+                items.len(),
+                crate::memory_limits::size_text(resident),
+                crate::memory_limits::size_text(budget),
+            );
+        }
+    }
+    streams
+}
+
 /// Starts a worker that copies the assets `hashes` the bundle lacks from the bundle folders
 /// `sources` (another open song's) and loads them. A file no source has comes back as a load
 /// error, which lists it as missing.
@@ -739,7 +828,7 @@ pub(crate) fn spawn_fetch(
     generation: u64,
     bundle: Bundle,
     sources: Vec<PathBuf>,
-    threshold: u64,
+    mut rule: StreamRule,
     hashes: Vec<String>,
 ) -> std::io::Result<()> {
     std::thread::Builder::new()
@@ -752,7 +841,7 @@ pub(crate) fn spawn_fetch(
                     Ok(report) if report.missing.contains(&hash) => {
                         Err("the song it was copied from no longer has the file".to_owned())
                     }
-                    Ok(_) => load_asset(&bundle, &hash, threshold),
+                    Ok(_) => load_asset(&bundle, &hash, &mut rule),
                     Err(e) => Err(e.to_string()),
                 };
                 let _ = tx.send(Msg::Loaded {
@@ -772,7 +861,7 @@ pub(crate) fn spawn_convert(
     generation: u64,
     mut bundle: Bundle,
     rate: u32,
-    threshold: u64,
+    mut rule: StreamRule,
     assets: Vec<(String, String)>,
 ) -> std::io::Result<()> {
     std::thread::Builder::new()
@@ -785,7 +874,7 @@ pub(crate) fn spawn_convert(
                     let info = bundle
                         .convert_rate(&hash, rate, &name)
                         .map_err(|e| format!("{name}: {e}"))?;
-                    let mut loaded = load_asset(&bundle, &info.hash, threshold)?;
+                    let mut loaded = load_asset(&bundle, &info.hash, &mut rule)?;
                     loaded.info = Some(info);
                     Ok((hash, loaded))
                 })
@@ -811,7 +900,7 @@ pub(crate) fn spawn_convert_paste(
     mut bundle: Bundle,
     sources: Vec<PathBuf>,
     rate: u32,
-    threshold: u64,
+    mut rule: StreamRule,
     assets: Vec<(String, String)>,
 ) -> std::io::Result<()> {
     std::thread::Builder::new()
@@ -824,7 +913,7 @@ pub(crate) fn spawn_convert_paste(
                     let info = bundle
                         .convert_rate_from(&sources, &hash, rate, &name)
                         .map_err(|e| format!("{name}: {e}"))?;
-                    let mut loaded = load_asset(&bundle, &info.hash, threshold)?;
+                    let mut loaded = load_asset(&bundle, &info.hash, &mut rule)?;
                     loaded.info = Some(info);
                     Ok((hash, loaded))
                 })
@@ -840,7 +929,12 @@ pub(crate) fn spawn_convert_paste(
 
 /// Brings the asset `hash` of a library item's bundle `from` into `to` (a file copy, unless
 /// `to` has it already) and loads it.
-fn adopt_asset(from: &Path, to: &Bundle, hash: &str, threshold: u64) -> Result<Loaded, String> {
+fn adopt_asset(
+    from: &Path,
+    to: &Bundle,
+    hash: &str,
+    rule: &mut StreamRule,
+) -> Result<Loaded, String> {
     if !to.exists(hash) {
         let source = Bundle::open(from)
             .map_err(|_| "the item has no audio folder".to_string())?
@@ -852,7 +946,7 @@ fn adopt_asset(from: &Path, to: &Bundle, hash: &str, threshold: u64) -> Result<L
         crate::browser_workers::copy_atomic(&source, &to.asset_path(hash))
             .map_err(|e| e.to_string())?;
     }
-    load_asset(to, hash, threshold)
+    load_asset(to, hash, rule)
 }
 
 /// Starts a worker that adopts the assets `hashes` of the item bundle `from` into `to`: it
@@ -863,7 +957,7 @@ pub(crate) fn spawn_adopt(
     generation: u64,
     from: PathBuf,
     to: Bundle,
-    threshold: u64,
+    mut rule: StreamRule,
     hashes: Vec<String>,
 ) -> std::io::Result<()> {
     std::thread::Builder::new()
@@ -871,7 +965,7 @@ pub(crate) fn spawn_adopt(
         .spawn(move || {
             let _done = DoneGuard(tx.clone(), Some(Msg::LoadDone));
             for hash in hashes {
-                let result = adopt_asset(&from, &to, &hash, threshold);
+                let result = adopt_asset(&from, &to, &hash, &mut rule);
                 let _ = tx.send(Msg::Loaded {
                     generation,
                     hash,

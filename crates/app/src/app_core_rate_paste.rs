@@ -168,7 +168,7 @@ impl<S: EngineSink> AppCore<S> {
         let rate_paste = &mut self.audio.rate_paste;
         let job = rate_paste.next;
         rate_paste.next += 1;
-        let threshold = self.stream_threshold();
+        let rule = self.stream_rule();
         let started = spawn_convert_paste(
             self.audio.tx.clone(),
             self.audio.generation,
@@ -176,7 +176,7 @@ impl<S: EngineSink> AppCore<S> {
             bundle,
             self.audio.lenders.clone(),
             rate,
-            threshold,
+            rule,
             todo,
         );
         match started {

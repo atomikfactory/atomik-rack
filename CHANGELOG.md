@@ -384,6 +384,13 @@ may break APIs and the patch and project formats.
   that is free, says so with both figures, under the options of the export panel or as a message for a freeze;
   asking again goes on. Nothing changes when the free memory is not known or is enough; the command-line tools and
   the QA server never ask.
+- **A project with a lot of audio no longer keeps all of it in memory.** The program keeps up to a quarter of the
+  machine's memory (at least 256 MiB) as decoded audio; when a project holds more, the largest files play from disk
+  instead of being loaded. A project opens that way once, deciding for all its files before it loads any, and says in
+  the log how many files stream. Short files (4 MiB decoded or less) and the audio of a sampler always stay in memory;
+  a bounce, export, stem export and freeze never stream, so what they write does not change. A machine with 16 GB or
+  more only notices a project holding over 4 GB of audio; one that does not tell its memory is not affected. On a slow
+  disk a locate or a loop jump in a streamed file can drop out (the underrun counter shows it).
 
 ### Fixed
 - **Dropping an instrument above its mix channel.** An instrument dragged to the place above its own mix channel

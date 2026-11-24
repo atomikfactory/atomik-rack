@@ -250,7 +250,7 @@ impl<S: EngineSink> AppCore<S> {
             asset,
             name,
             wanted,
-            threshold: self.stream_threshold(),
+            rule: self.stream_rule(),
             backend: Arc::clone(&self.stems.backend),
         };
         let started = stems_worker::spawn(
