@@ -371,7 +371,8 @@ may break APIs and the patch and project formats.
   changes by itself.
 - **The undo history keeps a smaller budget on a machine with little memory.** A machine with less than 8 GB of
   physical memory keeps 128 MiB of undo history instead of 512 MiB, for every song it opens or starts; a machine
-  with 8 GB or more, or one that does not tell its memory, behaves as before.
+  with 8 GB or more, or one that does not tell its memory, behaves as before. The size is the reported memory
+  rounded up to a whole GiB, here and for the import limit, since a machine reports a little less than it has.
 - **An import larger than the machine can hold is refused before it starts.** A file whose decoded size
   (frames x channels x 4 bytes, twice when it has to be converted to the song's rate on a machine under 16 GB) is
   over a quarter of the physical memory, and never more than the 4 GiB of before, is refused from its header with

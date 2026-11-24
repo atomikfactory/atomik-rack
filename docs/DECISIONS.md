@@ -2224,7 +2224,8 @@ limit is a pure function of those figures, so a test injects a machine (`AppCore
 (`undo_bytes_for`: 128 MiB under 8 GiB), the import limit (`import_limits_for`: a quarter of the memory, never above
 the old cap) and the estimate of a render (`atomik_render::estimate`). The model, audio-file and render crates stay
 free of system calls: they take the limit or the figure as a parameter. Every limit leaves a machine with 16 GiB or
-more, and a machine that does not tell its memory, exactly as before. Below 16 GiB a file that has to be converted
+more, and a machine that does not tell its memory, exactly as before. The size compared is the reported memory
+rounded up to a whole GiB, because a machine reports a little less than it is sold with. Below 16 GiB a file that has to be converted
 to the song's rate counts twice, because the conversion holds a second copy; at 16 GiB and above the old cap is
 kept as it was, so the doubling does not shrink what a large machine accepts.
 

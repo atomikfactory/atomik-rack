@@ -17,11 +17,19 @@ const SMALL_UNDO_BYTES: usize = 128 << 20;
 /// Memory from which an import has the whole of its default cap (4 GiB is a quarter of it).
 const FULL_CAP_MACHINE: u64 = 16 * GIB;
 
+/// The size a machine is sold as: the memory the system reports, rounded up to a whole GiB. A
+/// machine reports a little less than it has (firmware and built-in graphics keep some), so a
+/// "16 GB" machine tells 15.9 GiB or so and must still count as one.
+fn nominal(total: u64) -> u64 {
+    total.div_ceil(GIB).saturating_mul(GIB)
+}
+
 /// The undo history's memory limit for a machine with `total` bytes of physical memory: 128 MiB
-/// under 8 GiB, [`MAX_UNDO_BYTES`] from there on and when the memory is not known.
+/// under 8 GiB ([`nominal`] size), [`MAX_UNDO_BYTES`] from there on and when the memory is not
+/// known.
 pub fn undo_bytes_for(total: Option<u64>) -> usize {
     match total {
-        Some(t) if t < SMALL_MACHINE => SMALL_UNDO_BYTES,
+        Some(t) if nominal(t) < SMALL_MACHINE => SMALL_UNDO_BYTES,
         _ => MAX_UNDO_BYTES,
     }
 }
@@ -30,9 +38,9 @@ pub fn undo_bytes_for(total: Option<u64>) -> usize {
 /// size (frames x channels x 4 bytes) may not exceed a quarter of the memory, and never the
 /// default cap of 4 GiB, so a machine with 16 GiB or more has exactly the default. Below 16 GiB a
 /// file that has to be converted to the session's rate counts twice (the conversion holds a
-/// second copy). An unknown size leaves the default.
+/// second copy). An unknown size leaves the default. The size is the [`nominal`] one.
 pub fn import_limits_for(total: Option<u64>) -> ImportLimits {
-    let Some(total) = total.filter(|t| *t < FULL_CAP_MACHINE) else {
+    let Some(total) = total.map(nominal).filter(|t| *t < FULL_CAP_MACHINE) else {
         return ImportLimits::default();
     };
     let quarter_samples = (total / 4 / 4).min(DEFAULT_MAX_SAMPLES);
@@ -67,7 +75,10 @@ mod tests {
     fn undo_budget_follows_the_memory() {
         assert_eq!(undo_bytes_for(None), MAX_UNDO_BYTES);
         assert_eq!(undo_bytes_for(Some(4 * GIB)), 128 << 20);
-        assert_eq!(undo_bytes_for(Some(8 * GIB - 1)), 128 << 20);
+        assert_eq!(undo_bytes_for(Some(7 * GIB)), 128 << 20);
+        // A machine sold with 8 GB reports a little less and still counts as one.
+        assert_eq!(undo_bytes_for(Some(8 * GIB - 1)), MAX_UNDO_BYTES);
+        assert_eq!(undo_bytes_for(Some(7 * GIB + GIB / 2)), MAX_UNDO_BYTES);
         assert_eq!(undo_bytes_for(Some(8 * GIB)), MAX_UNDO_BYTES);
         assert_eq!(undo_bytes_for(Some(64 * GIB)), MAX_UNDO_BYTES);
     }
@@ -86,8 +97,15 @@ mod tests {
         let four = import_limits_for(Some(4 * GIB));
         assert_eq!(four.max_samples, GIB / 4);
         assert_eq!(four.max_samples_resampled, GIB / 8);
-        // Just under 16 GiB is below the default cap, not above it.
-        assert!(import_limits_for(Some(16 * GIB - 1)).max_samples <= default.max_samples);
+        // A machine sold with 16 GB reports a little less and still has the default.
+        assert_eq!(import_limits_for(Some(16 * GIB - 1)), default);
+        assert_eq!(import_limits_for(Some(15 * GIB + GIB / 2)), default);
+        // 15 GiB or less reported is a smaller machine.
+        let fifteen = import_limits_for(Some(15 * GIB));
+        assert_eq!(fifteen.max_samples, 15 * GIB / 16);
+        assert_eq!(fifteen.max_samples_resampled, 15 * GIB / 32);
+        // A reported 7.5 GiB counts as 8.
+        assert_eq!(import_limits_for(Some(7 * GIB + GIB / 2)), eight);
     }
 }
 
