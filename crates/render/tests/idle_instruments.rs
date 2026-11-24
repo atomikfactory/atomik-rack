@@ -6,7 +6,9 @@
 atomik_testkit::install_alloc_guard!();
 
 use atomik_core::{ExprKind, NoteKind, SampleRate, Tempo};
-use atomik_device_sdk::DeviceDescriptor;
+use atomik_device_sdk::{
+    DeviceDescriptor, LoopMode, SampleBuffer, SampleMap, SampleMapRef, TriggerMode, Zone, ZoneExt,
+};
 use atomik_engine::{
     DeviceInstanceId, EngineConfig, Graph, HotEdit, OfflineJob, ScheduledNote, TimedEdit,
     new_engine, render_offline_scripted,
@@ -31,30 +33,92 @@ struct Case {
     keys: &'static [u8],
     /// The parameter changed in the silence, and its new value.
     change: (&'static str, f32),
+    /// Whether the instrument plays a sample map (given at the start of the render).
+    samples: bool,
     /// Batches the instrument must have been skipped for in each scenario (see `scenarios`).
     min_skipped: [u64; 2],
 }
 
-const CASES: &[Case] = &[Case {
-    name: "organ",
-    type_id: "atomik.organ",
-    outs: ["out_l", "out_r"],
-    params: &[
-        ("scanner.type", 6.0),
-        ("scanner.rate", 7.3),
-        ("out.drive", 0.4),
-        ("key.click", 0.5),
-        ("perc.mode", 1.0),
-        ("perc.decay", 1.0),
-        ("wheel.target", 1.0),
-        ("drawbar.4", 5.0),
-    ],
-    keys: &[48, 55, 64],
-    change: ("scanner.rate", 8.1),
-    // The release and the click are spent a few hundredths of a second after the chord; it is
-    // skipped until the chord returns at 14 s (13,400 of the 15,000 batches).
-    min_skipped: [10_000, 10_000],
-}];
+const CASES: &[Case] = &[
+    Case {
+        name: "organ",
+        type_id: "atomik.organ",
+        outs: ["out_l", "out_r"],
+        params: &[
+            ("scanner.type", 6.0),
+            ("scanner.rate", 7.3),
+            ("out.drive", 0.4),
+            ("key.click", 0.5),
+            ("perc.mode", 1.0),
+            ("perc.decay", 1.0),
+            ("wheel.target", 1.0),
+            ("drawbar.4", 5.0),
+        ],
+        keys: &[48, 55, 64],
+        change: ("scanner.rate", 8.1),
+        samples: false,
+        // The release and the click are spent a few hundredths of a second after the chord; it
+        // is skipped until the chord returns at 14 s (13,400 of the 15,000 batches).
+        min_skipped: [10_000, 10_000],
+    },
+    Case {
+        name: "sampler",
+        type_id: "atomik.sampler",
+        outs: ["out_l", "out_r"],
+        params: &[
+            ("lfo.wave", 4.0),
+            ("lfo.rate", 7.3),
+            ("lfo.to_pitch", 4.0),
+            ("lfo.to_amp", 0.8),
+            ("filter.enabled", 1.0),
+            ("filter.cutoff", 3_000.0),
+            ("lfo.to_cutoff", 0.5),
+        ],
+        keys: &[48, 55, 64],
+        change: ("master.level", -3.0),
+        samples: true,
+        // The voices release over 150 ms after each chord; skipped otherwise (13,270 of 15,000).
+        min_skipped: [10_000, 10_000],
+    },
+];
+
+/// One mono zone over every key: 8,192 frames of a wave built from two parabolas (no libm call),
+/// looped over its middle while the key is held.
+fn sample_map() -> SampleMapRef {
+    let wave: Vec<f32> = (0..8_192)
+        .map(|i| {
+            let x = (i % 100) as f32 / 100.0;
+            if x < 0.5 {
+                16.0 * x * (0.5 - x)
+            } else {
+                -16.0 * (x - 0.5) * (1.0 - x)
+            }
+        })
+        .collect();
+    let zone = Zone {
+        buffer: 0,
+        key_lo: 0,
+        key_hi: 127,
+        vel_lo: 1,
+        vel_hi: 127,
+        root_key: 60,
+        transpose: 0,
+        tune_cents: 0.0,
+        gain_db: 0.0,
+        pan: 0.0,
+        start: 0,
+        end: 8_192,
+        loop_mode: LoopMode::Forward,
+        loop_start: 1_000,
+        loop_end: 7_000,
+        crossfade: 200,
+        trigger: TriggerMode::Gate,
+        reverse: false,
+        ext: ZoneExt::NONE,
+    };
+    let buffer = std::sync::Arc::new(SampleBuffer::new(vec![wave].into()).unwrap());
+    std::sync::Arc::new(SampleMap::new(vec![buffer], vec![zone]).unwrap())
+}
 
 struct Rendered {
     bits: Vec<Vec<u32>>,
@@ -109,7 +173,16 @@ fn render(
         .iter()
         .map(|&(key, v)| (fx, descriptor.param_by_key(key).unwrap().id, v))
         .collect();
-    let script = edits(fx, descriptor);
+    let mut script = edits(fx, descriptor);
+    if case.samples {
+        script.push(at(
+            0,
+            HotEdit::Samples {
+                device: fx,
+                map: Some(sample_map()),
+            },
+        ));
+    }
     let mut notes = Vec::new();
     for (on, off) in [(0.2, 1.2), (14.0, 15.0)] {
         for (i, &key) in case.keys.iter().enumerate() {
@@ -245,4 +318,9 @@ fn case(name: &str) -> &'static Case {
 #[test]
 fn the_organ_renders_the_same_bytes_skipped_or_not() {
     scenarios(case("organ"));
+}
+
+#[test]
+fn the_sampler_renders_the_same_bytes_skipped_or_not() {
+    scenarios(case("sampler"));
 }

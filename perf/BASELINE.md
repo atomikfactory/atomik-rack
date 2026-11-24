@@ -868,6 +868,7 @@ three-note chord), before (the tree without the change) and after; the limit is 
 | instrument | idle row, skip off | idle row, skip on | busy row before | busy row after |
 |---|---|---|---|---|
 | organ | 5.530 ms | 1.082 ms | 2.526 ms | 2.493, 2.493 ms (-1.3 %, noise) |
+| sampler | 2.452 ms | 0.951 ms | 0.282 ms | 0.284, 0.286 ms (+0.8 %, +1.6 %) |
 
 Organ: the answer is computed once at the end of a batch and only when no key sounds (a chord ends the check at the
 first voice). What it reads then is a handful of flags and settled-smoother tests, the scan-line zero counter the
@@ -877,3 +878,10 @@ condition: it multiplies a sum of nothing, so `idle_advance` lets it fall with t
 patch is quiescent 28 batches after the last key is released (the key envelope's 4 ms release down to 1e-4) and 2
 batches from the start. The skip-on row is the scanner phase stepped sample by sample (64 additions and wraps a
 batch), which is what keeps it bit-exact.
+
+Sampler: the answer is one pass over the voices at the end of a batch (the pass the batch starts with already asks the
+same question), the two gains' settled flags and the master gain's sign. The device bench rig gives the sampler no map,
+so its chord row measures a sampler whose notes find no zone, the cheapest busy batch there is, which makes a rise of
+0.8 to 1.6 % an upper bound on what a playing sampler pays; a sampler that plays a map costs far more per batch and the
+pass is the same. The skip-on row is the LFO stepped sample by sample (64 additions and compares a batch). A default
+patch is quiescent 113 batches after the last key is released (the 150 ms release) and one batch from the start.

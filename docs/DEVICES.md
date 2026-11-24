@@ -3432,6 +3432,14 @@ Anything that cannot be played is left out and named in one message, never an er
     index that still matches it.
 - **Voice count.** `voices` is the polyphony limit, changeable at any time; voices above a lowered
   limit fade out over 2 ms. All 64 voices are allocated when the device is created and prepared.
+- **Idle.** With no voice active or waiting to start (a releasing voice, a voice fading out after a steal, a
+  lowered voice limit or a map swap, and a note waiting for such a fade all count as active) and the master gain and
+  the volume and expression gain on their targets, the sampler says it is quiescent and the engine leaves it
+  uncalled while it gets no note, controller or parameter message and no new map. It only moves the LFO on, with the
+  same phase steps and sample & hold draws as a processed silent batch (which does not evaluate the shape either), so
+  the vibrato, the filter sweep and the tremolo of the next note start where they would have. A cable on the level
+  CV does not keep it awake: a silent CV scales by exactly one. The default patch rests 113 batches (150 ms) after
+  the last key is released. The audio is bit for bit the same.
 
 ---
 

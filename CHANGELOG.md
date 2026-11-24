@@ -319,6 +319,11 @@ may break APIs and the patch and project formats.
   parameter message reaches it; only its scanner phase and its percussion decay are moved on, so the vibrato and the
   chorus are where they would have been when a key returns, and the audio is byte for byte the same. A mod wheel held
   above zero on the rotary speed keeps it running. Twenty idle organs cost 21.6 us a batch before and 4.2 us after.
+- **An idle sampler is no longer processed.** A sampler with no voice active or waiting to start and its gains
+  settled is left uncalled by the engine while no note, controller or parameter message reaches it and no map is
+  swapped in; only its LFO is moved on, so the vibrato, the filter sweep and the tremolo of the next note start where
+  they would have, and the audio is byte for byte the same. Twenty idle samplers cost 9.6 us a batch before and 3.7 us
+  after.
 
 ### Fixed
 - **Dropping an instrument above its mix channel.** An instrument dragged to the place above its own mix channel

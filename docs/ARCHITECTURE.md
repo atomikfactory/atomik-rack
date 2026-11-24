@@ -8230,8 +8230,8 @@ A bug in a device must cost that device, not the session. The rules:
   nodes that really run (see `crate::workers`), so a level of skipped devices wakes no worker. `Engine::set_idle_skip`
   is the test-only switch; [idle_skip.rs](../crates/engine/tests/idle_skip.rs) holds the rule's tests. The built-in
   devices that answer `quiescent` are the stereo delay, the echo, the reverb, the space reverb and the modulation
-  effect (the bypass wrapper forwards for every effect it wraps) and the organ; each one has a unit test that
-  skipping equals processing and an engine-level render test
+  effect (the bypass wrapper forwards for every effect it wraps), the organ and the sampler; each one has a unit
+  test that skipping equals processing and an engine-level render test
   ([idle_stereo_delay.rs](../crates/render/tests/idle_stereo_delay.rs),
   [idle_effects.rs](../crates/render/tests/idle_effects.rs),
   [idle_instruments.rs](../crates/render/tests/idle_instruments.rs)).
