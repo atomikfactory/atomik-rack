@@ -1343,6 +1343,9 @@ pub struct WavetableSynth {
     /// Set by `prepare`/`reset`: the next `process` snaps the master gain to its target.
     fresh: bool,
     seed: u64,
+    /// Whether the device said at the end of its last batch that it is quiescent (see `at_rest`);
+    /// cleared by everything that changes the state outside `process`.
+    rest: bool,
     #[cfg(test)]
     probe: Option<std::sync::Arc<tests::VoiceProbe>>,
 }
@@ -1405,6 +1408,7 @@ impl WavetableSynth {
             shown: [-1.0; METER_COUNT],
             fresh: true,
             seed: 0,
+            rest: false,
             #[cfg(test)]
             probe: None,
         };
@@ -1616,6 +1620,7 @@ impl Device for WavetableSynth {
     }
 
     fn swap_samples(&mut self, map: Option<SampleMapRef>) -> Option<SampleMapRef> {
+        self.rest = false;
         std::mem::replace(&mut self.samples, map)
     }
 
@@ -1647,6 +1652,7 @@ impl Device for WavetableSynth {
     }
 
     fn reset(&mut self) {
+        self.rest = false;
         for (i, v) in self.voices.iter_mut().enumerate() {
             v.amp.reset();
             v.menv.reset();
@@ -1668,6 +1674,7 @@ impl Device for WavetableSynth {
     }
 
     fn set_param(&mut self, id: ParamId, plain: f32) {
+        self.rest = false;
         let i = id.0 as usize;
         if i < PARAM_COUNT {
             self.values[i] = plain;
@@ -1762,10 +1769,48 @@ impl Device for WavetableSynth {
             .filter(|v| v.is_active())
             .max_by_key(|v| v.order)
             .map_or([-1.0; METER_COUNT], |v| v.position);
+        self.rest = !ctx.is_connected(LFO_CV_OUT) && self.at_rest();
         #[cfg(test)]
         self.update_probe();
     }
+
+    /// A source while a voice sounds or a cable carries the LFO; silent only by state otherwise. It rests
+    /// when no voice is active or waiting to start (a releasing voice and a steal fade count as active), the
+    /// LFO output is not cabled, the master gain and the volume and expression gain sit on their targets and
+    /// the master gain is a plain positive number (so `+0.0` times it is `+0.0`; the level CV and the pan CV,
+    /// when cabled, are silent and scale by exactly one or by a positive gain, and the soft limit and the
+    /// controller gain map `+0.0` to `+0.0`). The noise, the phases and the sub oscillator belong to voices
+    /// and are drawn or stepped only while one runs or starts; the published position is already the idle
+    /// value (no voice). A silent batch then changes only the device LFO, which `idle_advance` moves on. A
+    /// param change, a reset and a new imported table clear it at once; a note, a controller message and a
+    /// tuning change reach the device as a batch it runs, and the engine runs the batch of a new cabling.
+    fn quiescent(&self) -> bool {
+        self.rest
+    }
+
+    /// What a silent batch changes: the device LFO (it skips its shape, as `process` does when nothing
+    /// reads it).
+    fn idle_advance(&mut self, frames: usize) {
+        self.lfo.skip(frames);
+    }
 }
+
+impl WavetableSynth {
+    /// The conditions of `quiescent` that read the state (see there).
+    fn at_rest(&self) -> bool {
+        !self
+            .voices
+            .iter()
+            .any(|v| v.is_active() || v.pending.is_some())
+            && self.master.is_settled()
+            && self.master.value().is_sign_positive()
+            && self.master.value().is_finite()
+            && self.ctl.gain_settled()
+    }
+}
+
+#[cfg(test)]
+mod idle_tests;
 
 #[cfg(test)]
 mod tests {

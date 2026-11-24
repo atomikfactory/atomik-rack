@@ -909,6 +909,15 @@ starts at a seeded random angle. Clean Up Bass (see the Poly Synth) works on it 
   as much). An imported table adds about 650 kB per sample, held by the sample map.
 - **Randomness.** The noise, the unison phases and the sample & hold LFO come from the patch seed
   and the device instance, so renders are reproducible.
+- **Idle.** With no voice active or waiting to start (a releasing voice and a steal fade count as active), no cable
+  on `lfo_cv_out`, and the master gain and the volume and expression gain on their targets, the synth says it is
+  quiescent and the engine leaves it uncalled while it gets no note, controller or parameter message. It only moves
+  the device LFO on, with the same phase steps and sample & hold draws as a processed silent batch (which does not
+  evaluate the shape either), so the position sweep, the vibrato and the filter sweep of the next note start where
+  they would have. The noise, the unison phases and the sub oscillator belong to the voices and are drawn or
+  stepped only while one runs or starts; the published position is already the idle value (-1, -1). A cable on the
+  level, pan or resonance CV does not keep it awake. The default patch rests 217 batches (its release) after the
+  last key is released. The audio is bit for bit the same.
 
 ---
 

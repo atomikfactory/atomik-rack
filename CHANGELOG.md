@@ -334,6 +334,11 @@ may break APIs and the patch and project formats.
   controller or parameter message reaches it; only its two LFOs are moved on, so the vibrato, the tremolo, the index
   and the chorus sweep of the next note start where they would have, and the audio is byte for byte the same. Twenty
   idle FM synths cost 9.4 us a batch before and 3.6 us after.
+- **An idle wavetable synth is no longer processed.** A wavetable synth with no voice active or waiting to start,
+  nothing on its LFO output and its gains settled is left uncalled by the engine while no note, controller or
+  parameter message reaches it; only its LFO is moved on, so the position sweep, the vibrato and the filter sweep of
+  the next note start where they would have, and the audio is byte for byte the same. Twenty idle wavetable synths
+  cost 9.0 us a batch before and 4.4 us after.
 
 ### Fixed
 - **Dropping an instrument above its mix channel.** An instrument dragged to the place above its own mix channel

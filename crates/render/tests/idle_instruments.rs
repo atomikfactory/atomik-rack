@@ -127,6 +127,28 @@ const CASES: &[Case] = &[
         // the chorus ring are spent a second after each chord (13,020 of 15,000).
         min_skipped: [10_000, 10_000],
     },
+    Case {
+        name: "wavetable-synth",
+        type_id: "atomik.wavetable-synth",
+        outs: ["out_l", "out_r"],
+        params: &[
+            ("lfo.wave", 4.0),
+            ("lfo.rate", 7.3),
+            ("lfo.to_pitch", 2.0),
+            ("lfo.to_cutoff", 0.5),
+            ("lfo.to_pos1", 0.4),
+            ("lfo.to_pos2", 0.3),
+            ("mix.sub", 0.3),
+            ("mix.noise", 0.1),
+            ("unison.voices", 3.0),
+        ],
+        keys: &[48, 55, 64],
+        change: ("master.level", -3.0),
+        samples: false,
+        // The default release (the patch rests 217 batches after the keys) is spent in the
+        // second after each chord (13,060 of 15,000).
+        min_skipped: [10_000, 10_000],
+    },
 ];
 
 /// One mono zone over every key: 8,192 frames of a wave built from two parabolas (no libm call),
@@ -380,4 +402,9 @@ fn the_granular_synth_renders_the_same_bytes_skipped_or_not() {
 #[test]
 fn the_fm_synth_renders_the_same_bytes_skipped_or_not() {
     scenarios(case("fm-synth"));
+}
+
+#[test]
+fn the_wavetable_synth_renders_the_same_bytes_skipped_or_not() {
+    scenarios(case("wavetable-synth"));
 }

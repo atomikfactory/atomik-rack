@@ -871,6 +871,7 @@ three-note chord), before (the tree without the change) and after; the limit is 
 | sampler | 2.452 ms | 0.951 ms | 0.282 ms | 0.284, 0.286 ms (+0.8 %, +1.6 %) |
 | granular | 2.274 ms | 1.259 ms | 4.656 ms | 4.713, 4.667 ms (+1.2 %, +0.2 %) |
 | fm synth | 2.418 ms | 0.931 ms | 7.076, 7.181, 7.320 ms | 7.259, 7.027, 7.077, 7.068 ms (-1.2 % on the means, noise) |
+| wavetable synth | 2.315 ms | 1.115 ms | 3.980 ms | 4.042, 3.955 ms (+1.6 %, -0.6 %) |
 
 Organ: the answer is computed once at the end of a batch and only when no key sounds (a chord ends the check at the
 first voice). What it reads then is a handful of flags and settled-smoother tests, the scan-line zero counter the
@@ -901,3 +902,9 @@ ring check (when the chorus is on and a voice sounds the pass stops at the first
 decimators are FIR, so one silent block empties them; the chorus needs its 30 ms ring (22 batches more). The default
 patch is quiescent 220 batches after the last key is released (the carriers' release), one batch from the start. The
 three baseline runs of the busy row show this machine's spread (2 %); the four runs after the change lie inside it.
+
+Wavetable synth: one pass over the voices at the end of a batch, the cable test on the LFO output and the three
+smoother tests; nothing in the sample loop. The published position of the newest voice is computed at the end of a
+batch already and reads -1 when no voice runs, which is the value a skipped batch leaves. The skip-on row is the LFO
+stepped sample by sample. The default patch is quiescent 217 batches after the last key is released and one batch
+from the start.

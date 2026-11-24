@@ -80,7 +80,7 @@ const IDLE_BATCHES: usize = 256;
 /// Effects in each idle row.
 const IDLE_DELAYS: usize = 20;
 /// The effects and instruments that have an idle row (`idle/<name>-x20/skip-off|on`).
-const IDLE_TYPES: [&str; 9] = [
+const IDLE_TYPES: [&str; 10] = [
     "atomik.stereo-delay",
     "atomik.echo",
     "atomik.reverb",
@@ -90,6 +90,7 @@ const IDLE_TYPES: [&str; 9] = [
     "atomik.sampler",
     "atomik.granular",
     "atomik.fm-synth",
+    "atomik.wavetable-synth",
 ];
 
 /// The engine of an idle row: twenty effects of `type_id` with nothing connected, so every one
