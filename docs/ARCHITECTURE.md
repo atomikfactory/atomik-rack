@@ -5328,6 +5328,13 @@ take the app down; Settings > Plugins can switch back to running plugins inside 
   clip at the start of the song, so the frames up to the last header refresh come back (at most
   about a second is lost); one undo removes track and clip, and the `rec-` file is deleted only after the
   project is saved.
+- **The scratch sweep.** A crashed run leaves its `atomik-rack-session-<pid>-<n>` folder in the temp
+  folder, and nothing else removes it. At start, on a background thread (`recovery::sweep_scratch`),
+  the app removes such folders whose process has no live session marker in the recovery folders, that
+  nothing has touched for 14 days and that no snapshot's bundle note names. A folder it cannot decide
+  about (an unreadable marker, note or folder) is kept, a run with its own `--settings` file or in
+  safe mode does not sweep (it cannot see the notes of the usual folder), and one log line gives the
+  count and the bytes freed.
 - **The sandbox** ([plugin-sandbox](../crates/plugin-sandbox/src),
   [plugin-ipc](../crates/plugin-ipc/src), [plugin-hostd](../crates/plugin-hostd/src)).
   `SandboxBackend` is a `PluginBackend` like the format backends: `instantiate` starts one

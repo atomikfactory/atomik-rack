@@ -45,6 +45,9 @@ may break APIs and the patch and project formats.
   that the message asks you to restart the audio yourself, as before. A device with no bypass switch (an instrument)
   is named and left in place. A plugin whose process crashed keeps its own crash handling and reload. Audio >
   Restart Audio works as before.
+- **Scratch folders left by crashed runs are swept.** At start, a background thread removes the
+  `atomik-rack-session-*` folders in the temp folder whose session is gone, that nothing has touched for 14 days and
+  that no recovery copy points at; a folder it cannot be sure about is kept. One log line says how many and how much.
 
 ## [0.5.0-rc.2] - 2026-11-24
 

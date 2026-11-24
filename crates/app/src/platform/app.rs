@@ -67,6 +67,29 @@ mod clock {
     }
 }
 
+/// Starts the sweep of old scratch folders of dead sessions on a background thread and logs what
+/// it freed (see [`crate::recovery::sweep_scratch`]).
+fn start_scratch_sweep(config_dir: &std::path::Path) {
+    let recovery = config_dir.join(crate::recovery::RECOVERY_FOLDER);
+    let spawned = std::thread::Builder::new()
+        .name("atomik-sweep".into())
+        .spawn(move || {
+            let report = crate::recovery::sweep_scratch(
+                &std::env::temp_dir(),
+                &recovery,
+                crate::recovery::SWEEP_AGE,
+            );
+            log::info!(
+                "scratch sweep: removed {} old scratch folder(s), {} bytes freed",
+                report.folders,
+                report.bytes
+            );
+        });
+    if let Err(e) = spawned {
+        log::warn!("scratch sweep: no thread ({e})");
+    }
+}
+
 /// Runs the app until the window closes.
 pub fn run(cli: Cli) -> Result<(), String> {
     // The one place the language of the machine is read: the System choice of the language
@@ -140,6 +163,11 @@ pub fn run(cli: Cli) -> Result<(), String> {
         core.set_recent_path(path);
     }
     core.configure_plugins(plugin_config);
+    // Only the usual configuration folder: a run with its own settings file cannot see the
+    // recovery notes of the usual one.
+    if cli.settings.is_none() && !config.fallback {
+        start_scratch_sweep(&config.dir);
+    }
     if let Some(warning) = isolation_warning.filter(|_| plugins_on) {
         core.warn_plugin_isolation(&warning);
     }
