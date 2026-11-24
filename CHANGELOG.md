@@ -282,6 +282,10 @@ may break APIs and the patch and project formats.
   oscillators (current and fading-out table) were resolved for every sample of a voice; they only change when a
   voice takes a new table or starts, so they are now resolved there. The chord row is about 6 % cheaper per batch
   (about 4.6 to 4.3 ms per 256 batches), with the same slices and so the same bits.
+- **Creating a Character device no longer parses its voicing again.** Every instance parsed the embedded voicing
+  tables and built all sixteen preset chains once more to check them, on the thread that inserts the device. The
+  tables are now parsed and checked once per process and shared: creating a device takes about 40 % less time
+  (1.5 to 0.9 ms) and makes a fifth of the allocations (2,961 to 601), and its output is unchanged.
 
 ### Fixed
 - **Dropping an instrument above its mix channel.** An instrument dragged to the place above its own mix channel

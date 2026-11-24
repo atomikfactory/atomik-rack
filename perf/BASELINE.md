@@ -749,3 +749,31 @@ and held in between. They are the same slices, so the output is the same.
 |---|---|---|
 | wavetable-synth, chord | 4.637 ms, 4.540 ms | 4.274 ms, 4.371 ms (-6 %) |
 | wavetable-synth, idle | 1.334 ms, 1.328 ms | 1.395 ms, 1.331 ms (did not move) |
+
+**The character device parses its voicing once.** `Character::new` parsed the embedded voicing tables and built the
+sixteen preset chains to take their specs and to check them, then built and prepared sixteen chains for the instance,
+so about four times as many chains were built as the instance keeps. The parsed and checked tables are now held in a
+`OnceLock` and shared through an `Arc` (nothing in them depends on an instance or a sample rate); the chains an
+instance keeps are built as before, in `new` and again in `prepare`. The audio path does not read the cache. Measured
+by a loop of 50 creations of `Character::new` and of 50 `prepare` calls in a unit test (release build, not kept in
+the tree), with the allocation counter of the test kit on one creation:
+
+| row | before, runs | after, runs |
+|---|---|---|
+| 50 x `Character::new` | 75.5 ms, 73.3 ms | 46.2 ms, 48.5 ms (-38 %) |
+| 50 x `prepare` | 42.9 ms, 48.1 ms | 43.0 ms, 45.6 ms (unchanged) |
+| allocations of one `new` | 2,961 | 601 (the first creation of a process still parses once) |
+| peak heap of one `new` | 2,512,820 bytes | 2,476,036 bytes |
+
+**The reverb reads a ramp that has arrived once per batch (tried, left out).** The reverb makes its thirty ramps once
+per batch and evaluates each at every sample. A ramp whose increment is zero has the same value at every sample, so
+the loop was changed to read those once and to evaluate only the ramps still moving (a unit test compared the two
+for both reverbs, with and without a cable on the mix input, bit for bit). The saving did not move beyond the run to
+run noise, because the feedback network and the delay reads cost far more than the evaluation of the ramps, so
+nothing was committed:
+
+| row | before, runs | after, runs |
+|---|---|---|
+| reverb | 3.781 ms, 3.949 ms | 3.661 ms, 3.775 ms (-3 %, under the noise bar) |
+| space-reverb | 4.051 ms, 3.839 ms | 3.795 ms, 3.748 ms (-4 %, under the noise bar) |
+
