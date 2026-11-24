@@ -1033,9 +1033,9 @@ proxy (`ControlHub::set_waker`), so a mapped control does not wait for the next 
 quit time, a screenshot, a submenu switch, the graphics back-off) always win over the slow wake. The headless
 shell, the QA server and the tests drive the shell directly and never see these rates.
 The windows that present without waiting for the vertical blank (two or more windows are open) share one frame
-phase: time is cut into slots of one frame period (`App::frame`, from `FRAME`; `App::frame_started` is the start
-of the current slot) and each such window is painted at most once per slot (`window_logic::paint_gate`, with
-`AppWindow::last_painted`, apart from the app-wide `last_paint` of the paint tail). A tick uses its one time for
+phase: time is cut into slots of one frame period (`App::frame`, set by the Performance level: 60 Hz at
+Full, 30 Hz at Low power; `App::frame_started` is the start of the current slot) and each such window is
+painted at most once per slot (`window_logic::paint_gate`, with `AppWindow::last_painted`, apart from the app-wide `last_paint` of the paint tail). A tick uses its one time for
 every window it paints. Input, live and update paints of a window not yet painted in the slot are made at once; one
 already painted in it waits for the slot to end, and the paint after the end opens the next slot, so every window
 is painted by the same wake-up of the loop and a window painted off the tick does not split the loop into two
@@ -3045,7 +3045,10 @@ none on a single core. The physical core count comes from the `num_cpus` crate; 
 nothing, or more cores than threads, the old guess from the thread count stands in
 (`workers_auto` in `settings.json`; a file that sets `workers` and not `workers_auto` keeps its
 number, the Audio settings tab has an Auto chip). The stream start logs the count with the
-physical and logical counts it was derived from.
+physical and logical counts it was derived from. At Low power an
+automatic count is cut to one worker (`performance::workers_for`, read when an engine starts, so a change of the
+Performance setting applies from the next engine start; a count fixed by hand is never changed by it).
+Workers never change a rendered sample, so a bounce is the same at either level.
 
 ### Per-device processing time
 
@@ -5724,6 +5727,21 @@ creation chain in the **Creation chain** bullet.
   `SettingsDialog::preferences` merges into the Workflow draft, and View > Theme and View >
   Application Zoom (`AppCommand::SetTheme`, `AppCommand::AppZoom`) apply and save at once. None of
   it touches the project or the engine.
+  - **Performance.** `workflow.json` also holds `performance` (`auto`, `full`, `low_power`; a file without it
+    is Auto; [app/src/performance.rs](../crates/app/src/performance.rs)). Low power does three things and only
+    these: the shared frame slot is 30 Hz instead of 60 (`Level::frame_period`, `App::frame`; at Low power not
+    even a lone window waits for the vertical blank, so input cannot paint it faster), each main window's
+    graphics target is rendered at 0.75 of its physical size (`Level::render_scale`, `performance::target_size`)
+    with the scene scaled into it and the existing blit stretching it back over the surface with linear
+    filtering (`GpuContext::set_render_scale`; the surface, the scene, pointer positions, text positions and
+    screenshots stay in the window's own pixels, and the small bar and strip windows of plugin editors keep
+    the full size), and an automatic render worker count is cut to one (`performance::workers_for`). **Auto**
+    is Low power on a machine with 4 or fewer logical CPUs and Full otherwise (`performance::auto_level`), decided
+    once at start (`Shell::set_auto_level`) and shown on the button as "Auto (Low power)". The frame rate and the
+    render size apply at once when the setting is applied (`App::apply_performance`); the worker count applies
+    from the next engine start (`LiveSession::set_low_power`; the saved setting is read before the first
+    engine starts). The headless renderer of the QA server and screenshots keep scale 1.0. Nothing reaches the
+    engine's output.
   - **Theme.** `Theme::dark` and `Theme::light` fill the same tokens. What the sequencer views used
     to spell as colours (lanes, piano keys, the veil outside a clip, the mute colour) is a token
     too, faint overlay lines use `Theme::overlay` (white on dark, near-black on light) and the type
@@ -7112,7 +7130,9 @@ winit and GPU code is not (it needs a window and a GPU).
   other on one thread, so a wait for one monitor's blank would stall the others, and monitors with
   different refresh rates would drag each other down; the 60 Hz tick sets the pace, and a window is
   painted at most once per shared frame slot (`window_logic::paint_gate`), so a burst of input events cannot
-  build more frames than the tick would. A lone window keeps vsync and is not capped.
+  build more frames than the tick would. A lone window keeps vsync and is not capped, except at Low power
+  (Performance setting, see Interface preferences), where no window waits for the blank and every window is held
+  to the 30 Hz slot.
 - **Invariants.** Every song has a main window, and it is the owner of the editors of that song's sandboxed
   plugins (`set_plugin_editor_owner`), whichever pane is detached; plugin editor windows are
   separate top-level windows (kept per song) and are not touched by any of this. Nothing here reaches the engine,

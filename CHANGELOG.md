@@ -8,6 +8,14 @@ may break APIs and the patch and project formats.
 
 ## [Unreleased]
 
+### Added
+- **Performance setting: Auto, Full or Low power.** The Interface tab has a new Performance row. Low power draws every
+  window at 30 frames a second instead of 60, renders each main window at three quarters of its size and stretches it
+  to fit, and starts at most one render worker when the worker count is automatic (a count you fixed is never
+  changed). Auto, the default, picks Low power on a machine with 4 or fewer logical CPUs and Full otherwise, once at
+  start, and the button says which. The frame rate and the render size apply at once; the worker count from the next
+  engine start. Rendered audio does not change.
+
 ## [0.5.0-rc.2] - 2026-11-24
 
 ### Added

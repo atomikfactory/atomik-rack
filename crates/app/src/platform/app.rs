@@ -14,6 +14,7 @@ use crate::cli::Cli;
 use crate::clicks::ClickCounter;
 use crate::commands::AppCommand;
 use crate::cursor_art::{self, CursorArt};
+use crate::performance::Level;
 use crate::plugin_setup;
 use crate::session::{LiveSession, SystemBackend};
 use crate::settings::{self, AudioSettings, default_settings_path};
@@ -49,8 +50,6 @@ use winit::window::{CustomCursor, Window, WindowId};
 /// A window of the app: the song it belongs to and its place in that song.
 type Key = (DocId, WindowKind);
 
-/// Redraw tick while audio runs (≈ 60 Hz, for meters and status).
-const FRAME: Duration = Duration::from_micros(16_667);
 /// Status bar refresh period.
 const STATUS_PERIOD: Duration = Duration::from_millis(250);
 /// How often the cursor is read while files from the system hover over a window and the system
@@ -125,7 +124,9 @@ pub fn run(cli: Cli) -> Result<(), String> {
             open_error = Some(format!("stress plugins: {e}"));
         }
     }
-    let session = LiveSession::new(SystemBackend, settings, !cli.no_audio);
+    let mut session = LiveSession::new(SystemBackend, settings, !cli.no_audio);
+    // Before the first engine starts: the saved setting decides its automatic worker count.
+    session.set_low_power(crate::performance::startup_level(settings_path.as_deref()).is_low());
     let mut core = AppCore::with_doc(session, doc, None);
     install_video(&mut core);
     // The recent songs are read before a project named on the command line is opened, so that
@@ -228,6 +229,7 @@ pub fn run(cli: Cli) -> Result<(), String> {
             settings_path,
         },
     );
+    shell.set_auto_level(crate::performance::auto_level_here());
     shell.set_library_default(crate::settings::default_library_dir(
         crate::settings::TargetOs::current(),
         &|k| std::env::var_os(k),
@@ -380,6 +382,7 @@ pub fn run(cli: Cli) -> Result<(), String> {
                     settings_path: song_settings_path.clone(),
                 },
             );
+            song.set_auto_level(crate::performance::auto_level_here());
             song.set_library_default(crate::settings::default_library_dir(
                 crate::settings::TargetOs::current(),
                 &|k| std::env::var_os(k),
@@ -397,6 +400,7 @@ pub fn run(cli: Cli) -> Result<(), String> {
     let crashed =
         crate::recovery::crashed_song_snapshots(&config.dir.join(crate::recovery::RECOVERY_FOLDER));
     shell.recover_songs(&crashed);
+    let perf = shell.performance_level();
     let mut app = App {
         ime_on: false,
         shell,
@@ -419,7 +423,8 @@ pub fn run(cli: Cli) -> Result<(), String> {
         frame_watch: crate::ui_stall::FrameWatch::default(),
         activity: crate::ui_activity::Activity::new(),
         last_paint: None,
-        frame: FRAME,
+        perf,
+        frame: perf.frame_period(),
         frame_started: None,
         held_until: None,
         held_buttons: window_logic::HeldButtons::default(),
@@ -549,8 +554,12 @@ struct App {
     /// When a window was last painted: the loop stays at the full frame rate for a while after
     /// it (see [`window_logic::PAINT_TAIL`]).
     last_paint: Option<Instant>,
+    /// What the Performance setting runs at (see [`crate::performance`]): the frame period and the
+    /// render scale of every window follow it, and it is read again after every event.
+    perf: Level,
     /// The length of the frame slots of the windows that present without waiting for the
-    /// vertical blank (see [`window_logic::paint_gate`]): [`FRAME`] now, one place to change.
+    /// vertical blank (see [`window_logic::paint_gate`]), and the redraw tick while audio runs:
+    /// the period of [`Self::perf`] (60 Hz at Full, 30 Hz at Low power).
     frame: Duration,
     /// When the current frame slot began: the windows that present without waiting share it.
     frame_started: Option<Instant>,
@@ -797,7 +806,7 @@ impl App {
     /// Whether the surfaces wait for the vertical blank now: the one rule that sets the present
     /// mode and decides whether the frame cap applies.
     fn presents_with_vsync(&self) -> bool {
-        window_logic::presents_with_vsync(self.windows.len())
+        window_logic::presents_with_vsync(self.windows.len(), self.perf.is_low())
     }
 
     /// Lets the surfaces wait for the vertical blank only while one window is open.
@@ -874,10 +883,12 @@ impl App {
         let surface = if self.recovery.is_down() || self.gpu.is_lost() {
             None
         } else {
-            match self
-                .gpu
-                .create_surface(Arc::clone(&window), size.width, size.height)
-            {
+            match self.gpu.create_surface(
+                Arc::clone(&window),
+                size.width,
+                size.height,
+                self.perf.render_scale(),
+            ) {
                 Ok(surface) => {
                     self.graphics_ok = true;
                     Some(surface)
@@ -1306,14 +1317,17 @@ impl App {
         let result = match &mut w.surface {
             Some(surface) => {
                 self.gpu.resize(surface, size.width, size.height);
+                self.gpu.set_render_scale(surface, self.perf.render_scale());
                 self.gpu.render(surface, &w.scene, Color::BLACK)
             }
             // A window that was minimized while the graphics were rebuilt has no surface yet.
             None => {
-                match self
-                    .gpu
-                    .create_surface(Arc::clone(&window), size.width, size.height)
-                {
+                match self.gpu.create_surface(
+                    Arc::clone(&window),
+                    size.width,
+                    size.height,
+                    self.perf.render_scale(),
+                ) {
                     Ok(surface) => {
                         w.surface = Some(surface);
                         self.shell.repaint_window(kind);
@@ -1440,6 +1454,7 @@ impl App {
                 Arc::clone(&w.window),
                 size.width,
                 size.height,
+                self.perf.render_scale(),
             )?);
         }
         self.dock_frames
@@ -1617,6 +1632,22 @@ impl App {
     }
 
     /// Tells every window its new scale and size when the application zoom changed.
+    /// Follows the Performance setting: a change of level is the new frame period and render
+    /// scale from the next frame on (the render target is made when a window next paints).
+    /// Nothing is restarted.
+    fn apply_performance(&mut self) {
+        let level = self.shell.performance_level();
+        if level != self.perf {
+            self.perf = level;
+            self.frame = level.frame_period();
+            self.pace_presentation();
+            log::info!(
+                "performance: {}",
+                if level.is_low() { "low power" } else { "full" }
+            );
+        }
+    }
+
     fn apply_zoom(&mut self) {
         for ((doc, kind), w) in &mut self.windows {
             let Some(zoom) = self.shell.song(*doc).map(|s| s.app_zoom()) else {
@@ -1639,6 +1670,7 @@ impl App {
 
     fn after_event(&mut self, event_loop: &ActiveEventLoop, requests: Vec<ShellRequest>) {
         self.shell.sync_preferences();
+        self.apply_performance();
         self.apply_zoom();
         self.sync_windows(event_loop);
         self.handle_requests(event_loop, requests);

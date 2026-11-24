@@ -1050,3 +1050,29 @@ None of the instance figures was changed. Sharing the manager's and the handle's
 (128 KiB at 500 params), under the 200 KiB bar; the parameter queues are all needed when a batch touches every
 parameter and the first touch arrives on the audio thread; the event lists could only be made smaller by proving a
 bound under the device's `4 * MAX_EVENTS_PER_BATCH + 256` events.
+
+## Performance setting: Full against Low power (2026-11-24)
+
+The running app on the reference machine above (graphics card: a discrete desktop GPU), release build of the
+branch that adds the Performance setting, the transport stopped and nothing sounding (no `--play`), the stress rack
+(100 devices) with the audio stream open, one main window. Profile LP4: the process pinned to four logical
+processors (two cores, four threads) right after launch, with `--workers 1` given explicitly so that the worker count
+is the same in both rows (the setting only cuts an automatic count). A clean settings folder per run, with a
+`workflow.json` that sets `performance` to `full` or `low_power`. The sampler is `scripts/perf/sample-app.ps1` (15 s
+settle, 20 s window; its UI probe wakes the app about ten times a second in both rows). The "pointer sweep" rows
+add a script that moves the pointer over the window every 10 ms during the window. GPU % is the summed GPU engine
+utilisation of the app process; one run per row.
+
+| Scenario | CPU % (one core) | GPU % | Wakes/s | Main paints/s | UI probe p95 ms |
+|---|---|---|---|---|---|
+| Stopped stress rack, Full | 26.0 | 3.6 | 14.1 | 0.5 | 0.2 |
+| Stopped stress rack, Low power | 22.7 | 5.7 | 14.0 | 1.4 | 0.1 |
+| Stopped stress rack, pointer sweep, Full | 36.9 | 14.3 | 38.8 | 7.0 | 0.9 |
+| Stopped stress rack, pointer sweep, Low power | 35.0 | 16.3 | 40.2 | 5.5 | 3.4 |
+
+Read these rows as "no difference": a stopped rack paints about once a second, and the sweep reached only 5 to 7
+paints a second (a hover marks few repaints), far below either frame rate, so neither the 30 Hz slot nor the smaller
+render target has anything to save; the gaps between the rows are run-to-run noise (the Low power idle row painted
+more often, by chance, and shows more GPU). The frame time is not in the sampler's output. The effects show only while
+something animates for real (a playing pattern, a drag, a 4K window); that needs the owner's hand check, since this
+run may not play audio.

@@ -313,6 +313,21 @@ fn device_named(listed: &str, wanted: &str) -> bool {
     listed == wanted || listed.to_lowercase().contains(&wanted.to_lowercase())
 }
 
+/// The render worker count an engine is asked for: `auto` (what the machine gets) while the
+/// settings say automatic, made conservative at Low power; the count the user fixed otherwise,
+/// whatever the power level.
+fn requested_workers(settings: &AudioSettings, low_power: bool, auto: u16) -> u16 {
+    if !settings.workers_auto {
+        return settings.workers;
+    }
+    let level = if low_power {
+        crate::performance::Level::Low
+    } else {
+        crate::performance::Level::Full
+    };
+    crate::performance::workers_for(level, auto)
+}
+
 /// Engine, stream and MIDI input for the app.
 pub struct LiveSession<B: AudioBackend> {
     backend: B,
@@ -363,6 +378,10 @@ pub struct LiveSession<B: AudioBackend> {
     /// The restart that follows is the one try at the chosen devices: a failure of it does not
     /// make them the preferred ones again.
     switching_back: bool,
+    /// Low power: an automatic render worker count is the conservative one (see
+    /// [`crate::performance::workers_for`]). Read when an engine starts, so a change applies
+    /// from the next start; a count the user fixed is never touched.
+    low_power: bool,
 }
 
 impl<B: AudioBackend> std::fmt::Debug for LiveSession<B> {
@@ -411,7 +430,19 @@ impl<B: AudioBackend> LiveSession<B> {
             preferred: None,
             switch_back: false,
             switching_back: false,
+            low_power: false,
         }
+    }
+
+    /// Whether an automatic render worker count is the conservative one (Low power).
+    pub fn low_power(&self) -> bool {
+        self.low_power
+    }
+
+    /// Sets whether an automatic render worker count is the conservative one (Low power). It
+    /// applies to the next engine this session starts; nothing restarts.
+    pub fn set_low_power(&mut self, on: bool) {
+        self.low_power = on;
     }
 
     /// The backend.
@@ -646,16 +677,17 @@ impl<B: AudioBackend> LiveSession<B> {
         config: &EngineConfig,
     ) -> Result<(Opened<B>, Option<String>), IoError> {
         // Never more workers than cores - 1: the audio thread keeps a core of its own.
-        let requested = if settings.workers_auto {
-            atomik_audio_io::auto_workers_here()
-        } else {
-            settings.workers
-        };
+        let requested = requested_workers(
+            settings,
+            self.low_power,
+            atomik_audio_io::auto_workers_here(),
+        );
         let threads = atomik_audio_io::cap_workers_here(requested);
         if settings.workers_auto {
             let (physical, logical) = atomik_audio_io::core_counts_here();
             log::info!(
-                "render workers: {threads} (automatic; {physical} physical cores, {logical} logical)"
+                "render workers: {threads} (automatic{}; {physical} physical cores, {logical} logical)",
+                if self.low_power { ", low power" } else { "" }
             );
         } else if threads != settings.workers {
             log::info!(

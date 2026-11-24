@@ -499,6 +499,13 @@ impl SettingsDialog {
         self
     }
 
+    /// Names what Auto picked on this machine in the Interface tab's Performance row.
+    pub fn set_auto_level(&mut self, auto: crate::performance::Level) {
+        if let Some(p) = &mut self.prefs {
+            p.interface.set_auto_level(auto);
+        }
+    }
+
     /// Fills the Themes tab: the list, which of them is in use, and whether the system is set to
     /// a dark theme (the System choice follows it).
     pub fn with_themes(mut self, rows: Vec<ThemeRow>, system_dark: bool) -> Self {
@@ -842,7 +849,7 @@ impl SettingsDialog {
             }
             Tab::Interface => {
                 let width = (view.width - 32.0).clamp(240.0, 640.0);
-                let height = (TITLE + 8.0 * 50.0 + 60.0 + FOOTER).min(view.height - 32.0);
+                let height = (TITLE + 9.0 * 50.0 + 60.0 + FOOTER).min(view.height - 32.0);
                 let x0 = ((view.width - width) / 2.0).max(0.0);
                 let y0 = ((view.height - height) / 2.0).max(0.0);
                 Rect::new(x0, y0, x0 + width, y0 + height)

@@ -1852,8 +1852,8 @@ device timing switch but each has its own rule state.
 ## BH. The windows that present without waiting share one frame slot and are painted at most once in it
 
 **Decision.** With two or more windows open every surface presents without waiting for the vertical blank, and the
-loop paints them in turn on one thread. Time is cut into slots of the frame period, 60 Hz (`App::frame`, a field
-started from `FRAME`, so one place can change it later; `App::frame_started` is where the current slot began), and a
+loop paints them in turn on one thread. Time is cut into slots of the frame period, 60 Hz (`App::frame`, a field set by the Performance
+level, 30 Hz at Low power: see decision BT; `App::frame_started` is where the current slot began), and a
 window is painted at most once per slot. The rule is a pure function (`window_logic::paint_gate`) of how the window
 presents, the time since the slot began, whether the window was already painted in it, and the reason for the paint. A
 window with vsync is never held back. A paint of a window not yet painted in the slot is made at once, in that slot
@@ -2270,5 +2270,32 @@ every file.
 streaming the oldest or the quietest assets (the largest saves the most memory for the fewest rings and reads);
 converting live assets when memory frees up; counting the reference track, a plugin's own sample memory and warp
 renders (each is one object of its own, loaded on request).
+
+**Status.** Default (not yet confirmed). Decided by: none yet.
+
+## BT. One Performance setting (Auto, Full, Low power) sets the frame rate, the render size and the automatic workers
+
+**Decision.** The Interface tab has one setting, Performance, saved in `workflow.json` (`performance`: `auto`,
+`full`, `low_power`; a file without it is Auto, the project format is untouched). Low power does three things and only
+these. The shared frame slot is 30 Hz instead of 60 (the same `App::frame` the frame cap already used, now a value the
+level sets, not a second pacing mechanism). A main window's graphics target is rendered at 0.75 of its physical size
+and drawn to the surface by the existing blit, with linear filtering. And an automatic render worker count is cut to
+one. **Auto** is Low power on a machine with 4 or fewer logical CPUs and Full otherwise, decided once at start and never
+switched while the program runs; the button says which one it picked ("Auto (Low power)"). The frame rate and the render
+size apply when the setting is applied; the worker count is read when an engine starts, so it applies from the next
+start (no live change of the worker count exists, and a bounce never depends on it).
+
+**Why.** A 4K panel costs four times the pixels of a 1080p one, and the UI is drawn whole at each paint, so rate and
+render size are the two levers that cut the GPU and CPU cost without a rewrite; fewer workers cut the idle spin on a
+small machine. 0.75 exists cleanly (1440 x 810 from 1920 x 1080, 2880 x 1620 from 4K) and keeps text readable under
+a linear stretch; 0.5 would not. At Low power a lone window does not wait for the vertical blank either, because a
+60 Hz monitor would let input paint it twice as often as the level says. Only a count that was automatic is made
+conservative: a number the user fixed is theirs. The scene is scaled into the smaller target at render time, so layout,
+hit testing, reported text positions and screenshots never see the scale.
+
+**Rejected.** Switching Auto while the program runs (the frame rate and the picture would jump, and a laptop on
+battery is not a smaller machine); 0.5 as the Low power scale; scaling the surface itself (the window would need a new
+swap chain at every change); a lower worker count than one at Low power (a heavy rack would miss its deadline); a
+separate setting per effect (three switches for one decision).
 
 **Status.** Default (not yet confirmed). Decided by: none yet.

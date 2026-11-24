@@ -1574,6 +1574,14 @@ These are the hand checks, on every OS (`atomik --detach rack,console` opens bot
   play, move the pointer over one window for a few seconds, then stop moving and read the next `ui activity`
   lines: wake-ups should be about 60 a second (not about 120) and both windows about 60 paints/s. Do the same
   after resizing one of the windows by dragging its edge, and after clicking the other window to focus it.
+- Performance (Interface tab): set it to Low power with the rack playing a pattern. The meters and the playhead
+  keep moving at about 30 frames a second (the `ui activity` line shows about 30 wake-ups and paints a second, with
+  one window as with two), the picture is a little softer, the sound does not change, and switching back to Full
+  restores 60 and the sharp picture without a restart. On a 4K display or at 150 % scaling check that the text at
+  Low power is still easy to read. Detach the rack and the mixer at Low power: each is drawn at 30 frames a second
+  and nothing stretches wrongly when a window is resized. On a machine with 4 or fewer logical CPUs a fresh
+  settings folder shows "Auto (Low power)" on the button; the log line `render workers` says "low power" after the
+  next engine start.
 
 Run on Windows only so far (three windows open, draw, close, quit and restore); macOS, Linux (X11
 and Wayland) and monitors of mixed scale have not been tried.

@@ -1657,3 +1657,34 @@ fn defaults_chosen_by_the_user_have_nothing_to_go_back_to() {
     s.poll_at(clock_now() + Duration::from_secs(10));
     assert!(!s.switch_back_pending());
 }
+
+#[test]
+fn low_power_makes_only_an_automatic_worker_count_conservative() {
+    let automatic = AudioSettings {
+        workers_auto: true,
+        workers: 5,
+        ..AudioSettings::default()
+    };
+    // What the machine gets is used as it is at Full and cut down at Low power.
+    assert_eq!(requested_workers(&automatic, false, 7), 7);
+    assert_eq!(requested_workers(&automatic, true, 7), 1);
+    assert_eq!(requested_workers(&automatic, true, 0), 0);
+    // A count fixed by hand is never changed by the power level.
+    let fixed = AudioSettings {
+        workers_auto: false,
+        workers: 5,
+        ..AudioSettings::default()
+    };
+    assert_eq!(requested_workers(&fixed, false, 7), 5);
+    assert_eq!(requested_workers(&fixed, true, 7), 5);
+}
+
+#[test]
+fn the_low_power_flag_is_for_the_next_engine_and_restarts_nothing() {
+    let fake = Fake::default();
+    let mut s = LiveSession::new(&fake, settings(), true);
+    assert!(!s.low_power);
+    s.set_low_power(true);
+    assert!(s.low_power);
+    assert!(fake.starts.borrow().is_empty(), "no stream was started");
+}

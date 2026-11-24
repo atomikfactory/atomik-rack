@@ -243,8 +243,12 @@ pub(super) fn changed<T: PartialEq + Clone>(old: &T, new: &T) -> Option<T> {
 /// vertical blank would stall every other window for a whole refresh of this one's monitor, and
 /// the windows on monitors with different rates would drag each other down. They then present
 /// without waiting and the app's own tick sets the pace.
-pub(super) fn presents_with_vsync(open_windows: usize) -> bool {
-    open_windows <= 1
+///
+/// At Low power no window waits for the vertical blank: a lone window too is held to the frame
+/// slot, whose period is 30 Hz there, which a presentation in step with a 60 Hz monitor could
+/// not do for the paints that input asks for.
+pub(super) fn presents_with_vsync(open_windows: usize, low_power: bool) -> bool {
+    open_windows <= 1 && !low_power
 }
 
 /// How often the loop runs its housekeeping frame while an audio stream is open and nothing
@@ -659,9 +663,45 @@ mod tests {
 
     #[test]
     fn only_a_lone_window_waits_for_the_vertical_blank() {
-        assert!(presents_with_vsync(1));
-        assert!(!presents_with_vsync(2));
-        assert!(!presents_with_vsync(3));
+        assert!(presents_with_vsync(1, false));
+        assert!(!presents_with_vsync(2, false));
+        assert!(!presents_with_vsync(3, false));
+    }
+
+    #[test]
+    fn at_low_power_not_even_a_lone_window_waits_for_the_vertical_blank() {
+        for open in 1..=3 {
+            assert!(!presents_with_vsync(open, true), "{open}");
+        }
+    }
+
+    #[test]
+    fn the_frame_period_of_each_performance_level_is_the_slot_the_cap_uses() {
+        use crate::performance::Level;
+        let periods: Vec<Duration> = [Level::Full, Level::Low].map(Level::frame_period).into();
+        assert_eq!(periods[0], FRAME);
+        assert_eq!(periods[1], Duration::from_micros(33_333));
+        for period in periods {
+            // A window already painted in the slot waits for the rest of it, and the next slot
+            // opens when it is over: at 30 Hz as at 60 Hz.
+            let since = 5 * MS;
+            assert_eq!(
+                paint_gate(false, Some(since), true, period, PaintReason::Input),
+                PaintGate::Wait(period - since)
+            );
+            assert_eq!(
+                paint_gate(false, Some(period), true, period, PaintReason::Input),
+                OPENS
+            );
+            // The loop wakes once per period while something animates.
+            let animating = Wakers {
+                animating: true,
+                ..wakers()
+            };
+            assert_eq!(wake_after(animating, period), Some(period));
+            let tol = frame_tolerance(period);
+            assert!(tol >= MS && tol < period / 4, "{tol:?}");
+        }
     }
 
     const MS: Duration = Duration::from_millis(1);

@@ -14,6 +14,7 @@
 use crate::import_warp::WarpImports;
 use crate::master_keyboard::MasterKeyboard;
 use crate::midi_file::MidiResolution;
+use crate::performance::Performance;
 use crate::record_over::{KeepEvents, RecordMode};
 use atomik_model::ThinLevel;
 use atomik_ui::keymap::UserKeymap;
@@ -125,6 +126,9 @@ pub struct WorkflowPrefs {
     /// How many automatic versions of a project a save keeps (1 to [`MAX_KEEP_VERSIONS`],
     /// default 20; named and protected versions are never pruned).
     pub keep_versions: u32,
+    /// The frame rate, render size and automatic worker count (default Auto: Low power on a
+    /// machine with four or fewer logical CPUs; see [`crate::performance`]).
+    pub performance: Performance,
     /// The answer to "Check for new versions once a day?": `None` until the user answers (the
     /// program then makes no request), `Some(true)` for Yes, `Some(false)` for No.
     pub update_check: Option<bool>,
@@ -542,6 +546,7 @@ impl Default for WorkflowPrefs {
             ffmpeg_folder: None,
             reverse_mode: ReverseMode::default(),
             keep_versions: DEFAULT_KEEP_VERSIONS,
+            performance: Performance::default(),
             update_check: None,
             language: LanguageChoice::System,
             preview_db: 0.0,
@@ -667,6 +672,11 @@ impl WorkflowPrefs {
                 .map_or(defaults.keep_versions, |n| {
                     n.clamp(1, u64::from(MAX_KEEP_VERSIONS)) as u32
                 }),
+            performance: obj
+                .get("performance")
+                .and_then(Value::as_str)
+                .and_then(Performance::from_id)
+                .unwrap_or(defaults.performance),
             update_check: obj.get("update_check").and_then(Value::as_bool),
             language: obj
                 .get("language")
@@ -723,6 +733,7 @@ impl WorkflowPrefs {
                             | "ffmpeg_folder"
                             | "reverse_mode"
                             | "keep_versions"
+                            | "performance"
                             | "update_check"
                             | "language"
                             | "preview_db"
@@ -813,6 +824,10 @@ impl WorkflowPrefs {
             Value::String(self.midi_resolution.id().into()),
         );
         map.insert("keep_versions".into(), Value::from(self.keep_versions));
+        map.insert(
+            "performance".into(),
+            Value::String(self.performance.id().into()),
+        );
         if let Some(answer) = self.update_check {
             map.insert("update_check".into(), Value::Bool(answer));
         }
@@ -1213,6 +1228,34 @@ mod tests {
         assert_eq!(high.keep_versions, MAX_KEEP_VERSIONS);
         let bad = WorkflowPrefs::from_json(r#"{"keep_versions": "many"}"#).unwrap();
         assert_eq!(bad.keep_versions, 20);
+    }
+
+    #[test]
+    fn the_performance_preference_defaults_to_auto_and_round_trips() {
+        assert_eq!(WorkflowPrefs::default().performance, Performance::Auto);
+        // A file from before the setting, and one with a word that is not a choice.
+        let old = WorkflowPrefs::from_json(r#"{"keep_versions": 7}"#).unwrap();
+        assert_eq!(old.performance, Performance::Auto);
+        let bad = WorkflowPrefs::from_json(r#"{"performance": "turbo"}"#).unwrap();
+        assert_eq!(bad.performance, Performance::Auto);
+        for choice in Performance::ALL {
+            let w = WorkflowPrefs {
+                performance: choice,
+                ..WorkflowPrefs::default()
+            };
+            let text = w.to_json();
+            assert!(
+                text.contains(&format!("\"performance\": \"{}\"", choice.id())),
+                "{text}"
+            );
+            let back = WorkflowPrefs::from_json(&text).unwrap();
+            assert_eq!(back.performance, choice);
+            assert_eq!(back, w);
+            assert!(
+                back.extra.is_empty(),
+                "a known field is not kept as unknown"
+            );
+        }
     }
 
     #[test]

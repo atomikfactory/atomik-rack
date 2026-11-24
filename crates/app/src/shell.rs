@@ -620,6 +620,9 @@ pub struct Shell<B: AudioBackend> {
     guide: Option<Guide>,
     /// The operating system is set to a dark theme (what the System theme choice follows).
     system_dark: bool,
+    /// What the Auto choice of the Performance setting picked on this machine (decided once at
+    /// start; Full until the program says, see [`Self::set_auto_level`]).
+    auto_level: crate::performance::Level,
     /// The language the views were last drawn in ([`Shell::sync_language`] notices a change).
     shown_language: atomik_ui::Lang,
     /// The rack split before a double-click on the divider collapsed the rack: the next
@@ -958,6 +961,7 @@ impl<B: AudioBackend> Shell<B> {
             dialog: None,
             about: None,
             system_dark: true,
+            auto_level: crate::performance::Level::Full,
             shown_language: atomik_ui::i18n::language(),
             split_before: None,
             ports_listed_at: None,
@@ -4122,6 +4126,8 @@ impl<B: AudioBackend> Shell<B> {
             .set_reverse_mode(self.workflow.reverse_mode.graphical());
         self.core.set_midi_resolution(self.workflow.midi_resolution);
         self.core.set_keep_versions(self.workflow.keep_versions);
+        let low = self.performance_level().is_low();
+        self.core.sink_mut().set_low_power(low);
         self.core.set_backup(
             self.workflow.backup_folder.clone(),
             self.workflow.backup_keep,
@@ -4158,6 +4164,7 @@ impl<B: AudioBackend> Shell<B> {
                 self.workflow.clone(),
             )
             .with_themes(self.theme_rows(), self.system_dark);
+        dialog.set_auto_level(self.auto_level);
         dialog.set_camera_models(self.core.camera_models());
         dialog.set_camera_project(self.core.camera_override());
         if let Some(tab) = tab {
@@ -4166,6 +4173,23 @@ impl<B: AudioBackend> Shell<B> {
         dialog.set_profile_options(self.profile_options());
         self.dialog = Some(dialog);
         self.close_menubars();
+    }
+
+    /// Tells the shell what Auto picks on this machine (once, at start: it never switches while the
+    /// program runs).
+    pub fn set_auto_level(&mut self, auto: crate::performance::Level) {
+        if self.auto_level != auto {
+            self.auto_level = auto;
+            let low = self.performance_level().is_low();
+            self.core.sink_mut().set_low_power(low);
+            self.repaint = true;
+        }
+    }
+
+    /// The level the Performance setting runs at now: the frame rate, the render size and the
+    /// automatic worker count of every window and engine follow it.
+    pub fn performance_level(&self) -> crate::performance::Level {
+        self.workflow.performance.level(self.auto_level)
     }
 
     /// The theme in use: the preference, with the System choice following the operating system.
