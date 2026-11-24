@@ -919,3 +919,21 @@ ping-pong) take about 43 passes of 0.3 s to flush below 1e-20, so a patch with t
 last key and one with feedback 0 about 1.4 s after it. LFO 2 is stepped only while it has a destination, exactly as
 the batch does. The default patch is quiescent 217 batches after the last key is released and one batch from the
 start; the mono bass with its defaults 96.
+
+## Memory held by 64 channel strips (2026-11-24)
+
+Bytes asked from the allocator, with the testkit's counting allocator (`peak_heap_of`), and the working set and
+private bytes (commit charge) of the process, read with the process list while it held the devices. 64 channel
+strips prepared at 48 kHz, plus one convolution reverb prepared with no impulse in the process numbers.
+
+| | before | after |
+| --- | --- | --- |
+| one scope tap (`ScopeTap::new`) | 256 KiB, written at once | unchanged: the analyser devices and an audio track keep it |
+| one scope tap of a strip, master, EQ or plugin device | 256 KiB, written at once | a header of a few dozen bytes until a panel looks |
+| 64 prepared channel strips, heap | 274.5 MiB | 258.5 MiB |
+| process with them and a convolver, working set | 39.5 MiB | 22.6 MiB |
+| process with them and a convolver, private bytes | 287.4 MiB | 271.2 MiB |
+
+The 16 MiB the taps held was resident (every cell of both rings is written when the tap is made); what is left of the
+255 MiB or so of the 64 strips is the two latency lines of 2 MiB each, which are zero filled by the allocator and not
+touched, so they count as private bytes and not as working set.

@@ -1665,6 +1665,8 @@ fn the_tap_is_silent_until_the_switch_and_never_changes_the_output() {
 #[test]
 fn the_tap_carries_the_signal_after_the_eq_and_before_the_fader() {
     let mut h = channel();
+    // The app makes the ring before it turns the switch on.
+    tap_of(&h).reserve();
     h.set_param("internal.tap_live", 1.0);
     h.set_param("fader", 0.0);
     h.set_param("eq.on", 1.0);
@@ -2540,4 +2542,36 @@ fn a_large_ring_on_a_strip_keeps_the_bins_of_a_65536_window_and_the_output_bit_e
         from_big.iter().any(|v| *v > -100.0),
         "a spectrum was measured"
     );
+}
+
+#[test]
+fn a_strip_holds_no_scope_ring_until_a_panel_looks_at_it() {
+    let mut h = channel();
+    let tap = tap_of(&h);
+    assert!(
+        !tap.has_ring(),
+        "a prepared strip holds only the tap header"
+    );
+    let play = |h: &mut DeviceHarness, n: usize| {
+        for _ in 0..n {
+            dc(h, "in_l", 0.25);
+            dc(h, "in_r", 0.25);
+            assert_no_alloc(|| h.process());
+        }
+    };
+    // Not looked at: the strip writes nothing and allocates nothing.
+    play(&mut h, 4);
+    assert_eq!(tap.head(), 0);
+    assert!(!tap.has_ring());
+    // A panel shows it: the ring appears on this (the interface) side, the strip fills it.
+    tap.set_live(true);
+    assert!(tap.has_ring());
+    play(&mut h, 4);
+    assert_eq!(tap.head(), 4 * BATCH as u64);
+    let (mut l, mut r) = (vec![0.0f32; 4 * BATCH], vec![0.0f32; 4 * BATCH]);
+    assert_eq!(
+        tap.read_latest(&mut l, &mut r),
+        (4 * BATCH, 4 * BATCH as u64)
+    );
+    assert!(l.iter().any(|v| *v != 0.0));
 }

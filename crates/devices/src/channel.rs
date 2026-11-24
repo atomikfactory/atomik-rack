@@ -140,8 +140,10 @@
 //!   stored): with the switch on, stage 1 pushes the signal after the EQ, the inserts and the
 //!   parallel compressor and before the width, the fader and the pan into a [`ScopeTap`] (a
 //!   lock-free ring the UI analyses), so the spectrum is what the strip hears before its level.
-//!   The ring is allocated in `prepare`; with the switch off nothing is written and the strip is
-//!   bit-identical to one without a tap.
+//!   The tap is created in `prepare` without a ring: the app makes the ring ([`ScopeTap::reserve`],
+//!   or [`ScopeTap::set_live`]) before it turns the switch on, so a strip nobody looks at holds no
+//!   ring and the strip never allocates it. With the switch off nothing is written and the strip
+//!   is bit-identical to one without a tap.
 //! * **Output tap** (the tap's live flag, [`ScopeTap::set_live`], set by the app while a meter
 //!   panel shows the strip): with `internal.tap_live` off and the flag on, stage 1 pushes the
 //!   strip's output (after the width, the fader, the mute and the pan) into the same ring. The
@@ -1671,7 +1673,7 @@ impl Device for Channel {
         let sr = info.sample_rate.hz() as f32;
         self.sample_rate = sr;
         if self.tap.is_none() {
-            self.tap = Some(Arc::new(ScopeTap::new()));
+            self.tap = Some(Arc::new(ScopeTap::on_demand()));
         }
         self.delay_l = DelayLine::with_reserve(LATENCY_LINE_START, MAX_LATENCY_ADJUST as usize);
         self.delay_r = DelayLine::with_reserve(LATENCY_LINE_START, MAX_LATENCY_ADJUST as usize);

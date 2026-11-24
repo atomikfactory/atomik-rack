@@ -359,6 +359,12 @@ may break APIs and the patch and project formats.
   loudness and the true-peak maximum cover the time since it was shown and read like right after a reset (-120)
   until the windows have filled. The limiter, its gain reduction and the sound are never affected, and renders,
   bounces, the QA server and the delivery checks measure exactly as before.
+- **A strip, the master, an EQ or a plugin device holds no scope ring until a panel looks at it.** The ring of recent
+  frames behind the spectrum, scope and meter panels (256 KiB per device, written when the device was built) is now
+  made when a panel first shows the device, so a console of 64 channels no longer holds 16 MiB of rings nobody
+  looks at (64 prepared strips: 274.5 MiB of heap before, 258.5 MiB now; the working set of the process that holds
+  them drops by 17 MiB). A panel fills from the moment it is shown, as it already did; the analyser devices and an
+  audio track's tuner keep their ring from the start. Renders, bounces and the QA server read what they read before.
 
 ### Fixed
 - **Dropping an instrument above its mix channel.** An instrument dragged to the place above its own mix channel

@@ -4445,7 +4445,8 @@ already had (format 37 reads it, older readers refuse it).
 View > Panels > Spectrum EQ (F2) opens a floating window of its own (an OS window, so it resizes and moves
 freely; closing it ends it) that shows one console strip. The channel, bus and master devices
 ([channel.rs](../crates/devices/src/channel.rs), [master.rs](../crates/devices/src/master.rs)) each
-own a `ScopeTap` allocated in `prepare`; with the app-set `internal.tap_live` param at 1 they push
+own a `ScopeTap` created in `prepare` without a ring (the app makes it, on its own thread, before it
+sets the param); with the app-set `internal.tap_live` param at 1 they push
 the signal after the EQ and before the fader, and with it at 0 (the default) they write nothing, so
 a strip with no window is allocation-free and bit-identical. The app
 ([app_core_spectrum_eq.rs](../crates/app/src/app_core_spectrum_eq.rs)) switches the param on for
@@ -6370,10 +6371,17 @@ Device::process                              AppCore::feed_device_scopes
   position. The device is the only writer: `push` does relaxed stores for the frames and one release
   store of the position per batch. A reader copies the newest frames oldest first with `read_latest`
   and then checks that the writer did not lap the part it copied (a lapped copy is retried, then
-  reported as empty). No `unsafe`, no lock, no allocation after `ScopeTap::new`, which the device
-  calls when it is built, so the tap outlives a `prepare`.
+  reported as empty). No `unsafe`, no lock; the writer never allocates. The device creates the tap when it is
+  built (a console strip and the master in `prepare`), so the tap outlives a `prepare`.
 - **Size and the live flag.** `ScopeTap::new` holds 32 768 frames (a read returns at most half of them),
   `ScopeTap::large` 131 072 frames for the spectrum device, whose analysis reaches 65536 points.
+  `ScopeTap::new` allocates its ring at once (256 KiB): the analyser devices and an audio track's tuner
+  feed write every batch and their readers never say they look. `ScopeTap::on_demand` holds a header only
+  until something asks: `set_live(true)`, `reserve` (the Spectrum EQ window, before it sets
+  `internal.tap_live`) or `reserve_large` make the ring on the asking (interface) thread, once, the way the
+  large ring is made; the strips, the master, the EQ and the plugin device use it, so a console of 64
+  channels holds no ring for the strips nobody shows. With no ring `push` only advances the position and
+  a read gives `(0, head)`; a ring made on request holds the frames written after it appeared.
   `set_live`/`is_live` is one relaxed flag: a console strip (channel, bus, master) and a plugin device
   push their output after the fader (the plugin: after its bypass mix) only while it is on, so a tap nobody
   shows costs one load per batch and the output is bit-identical either way. The meter panels set it

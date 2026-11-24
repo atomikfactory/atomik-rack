@@ -46,7 +46,8 @@
 //!   The first batch after `prepare`/`reset` snaps them all to their targets.
 //! * **Analyser tap** (`internal.tap_live`, set by the app while a window shows the master, never
 //!   stored): stage 2 pushes the signal before the fader into a [`ScopeTap`] for the UI to
-//!   analyse; off, nothing is written and the output is bit-identical. With the switch off and
+//!   analyse (the app makes the tap's ring first, [`ScopeTap::reserve`]; a master nobody looks at
+//!   holds none); off, nothing is written and the output is bit-identical. With the switch off and
 //!   the tap's live flag on ([`ScopeTap::set_live`], set while a meter panel shows the master),
 //!   stage 2 pushes the main output after the fader instead, or, when the tap's pre flag is on
 //!   ([`ScopeTap::set_pre`]), the signal before the fader like the switch does.
@@ -839,7 +840,7 @@ impl Device for Master {
     fn prepare(&mut self, info: &PrepareInfo) {
         let sr = info.sample_rate.hz() as f32;
         if self.tap.is_none() {
-            self.tap = Some(Arc::new(ScopeTap::new()));
+            self.tap = Some(Arc::new(ScopeTap::on_demand()));
         }
         for s in self.smoothers_mut() {
             s.set_time(SMOOTH_MS, sr);

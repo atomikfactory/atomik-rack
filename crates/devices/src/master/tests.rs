@@ -910,6 +910,8 @@ fn the_master_tap_is_written_only_while_the_switch_is_on() {
     let play = |tap_live: bool| {
         let mut h = master();
         if tap_live {
+            // The app makes the ring before it turns the switch on.
+            h.device().scope_tap().expect("a master tap").reserve();
             h.set_param("internal.tap_live", 1.0);
         }
         let mut out = Vec::new();
@@ -1104,4 +1106,13 @@ fn the_pre_flag_taps_the_master_before_its_fader_and_leaves_the_output_alone() {
         bits(&pre_loud),
         "the fader does not show before it"
     );
+}
+
+#[test]
+fn a_master_holds_no_scope_ring_until_a_panel_looks_at_it() {
+    let h = master();
+    let tap = h.device().scope_tap().expect("a prepared master has a tap");
+    assert!(!tap.has_ring());
+    tap.set_live(true);
+    assert!(tap.has_ring());
 }

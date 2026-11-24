@@ -72,8 +72,9 @@
 //! * **Spectrum tap.** The device owns a [`ScopeTap`] (it hands it out through
 //!   [`Device::scope_tap`]) and pushes the post-EQ output (after the output gain) of every batch
 //!   while the tap's live flag is set ([`ScopeTap::set_live`], the same switch the console strips
-//!   use for their meter panels; the app sets it while a panel with the display is on screen).
-//!   Not live: one relaxed load per batch, nothing written, and the audio is the same either way.
+//!   use for their meter panels; the app sets it while a panel with the display is on screen,
+//!   which also makes the tap's ring: an EQ nobody looks at holds none). Not live: one relaxed
+//!   load per batch, nothing written, and the audio is the same either way.
 //!   The ring is the default one (32768 frames, reads up to 16384); the app can ask for the large
 //!   ring with [`ScopeTap::reserve_large`] for longer windows. `spectrum.on` and `display.range`
 //!   ([`DISPLAY_RANGE_DB`]) are display settings of the panel: stored with the project, unused
@@ -940,8 +941,8 @@ impl Equalizer {
             energy_alpha: 1.0,
             peaks: [0.0; 2],
             analyser: false,
-            // Allocated here, not in `prepare`: the tap outlives re-prepares.
-            tap: Arc::new(ScopeTap::new()),
+            // Created here, not in `prepare`: the tap outlives re-prepares (no ring until a view asks).
+            tap: Arc::new(ScopeTap::on_demand()),
         };
         e.setup(48_000.0);
         e.reset();

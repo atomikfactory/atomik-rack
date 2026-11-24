@@ -117,3 +117,80 @@ fn a_device_without_a_tap_registers_nothing() {
     handle.submit_plan(g.compile().unwrap()).unwrap();
     assert!(handle.device_scope_tap(k).is_none());
 }
+
+#[test]
+fn an_on_demand_tap_asks_the_allocator_for_nothing_until_it_is_looked_at() {
+    use atomik_testkit::no_alloc::{allocations_of, assert_no_alloc, peak_heap_of};
+    let (tap, bytes) = peak_heap_of(|| Arc::new(ScopeTap::on_demand()));
+    assert!(bytes < 1024, "{bytes} bytes for a header");
+    let (eager, eager_bytes) = peak_heap_of(|| Arc::new(ScopeTap::new()));
+    assert!(eager_bytes >= 2 * 4 * atomik_device_sdk::SCOPE_FRAMES);
+    drop(eager);
+    // A device that writes while nobody asked: nothing is allocated, the head moves.
+    let (l, r) = ([0.5f32; BATCH], [-0.5f32; BATCH]);
+    assert_no_alloc(|| {
+        for _ in 0..8 {
+            tap.push(&l, &r);
+        }
+    });
+    assert_eq!(tap.head(), (8 * BATCH) as u64);
+    assert!(!tap.has_ring());
+    // Looking at it makes the ring once, here (not the writer); asking again costs nothing.
+    let ((), made) = allocations_of(|| tap.set_live(true));
+    assert!(made > 0, "the ring is made on the asking thread");
+    let ((), again) = allocations_of(|| {
+        tap.set_live(true);
+        tap.reserve();
+    });
+    assert_eq!(again, 0, "once");
+    // From here the writer fills it without allocating, and a read sees only the new frames.
+    assert_no_alloc(|| tap.push(&l, &r));
+    let (mut a, mut b) = (vec![0.0; 256], vec![0.0; 256]);
+    assert_eq!(tap.read_latest(&mut a, &mut b), (BATCH, (9 * BATCH) as u64));
+    assert!(
+        a[..BATCH].iter().all(|v| v.to_bits() == 0.5f32.to_bits())
+            && b[..BATCH]
+                .iter()
+                .all(|v| v.to_bits() == (-0.5f32).to_bits())
+    );
+}
+
+#[test]
+fn an_on_demand_tap_of_a_device_in_the_engine_is_written_after_the_ring_appears() {
+    struct Lazy(Arc<ScopeTap>);
+    impl Device for Lazy {
+        fn descriptor(&self) -> &'static DeviceDescriptor {
+            &CONSTANT_SOURCE
+        }
+        fn prepare(&mut self, _: &PrepareInfo) {}
+        fn reset(&mut self) {}
+        fn set_param(&mut self, _: ParamId, _: f32) {}
+        fn process(&mut self, _ctx: &mut ProcessContext<'_>) {
+            // Like a console strip: writes only while something looks.
+            if self.0.is_live() {
+                self.0.push(&[1.0; BATCH], &[1.0; BATCH]);
+            }
+        }
+        fn scope_tap(&self) -> Option<Arc<ScopeTap>> {
+            Some(Arc::clone(&self.0))
+        }
+    }
+    let (mut engine, mut handle) = new_engine_with_arena(cfg(0, 2), Default::default(), 8);
+    let own = Arc::new(ScopeTap::on_demand());
+    handle
+        .insert_device(id(1), Box::new(Lazy(Arc::clone(&own))), &[])
+        .unwrap();
+    route(&mut handle, 1);
+    let tap = handle.device_scope_tap(id(1)).unwrap();
+    render_blocks(&mut engine, &[], 2, 4 * BATCH, 64);
+    let (mut a, mut b) = (vec![0.0; 64], vec![0.0; 64]);
+    assert_eq!(
+        tap.read_latest(&mut a, &mut b),
+        (0, 0),
+        "nobody looked: nothing"
+    );
+    tap.set_live(true);
+    render_blocks(&mut engine, &[], 2, 4 * BATCH, 64);
+    assert_eq!(tap.read_latest(&mut a, &mut b), (64, (4 * BATCH) as u64));
+    assert!(a.iter().all(|v| v.to_bits() == 1.0f32.to_bits()));
+}
