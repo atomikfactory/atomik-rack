@@ -74,7 +74,10 @@
 //! up to [`AppCore::stream_threshold`] bytes of decoded f32 audio (64 MiB, see
 //! [`crate::stream_source`]) it is loaded into RAM (`SongAsset::Memory`); above it the engine
 //! streams it from the bundle's WAV file (`SongAsset::Stream`), with at least 1 s of
-//! read-ahead. Imports and recordings follow the same rule. Bounces never stream.
+//! read-ahead. Imports and recordings follow the same rule. Bounces never stream. The session budget
+//! ([`AppCore::audio_budget`]) moves the largest assets to the disk when the resident audio would
+//! pass it; every decision goes through [`AppCore::stream_rule`], and a project opening decides for
+//! all its assets before it loads any ([`crate::stream_source`]).
 
 use super::rec::AudioRecording;
 use super::{AppCore, AppError};
@@ -440,6 +443,51 @@ impl<S: EngineSink> AppCore<S> {
         self.sink
             .stream_threshold_bytes()
             .unwrap_or(STREAM_THRESHOLD_BYTES)
+    }
+
+    /// The rule the loading workers follow for the assets they bring in now: the threshold, the
+    /// session's audio budget and the decoded audio the session holds in RAM at this moment.
+    /// Every decision between RAM and the disk goes through it. Bounces and every other offline
+    /// path do not ask: the render crate loads everything.
+    pub fn stream_rule(&self) -> crate::stream_source::StreamRule {
+        crate::stream_source::StreamRule::new(
+            self.stream_threshold(),
+            self.audio_budget(),
+            self.resident_audio_bytes(),
+        )
+    }
+
+    /// The decoded audio a session may keep in RAM: the sink's override (the hidden
+    /// `stream_budget_bytes` setting), else a share of the machine's memory
+    /// ([`crate::memory_limits::audio_budget_for`]), else none.
+    pub fn audio_budget(&self) -> Option<u64> {
+        self.sink
+            .stream_budget_bytes()
+            .or_else(|| crate::memory_limits::audio_budget_for(self.memory_info().total))
+    }
+
+    /// The decoded bytes of audio the song holds in RAM: every memory asset once (a clip, a
+    /// sampler buffer and a freeze share one allocation), plus the sampler buffers of assets
+    /// that stream (their own copies). The reference track, the plugin instances' own sample
+    /// memory and warp renders are not counted.
+    pub fn resident_audio_bytes(&self) -> u64 {
+        let bytes = |a: &SongAsset| crate::stream_source::decoded_bytes(a.frames(), a.channels());
+        let assets: u64 = self
+            .audio
+            .assets
+            .values()
+            .filter(|a| !a.is_stream())
+            .map(bytes)
+            .sum();
+        let copies: u64 = self
+            .audio
+            .buffers
+            .keys()
+            .filter_map(|hash| self.audio.assets.get(hash))
+            .filter(|a| a.is_stream())
+            .map(bytes)
+            .sum();
+        assets.saturating_add(copies)
     }
 
     pub(super) fn insert_loaded(&mut self, loaded: &Loaded) {
@@ -1294,7 +1342,7 @@ impl<S: EngineSink> AppCore<S> {
                 rate,
                 crate::memory_limits::import_limits_for(self.memory_info().total),
             ),
-            self.stream_threshold(),
+            self.stream_rule(),
             paths,
         );
         match started {
@@ -1636,13 +1684,13 @@ impl<S: EngineSink> AppCore<S> {
         if hashes.is_empty() {
             return;
         }
-        let threshold = self.stream_threshold();
+        let rule = self.stream_rule();
         match spawn_load(
             self.audio.tx.clone(),
             self.audio.generation,
             bundle,
-            threshold,
-            hashes,
+            rule,
+            (self.doc().zone_assets(), hashes),
         ) {
             Ok(()) => self.audio.pending += 1,
             Err(e) => self.reject(format!("audio: cannot start the loader: {e}")),
@@ -1666,13 +1714,13 @@ impl<S: EngineSink> AppCore<S> {
             Ok(b) => b,
             Err(e) => return self.reject(e),
         };
-        let threshold = self.stream_threshold();
+        let rule = self.stream_rule();
         let started = spawn_adopt(
             self.audio.tx.clone(),
             self.audio.generation,
             from.to_path_buf(),
             bundle,
-            threshold,
+            rule,
             hashes,
         );
         match started {

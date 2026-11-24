@@ -11,6 +11,7 @@
 
 use crate::audio_import::{Loaded, Msg, load_asset};
 use crate::stems_link::StemBackend;
+use crate::stream_source::StreamRule;
 use atomik_audio_file::{AudioData, Bundle, resample};
 use atomik_stems::{Stem, StemError, StemSink};
 use std::sync::Arc;
@@ -78,8 +79,8 @@ pub(crate) struct Work {
     pub name: String,
     /// The stems to keep.
     pub wanted: Vec<Stem>,
-    /// The decoded size above which an asset streams.
-    pub threshold: u64,
+    /// How the stems are loaded (the usual rule: they may stream).
+    pub rule: StreamRule,
     /// The separation.
     pub backend: Arc<dyn StemBackend>,
 }
@@ -118,7 +119,7 @@ fn run(work: Work, shared: &StemShared, cancel: &AtomicBool) -> Result<Option<Do
         asset,
         name,
         wanted,
-        threshold,
+        mut rule,
         backend,
     } = work;
     shared.set_phase(Phase::Read);
@@ -181,7 +182,7 @@ fn run(work: Work, shared: &StemShared, cancel: &AtomicBool) -> Result<Option<Do
         let info = bundle
             .add_recording(&audio, &file)
             .map_err(|e| format!("cannot store the {} stem: {e}", stem.label()))?;
-        let mut loaded = load_asset(&bundle, &info.hash, threshold)?;
+        let mut loaded = load_asset(&bundle, &info.hash, &mut rule)?;
         loaded.info = Some(info);
         stems.push((stem, loaded));
     }

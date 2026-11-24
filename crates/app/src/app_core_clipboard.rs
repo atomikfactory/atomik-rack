@@ -607,13 +607,13 @@ impl<S: EngineSink> AppCore<S> {
             }
         };
         let sources = self.audio.lenders.clone();
-        let threshold = self.stream_threshold();
+        let rule = self.stream_rule();
         let started = crate::audio_import::spawn_fetch(
             self.audio.tx.clone(),
             self.audio.generation,
             bundle,
             sources,
-            threshold,
+            rule,
             hashes,
         );
         match started {

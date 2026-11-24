@@ -285,6 +285,7 @@ fn settings() -> AudioSettings {
         record_offset_frames: 0,
         pre_count_bars: 0,
         stream_threshold_bytes: None,
+        stream_budget_bytes: None,
         plugins: atomik_plugin_host::PluginSettings::default(),
         surfaces: Vec::new(),
         midi_out_port: None,

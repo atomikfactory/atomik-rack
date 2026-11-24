@@ -10,6 +10,7 @@
 //! flag with the core and reports through [`Msg::Video`], even when it panics.
 
 use crate::audio_import::{Loaded, Msg, display_name, import_file};
+use crate::stream_source::StreamRule;
 use atomik_audio_file::{Bundle, ImportLimits};
 use atomik_video::{
     AudioStream, Control, FfmpegStatus, Pick, Prepared, ProbeInfo, ProxyCache, ProxySpec, Search,
@@ -53,8 +54,8 @@ pub(crate) enum Job {
         bundle: Box<Bundle>,
         /// The song's sample rate.
         rate: u32,
-        /// The streaming threshold of the song's imports.
-        threshold: u64,
+        /// How the song's imports are loaded (threshold and budget).
+        rule: StreamRule,
     },
 }
 
@@ -154,7 +155,7 @@ fn run(
             stream,
             bundle,
             rate,
-            threshold,
+            rule,
         } => {
             let status = search(tool, folder.as_deref());
             let audio = match status.tools() {
@@ -164,7 +165,7 @@ fn run(
                     ffmpeg,
                     &source,
                     stream,
-                    (*bundle, rate, threshold),
+                    (*bundle, rate, rule),
                     &Control {
                         cancel,
                         done,
@@ -240,7 +241,7 @@ fn audio_of(
     ffmpeg: &atomik_video::Ffmpeg,
     source: &Path,
     wanted: Option<u32>,
-    (mut bundle, rate, threshold): (Bundle, u32, u64),
+    (mut bundle, rate, mut rule): (Bundle, u32, StreamRule),
     ctl: &Control<'_>,
 ) -> Result<AudioOutcome, VideoError> {
     let probe = probe_file(tool, ffmpeg, source, ctl.cancel)?;
@@ -264,7 +265,7 @@ fn audio_of(
         &mut bundle,
         &wav,
         (rate, ImportLimits::default()),
-        threshold,
+        &mut rule,
     )
     .map_err(VideoError::Import)?;
     Ok(AudioOutcome::Imported(Box::new(AudioImported {

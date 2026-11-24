@@ -107,7 +107,7 @@ impl<S: EngineSink> AppCore<S> {
             stream,
             bundle: Box::new(bundle),
             rate: self.doc().sample_rate,
-            threshold: self.stream_threshold(),
+            rule: self.stream_rule(),
         };
         let name = display_name(&film);
         self.spawn_video(job, Some((name, film, Purpose::Audio)), false)

@@ -171,3 +171,164 @@ fn a_slow_reader_is_only_ever_waited_for_on_the_calling_thread() {
 fn test_now() -> std::time::Instant {
     std::time::Instant::now()
 }
+
+// ------------------------------------------------------------------ the session budget
+
+const MIB: u64 = 1 << 20;
+
+fn item(key: &str, bytes: u64) -> Candidate<String> {
+    Candidate {
+        key: key.to_owned(),
+        bytes,
+        may_stream: true,
+    }
+}
+
+fn keys(set: &BTreeSet<String>) -> Vec<&str> {
+    set.iter().map(String::as_str).collect()
+}
+
+fn rule(budget: Option<u64>) -> StreamRule {
+    StreamRule::new(STREAM_THRESHOLD_BYTES, budget, 0)
+}
+
+#[test]
+fn under_the_budget_nothing_changes_and_no_budget_is_the_threshold_rule() {
+    let items: Vec<_> = (0..10).map(|i| item(&format!("s{i}"), 50 * MIB)).collect();
+    assert!(
+        plan(&items, rule(Some(500 * MIB))).is_empty(),
+        "exactly fits"
+    );
+    assert!(plan(&items, rule(None)).is_empty());
+    // Today's rule: only what is above the threshold streams.
+    let mixed = vec![
+        item("a", 70 * MIB),
+        item("b", 64 * MIB),
+        item("c", 10 * MIB),
+    ];
+    let by_rule: BTreeSet<String> = mixed
+        .iter()
+        .filter(|i| i.bytes > STREAM_THRESHOLD_BYTES)
+        .map(|i| i.key.clone())
+        .collect();
+    assert_eq!(plan(&mixed, rule(None)), by_rule);
+    assert_eq!(keys(&by_rule), ["a"]);
+    // A budget the whole list fits changes nothing either.
+    assert_eq!(plan(&mixed, rule(Some(u64::MAX))), by_rule);
+}
+
+#[test]
+fn forty_equal_stems_against_a_budget_for_ten_stream_thirty_in_key_order() {
+    let items: Vec<_> = (0..40)
+        .map(|i| item(&format!("s{i:02}"), 55 * MIB))
+        .collect();
+    let streams = plan(&items, rule(Some(10 * 55 * MIB)));
+    assert_eq!(streams.len(), 30);
+    // Equal sizes: the ties break by key, so the first thirty keys stream.
+    assert!(streams.contains("s00") && streams.contains("s29"));
+    assert!(!streams.contains("s30") && !streams.contains("s39"));
+    // Any order of the list gives the same set.
+    let mut reversed = items.clone();
+    reversed.reverse();
+    assert_eq!(plan(&reversed, rule(Some(10 * 55 * MIB))), streams);
+}
+
+#[test]
+fn the_largest_stream_first_and_streaming_stops_when_the_rest_fits() {
+    let items = vec![
+        item("small", 6 * MIB),
+        item("mid", 30 * MIB),
+        item("big", 60 * MIB),
+        item("huge", 64 * MIB),
+    ];
+    // 160 MiB held, 100 allowed: the biggest goes (96 left), nothing more.
+    assert_eq!(keys(&plan(&items, rule(Some(100 * MIB)))), ["huge"]);
+    // 70 allowed: huge, then big (36 left).
+    assert_eq!(keys(&plan(&items, rule(Some(70 * MIB)))), ["big", "huge"]);
+    // What the session holds already counts.
+    let held = StreamRule::new(STREAM_THRESHOLD_BYTES, Some(100 * MIB), 20 * MIB);
+    assert_eq!(keys(&plan(&items, held)), ["big", "huge"]);
+}
+
+#[test]
+fn assets_at_or_below_the_floor_never_stream_whatever_the_budget() {
+    let items = vec![
+        item("a", STREAM_FLOOR_BYTES),
+        item("b", STREAM_FLOOR_BYTES - 1),
+        item("c", 1),
+    ];
+    assert!(plan(&items, rule(Some(0))).is_empty());
+    let with_one_above = [items, vec![item("d", STREAM_FLOOR_BYTES + 1)]].concat();
+    assert_eq!(keys(&plan(&with_one_above, rule(Some(0)))), ["d"]);
+}
+
+#[test]
+fn assets_that_may_not_stream_stay_and_do_not_make_others_stream_beyond_need() {
+    let mut zone = item("zone", 50 * MIB);
+    zone.may_stream = false;
+    let items = vec![zone.clone(), item("a", 40 * MIB), item("b", 30 * MIB)];
+    // 120 held, 90 allowed: the zone asset is the largest but stays; "a" streams (80 left).
+    let streams = plan(&items, rule(Some(90 * MIB)));
+    assert_eq!(keys(&streams), ["a"]);
+    // The zone asset alone is over the budget: everything that can move moves, it stays.
+    let streams = plan(&items, rule(Some(10 * MIB)));
+    assert_eq!(keys(&streams), ["a", "b"]);
+    // Above the threshold the old rule still applies to it.
+    let mut huge = item("huge", 70 * MIB);
+    huge.may_stream = false;
+    assert_eq!(keys(&plan(&[huge], rule(None))), ["huge"]);
+}
+
+#[test]
+fn one_more_asset_streams_when_keeping_it_would_exceed_the_budget() {
+    let mut r = StreamRule::new(STREAM_THRESHOLD_BYTES, Some(100 * MIB), 0);
+    let frames = |mib: u64| mib * MIB / 4; // mono
+    assert!(!r.admit(frames(60), 1, true));
+    assert_eq!(r.resident, 60 * MIB);
+    // 60 + 50 > 100: this one streams and is not counted.
+    assert!(r.admit(frames(50), 1, true));
+    assert_eq!(r.resident, 60 * MIB);
+    // One that fits after all is kept.
+    assert!(!r.admit(frames(40), 1, true));
+    // Over the budget, but below the floor or exempt: stays.
+    assert!(!r.admit(frames(4), 1, true));
+    assert!(!r.admit(frames(30), 1, false));
+    assert_eq!(r.resident, 134 * MIB);
+    // Above the threshold: streams whatever the flag.
+    assert!(r.admit(frames(70), 1, false));
+    // Without a budget it is should_stream.
+    let mut none = rule(None);
+    for (f, ch) in [
+        (1u64, 1u16),
+        (10_000_000, 2),
+        (8_388_608, 2),
+        (8_388_609, 2),
+    ] {
+        assert_eq!(
+            none.admit(f, ch, true),
+            should_stream(f, ch, STREAM_THRESHOLD_BYTES)
+        );
+    }
+}
+
+#[test]
+fn a_machine_with_plenty_of_memory_decides_as_the_threshold_rule_for_ordinary_projects() {
+    let budget = crate::memory_limits::audio_budget_for(Some(16 << 30));
+    let table = [
+        (1_000u64, 1u16),
+        (1_000_000, 2),
+        (8_388_608, 2),
+        (8_388_609, 2),
+        (30_000_000, 1),
+        (16_777_216, 1),
+        (16_777_217, 1),
+    ];
+    let mut r = StreamRule::new(STREAM_THRESHOLD_BYTES, budget, 0);
+    for (frames, channels) in table {
+        assert_eq!(
+            r.admit(frames, channels, true),
+            should_stream(frames, channels, STREAM_THRESHOLD_BYTES),
+            "{frames} x {channels}"
+        );
+    }
+}

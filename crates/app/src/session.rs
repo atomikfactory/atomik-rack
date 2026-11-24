@@ -1520,6 +1520,10 @@ impl<B: AudioBackend> EngineSink for LiveSession<B> {
             .is_none_or(|r| r.handle.stream_primed())
     }
 
+    fn stream_budget_bytes(&self) -> Option<u64> {
+        self.settings.stream_budget_bytes
+    }
+
     fn stream_threshold_bytes(&self) -> Option<u64> {
         self.settings.stream_threshold_bytes
     }

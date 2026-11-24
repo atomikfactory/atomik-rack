@@ -3,6 +3,7 @@
 
 use super::*;
 use crate::app_core::{Pane, engine_config};
+use crate::audio_import::DECODED_WHOLE;
 use crate::sink::{RecordingSink, SinkCall};
 use atomik_audio_file::{AudioData, content_hash, write_wav_f32};
 use atomik_core::PPQ;
@@ -832,4 +833,193 @@ fn an_audio_clip_whose_file_cannot_be_reached_pastes_as_missing_media_and_says_s
     assert!(message.contains("could not be found"), "{message}");
     let bundle = Bundle::open(b.bundle_root().unwrap()).unwrap();
     assert!(!bundle.exists(&hash), "nothing was invented");
+}
+
+// ------------------------------------------------------------------ the session budget
+
+const MIB: u64 = 1 << 20;
+
+/// A core whose sink says `budget` bytes of audio may stay in RAM.
+fn core_with_budget(budget: Option<u64>) -> AppCore<RecordingSink> {
+    let mut sink = RecordingSink::new();
+    sink.stream_budget = budget;
+    let mut c = AppCore::with_doc(sink, empty_doc(), None);
+    c.sink_mut().take();
+    c
+}
+
+/// A saved project of four mono files: three a little above the 4 MiB floor (4.96, 4.77 and
+/// 4.58 MiB decoded) and a tiny one. The path of the project file and the hashes, largest
+/// first.
+fn saved_stems(t: &Tmp, seed: f32) -> (PathBuf, Vec<String>) {
+    let mut c = core();
+    let hashes = [1_300_000, 1_250_000, 1_200_000, 1_000]
+        .iter()
+        .enumerate()
+        .map(|(n, frames)| import_one(&mut c, t, &format!("s{n}.wav"), *frames, seed + n as f32))
+        .collect();
+    c.save_as(&t.path("song.atomik")).unwrap();
+    (t.path("song").join("song.atomik"), hashes)
+}
+
+fn streams(c: &AppCore<RecordingSink>, hashes: &[String]) -> Vec<bool> {
+    hashes
+        .iter()
+        .map(|h| c.song_assets()[h].is_stream())
+        .collect()
+}
+
+fn decoded_whole(hash: &str) -> bool {
+    DECODED_WHOLE
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .iter()
+        .any(|h| h == hash)
+}
+
+#[test]
+fn opening_over_the_budget_streams_the_largest_and_never_decodes_it() {
+    let t = Tmp::new("budget-open");
+    let (file, hashes) = saved_stems(&t, 11.0);
+    // The importing session decoded them all; start the count from the open.
+    DECODED_WHOLE
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .retain(|h| !hashes.contains(h));
+    // 14.3 MiB held, 10 allowed: the largest streams, the rest (9.35 MiB) fits.
+    let mut c = core_with_budget(Some(10 * MIB));
+    c.open(&file).unwrap();
+    c.wait_background();
+    assert_eq!(streams(&c, &hashes), [true, false, false, false]);
+    assert!(
+        !decoded_whole(&hashes[0]),
+        "a streamed asset is never read into memory"
+    );
+    assert!(hashes[1..].iter().all(|h| decoded_whole(h)));
+    let expected = (1_250_000 + 1_200_000 + 1_000) * 4;
+    assert_eq!(c.resident_audio_bytes(), expected);
+    // Two opens of the same project agree.
+    let mut again = core_with_budget(Some(10 * MIB));
+    again.open(&file).unwrap();
+    again.wait_background();
+    assert_eq!(streams(&again, &hashes), streams(&c, &hashes));
+    // No budget: today's rule, everything is in RAM.
+    let mut plain = core_with_budget(None);
+    plain.open(&file).unwrap();
+    plain.wait_background();
+    assert_eq!(streams(&plain, &hashes), [false; 4]);
+    // A budget below even the three big ones leaves the tiny one (below the floor) in RAM.
+    let mut tiny = core_with_budget(Some(1));
+    tiny.open(&file).unwrap();
+    tiny.wait_background();
+    assert_eq!(streams(&tiny, &hashes), [true, true, true, false]);
+}
+
+#[test]
+fn the_budget_follows_the_injected_memory_and_a_small_project_is_untouched() {
+    use crate::platform::memory::MemoryInfo;
+    let t = Tmp::new("budget-memory");
+    let (file, hashes) = saved_stems(&t, 21.0);
+    for (total, budget) in [(4u64 << 30, Some(1u64 << 30)), (16 << 30, Some(4 << 30))] {
+        let mut c = core();
+        c.set_memory_info(MemoryInfo {
+            total: Some(total),
+            available: Some(total / 2),
+        });
+        assert_eq!(c.audio_budget(), budget);
+        c.open(&file).unwrap();
+        c.wait_background();
+        assert_eq!(
+            streams(&c, &hashes),
+            [false; 4],
+            "14 MiB is far below {total}"
+        );
+    }
+    let c = core();
+    assert_eq!(
+        c.audio_budget(),
+        None,
+        "a unit test does not read the machine"
+    );
+    // The hidden override wins over the machine.
+    let mut c = core_with_budget(Some(5 * MIB));
+    c.set_memory_info(MemoryInfo {
+        total: Some(64 << 30),
+        available: None,
+    });
+    assert_eq!(c.audio_budget(), Some(5 * MIB));
+}
+
+#[test]
+fn the_resident_total_follows_import_release_and_undo_and_an_import_streams_over_the_budget() {
+    let t = Tmp::new("budget-total");
+    let mut c = core_with_budget(Some(8 * MIB));
+    assert_eq!(c.resident_audio_bytes(), 0);
+    let a = import_one(&mut c, &t, "a.wav", 1_300_000, 31.0);
+    assert_eq!(c.resident_audio_bytes(), 1_300_000 * 4);
+    assert!(!c.song_assets()[&a].is_stream());
+    // 4.96 + 4.77 MiB is over 8: the new asset streams; what is handed over is not converted.
+    let b = import_one(&mut c, &t, "b.wav", 1_250_000, 32.0);
+    assert!(c.song_assets()[&b].is_stream());
+    assert!(!c.song_assets()[&a].is_stream());
+    assert_eq!(
+        c.resident_audio_bytes(),
+        1_300_000 * 4,
+        "a streamed asset is not resident"
+    );
+    // A small import is below the floor: it stays in RAM whatever the total.
+    let s = import_one(&mut c, &t, "s.wav", 1_000, 33.0);
+    assert!(!c.song_assets()[&s].is_stream());
+    assert_eq!(c.resident_audio_bytes(), (1_300_000 + 1_000) * 4);
+    // Delete the clip of `a`: the history keeps the audio, then lets go.
+    let clip = c.doc().song.tracks[0].lanes[0].clips[0].id;
+    c.apply_command(Command::Song(SongCommand::RemoveClip { id: clip }))
+        .unwrap();
+    assert_eq!(
+        c.resident_audio_bytes(),
+        (1_300_000 + 1_000) * 4,
+        "undo can bring it back"
+    );
+    assert!(c.undo());
+    assert_eq!(c.resident_audio_bytes(), (1_300_000 + 1_000) * 4);
+    assert!(c.redo());
+    push_history_out(&mut c);
+    assert_eq!(c.resident_audio_bytes(), 1_000 * 4, "memory comes back");
+    assert!(
+        c.song_assets()[&b].is_stream(),
+        "what streams keeps streaming after a deletion"
+    );
+}
+
+#[test]
+fn a_bounce_of_a_project_opened_under_a_tiny_budget_equals_one_opened_with_none() {
+    use atomik_ui::{ExportScope, ExportValues};
+    let t = Tmp::new("budget-bounce");
+    let (file, hashes) = saved_stems(&t, 41.0);
+    let values = ExportValues {
+        also_mp3: false,
+        ..crate::export_presets::builtin()[0].values
+    };
+    let bounce = |budget: Option<u64>, name: &str| -> Vec<u8> {
+        let mut c = core_with_budget(budget);
+        c.open(&file).unwrap();
+        c.wait_background();
+        if budget.is_some() {
+            assert!(
+                streams(&c, &hashes).iter().any(|s| *s),
+                "the live engine streams under this budget"
+            );
+        }
+        c.start_audio_export(ExportScope::Song, t.path(name), values)
+            .unwrap();
+        c.wait_background();
+        std::fs::read(t.path(name)).unwrap()
+    };
+    let tiny = bounce(Some(1), "tiny.wav");
+    let none = bounce(None, "none.wav");
+    assert!(tiny.len() > 1_000, "the export has audio");
+    assert!(
+        tiny == none,
+        "a bounce never streams: the bytes are the same"
+    );
 }

@@ -2238,3 +2238,37 @@ refusing a render outright (a machine with a large page file can do it); a setti
 setting); a native confirmation dialog (a second EXPORT is the way the panel already confirms a replaced file).
 
 **Status.** Default (not yet confirmed). Decided by: the owner for the one `unsafe` file; the rest none yet.
+
+## BS. A session has a budget for the audio it keeps in memory, and an asset handed to the engine is never converted
+
+**Question.** An audio asset up to 64 MiB decoded was loaded whole, and a larger one streamed from disk. The rule looks
+at one asset, so forty five-minute mono stems (55 MiB each, 2.2 GiB) all stayed resident, muted and unused ones too,
+on a machine with 4 GB.
+
+**Decision.** The sum has a budget, a pure function of the machine's memory (`memory_limits::audio_budget_for`): a
+quarter of the reported size (rounded up to a whole GiB, as the other limits), at least 256 MiB, and no budget when
+the memory is not known. That is 1 GiB at 4 GiB, 2 GiB at 8, 4 GiB at 16, 8 GiB at 32 and 16 GiB at 64, so a machine
+with 16 GiB or more only sees it for a session holding more than 4 GiB of audio. When the resident audio would
+exceed it, the largest assets stream (`stream_source::plan`: size descending, ties by hash, so two opens agree),
+except an asset of at most 4 MiB decoded (a streamed lane costs a ring of about 770 KiB and disk reads for too little
+memory) and an asset a sampler zone uses (zones play from RAM; a streamed one would be read whole into a second copy).
+The 64 MiB threshold stays as it was: the budget alone already does what a lower threshold under 8 GiB would, and
+better, because it counts the sum and not the one file.
+
+Every place that decides asks one `StreamRule` (`AppCore::stream_rule`: the threshold, the budget and the audio the
+session holds at that moment, recounted from the assets it keeps). A project opening decides for the whole list
+before it loads any, so a streamed asset is never decoded first, and writes one line in the log when the budget moved
+files to the disk. An import, a recording, a paste, a freeze or a rate conversion decides for one asset: it streams
+when keeping it would pass the budget. **An asset handed to the engine is never converted**, in either direction: a
+deletion gives its memory back and the assets that stream keep streaming until the project is opened again, because
+swapping an asset under a playing engine means a hand-over to the audio thread and a click risk for little gain.
+The budget is hidden like the threshold: `stream_budget_bytes` in the settings, and the injected memory figure of a
+test decides the default. A bounce, an export, a stem export and a freeze render never stream: the render crate loads
+every file.
+
+**Rejected.** A lower per-asset threshold under 8 GiB (the budget covers it); a visible setting (no new setting);
+streaming the oldest or the quietest assets (the largest saves the most memory for the fewest rings and reads);
+converting live assets when memory frees up; counting the reference track, a plugin's own sample memory and warp
+renders (each is one object of its own, loaded on request).
+
+**Status.** Default (not yet confirmed). Decided by: none yet.

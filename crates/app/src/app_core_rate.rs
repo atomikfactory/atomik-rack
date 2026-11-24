@@ -87,13 +87,13 @@ impl<S: EngineSink> AppCore<S> {
             Ok(b) => b,
             Err(e) => return self.reject(e),
         };
-        let threshold = self.stream_threshold();
+        let rule = self.stream_rule();
         match spawn_convert(
             self.audio.tx.clone(),
             self.audio.generation,
             bundle,
             rate,
-            threshold,
+            rule,
             used,
         ) {
             Ok(()) => {

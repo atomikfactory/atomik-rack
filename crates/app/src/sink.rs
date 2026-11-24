@@ -233,6 +233,10 @@ pub trait EngineSink {
     fn stream_threshold_bytes(&self) -> Option<u64> {
         None
     }
+    /// The audio budget override in bytes (the hidden setting), if any.
+    fn stream_budget_bytes(&self) -> Option<u64> {
+        None
+    }
     /// The channel counts of the host audio device, `(inputs, outputs)`, while a stream runs
     /// (the Audio I/O lamps turn red for a cabled socket the device does
     /// not have). `None` for the offline sink and while audio is off: every channel counts as
@@ -458,6 +462,8 @@ pub struct RecordingSink {
     pub scopes_large: BTreeMap<DeviceInstanceId, u32>,
     /// The PDC report of the last submitted routing.
     pub pdc: Option<atomik_engine::PdcReport>,
+    /// What [`EngineSink::stream_budget_bytes`] returns.
+    pub stream_budget: Option<u64>,
     /// What [`EngineSink::stream_threshold_bytes`] returns.
     pub stream_threshold: Option<u64>,
     /// When set, [`EngineSink::stream_primed`] reports false (the streamer has no read-ahead).
@@ -736,6 +742,10 @@ impl EngineSink for RecordingSink {
 
     fn stream_primed(&self) -> bool {
         !self.unprimed
+    }
+
+    fn stream_budget_bytes(&self) -> Option<u64> {
+        self.stream_budget
     }
 
     fn stream_threshold_bytes(&self) -> Option<u64> {

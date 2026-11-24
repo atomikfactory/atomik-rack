@@ -15,6 +15,7 @@
 //! host, and the worker is that thread.
 
 use crate::audio_import::{Loaded, Msg, load_asset};
+use crate::stream_source::StreamRule;
 use atomik_audio_file::{AudioData, Bundle};
 use atomik_device_sdk::RunMode;
 use atomik_dsp::rumble::{RumbleParams, reverse_swell, rumble_layer};
@@ -68,8 +69,8 @@ pub(crate) struct Work {
     /// The project bundle (or the session scratch bundle): its audio is read and the render is
     /// stored in it.
     pub bundle: Bundle,
-    /// The decoded size above which an asset streams (the render is loaded the usual way).
-    pub threshold: u64,
+    /// How the render is loaded (the usual rule: it may stream).
+    pub rule: StreamRule,
     /// The original name the render gets in the pool.
     pub name: String,
     /// The plugin machinery.
@@ -210,7 +211,7 @@ fn render(work: Work, control: RenderControl<'_>) -> Result<Option<Done>, String
         doc,
         request,
         mut bundle,
-        threshold,
+        mut rule,
         name,
         plugins,
         post,
@@ -276,7 +277,7 @@ fn render(work: Work, control: RenderControl<'_>) -> Result<Option<Done>, String
     let info = bundle
         .add_recording(&render.audio, &name)
         .map_err(|e| format!("cannot store the render: {e}"))?;
-    let mut loaded = load_asset(&bundle, &info.hash, threshold)?;
+    let mut loaded = load_asset(&bundle, &info.hash, &mut rule)?;
     loaded.info = Some(info);
     Ok(Some(Done {
         loaded,

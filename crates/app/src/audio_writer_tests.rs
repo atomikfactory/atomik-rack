@@ -86,7 +86,7 @@ impl Rig {
                 .collect(),
             bundle: self.bundle.clone(),
             sample_rate: 48_000,
-            stream_threshold: threshold,
+            stream: threshold.into(),
             generation: 7,
             take,
         }
@@ -383,6 +383,27 @@ fn big_laps_stream_from_the_bundle_instead_of_staying_in_ram() {
     let lap = &result.laps[0];
     assert!(lap.asset.is_stream());
     assert_eq!((lap.asset.frames(), lap.asset.channels()), (2_048, 1));
+}
+
+#[test]
+fn a_take_streams_when_keeping_it_would_pass_the_session_budget() {
+    for (budget, resident, streams) in [(1 << 20, 0u64, false), (1 << 20, 1 << 20, true)] {
+        let mut rig = Rig::new("stream-budget");
+        let tap = rig.handle.record_tap(&[0], 8_192).unwrap();
+        let mut cfgw = rig.config(&[("a", TrackInput::Mono(0))], 9, 1 << 30);
+        // A floor of nothing: the 8 KiB take is the one the budget decides about.
+        cfgw.stream = StreamRule {
+            floor: 0,
+            budget: Some(budget),
+            resident,
+            ..cfgw.stream
+        };
+        let (ctl, _) = spawn(tap, cfgw, rig.tx.clone()).unwrap();
+        render(&mut rig.engine, 0, 2_048, 64);
+        ctl.send(finish(2_048, 0, linear(0))).unwrap();
+        let result = rig.result().unwrap();
+        assert_eq!(result.laps[0].asset.is_stream(), streams, "{resident} held");
+    }
 }
 
 #[allow(clippy::disallowed_methods)] // Justification: test-only timing of blocking behaviour.
