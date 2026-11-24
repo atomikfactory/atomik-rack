@@ -67,6 +67,8 @@ The trait is in [crates/device-sdk/src/lib.rs](../crates/device-sdk/src/lib.rs).
 | `fn process(&mut self, ctx: &mut ProcessContext<'_>)` | RT | no | Processes exactly one batch of 64 frames |
 | `fn latency_frames(&self) -> u32` | any | no | Default 0. The engine reads it after `prepare` and, while the project's delay compensation is on (the console's `compensation` flag), delays the faster paths into every summing input to match the slowest one. |
 | `fn scope_tap(&self) -> Option<Arc<ScopeTap>>` | any | no | Default `None`. Opt-in to a ring of the recent stereo frames for the UI (see below). |
+| `fn quiescent(&self) -> bool` | RT | no | Default `false`. `true` says the device has nothing left to do: a silent batch (all audio and CV inputs `+0.0`, no note, no parameter change, the transport only advancing) would write only `+0.0`, emit no note and leave it in the state `idle_advance` leaves it in. The engine then does not call `process` for such batches (see below). |
+| `fn idle_advance(&mut self, frames: usize)` | RT | no | Default nothing. Advances what runs free (an LFO phase, a counter) by `frames` samples, as `process` would have, in place of a skipped batch. |
 
 ### `prepare` is the only allocating method
 
@@ -105,6 +107,24 @@ guard.
 ### Showing more than 32 numbers: the scope tap
 
 `Device::meter_values` publishes up to 32 floats per batch, enough for a level, a gain reduction or a correlation. A device that wants the UI to draw something from the samples themselves (a spectrum, a goniometer) returns a [`ScopeTap`](../crates/device-sdk/src/scope.rs) from `scope_tap`: create it in the constructor (`Arc::new(ScopeTap::new())`, which allocates), keep a clone, and in `process` call `tap.push(&left, &right)` with the 64 frames of the batch. The push is relaxed atomic stores and one release store, so it is real-time safe; the engine registers the tap when the device is inserted, and the app reads the newest frames each UI frame and does the analysis (FFT, decimation, drawing) on its own thread. `atomik.spectrum` and `atomik.phase-meter` are the examples; see [ARCHITECTURE.md](ARCHITECTURE.md#6k-analysers-the-scope-tap-spectrum-and-phase-meter).
+
+### Going quiet: `quiescent` and `idle_advance`
+
+A device whose work does not depend on the signal (a reverb, a delay, a modulation effect) costs the same on silence.
+It can say so: `quiescent` is asked after every `process` of a single-stage device, and while the answer was `true` the
+engine does not call `process` for a batch whose every audio and CV input is bitwise `+0.0` (a `-0.0` or a NaN is
+sound), that has no note, no playback audio and no parameter change, and in which the transport only advanced (the
+same tempo, the same playing state, no jump of the position). It calls `idle_advance(64)` instead. The outputs are
+already `+0.0`, so nothing needs writing.
+
+A device may answer `true` only when a silent batch would change nothing that `idle_advance` does not do: every delay
+line, filter and feedback state exactly zero, every smoother and glide arrived, nothing that would write a non-zero
+sample or change state on its own. A denormal guard that injects noise, or a DC term, rules it out. A source (anything
+that makes sound or CV from nothing, or from the song position) never says `true`. When in doubt leave the default:
+`false` is always right, and a wrong `true` changes rendered audio. Anything that runs free (an LFO phase) must be
+advanced by `idle_advance` step by step as `process` does, not by one multiplication, so the bits match. Test the
+device by rendering a project with sound, silence long enough to be skipped, and sound again, with the skip on and
+off (`Engine::set_idle_skip`), and comparing the bytes.
 
 ### Output zeroing contract
 

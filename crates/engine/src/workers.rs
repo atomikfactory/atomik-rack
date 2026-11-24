@@ -33,6 +33,17 @@
 //!   per-device timing's when it is on, else the engine's own. An offline engine has no
 //!   deadline and hands every level of two or more devices over. The decision never reaches
 //!   the signal.
+//! * **Idle devices.** A node that will be skipped (`Node::skippable`: a quiescent device with silent inputs, see
+//!   `crate::plan`) stays on the audio thread, where it costs one `idle_advance`. The dispatch decision of a level
+//!   is taken before its gather (the inputs of the level are not known before), so `run_level`
+//!   gathers first and then hands over only the nodes that really run, at the positions it would have given them
+//!   without the skip, and raises the callback only if there is one. A level in which nothing runs wakes no worker,
+//!   and `dispatchable` follows what was really handed over; the batch in which idle nodes wake (a note, Play, sound
+//!   arriving) hands over exactly the nodes it would hand over without the skip. The load figure is not changed by
+//!   the skip: a skipped node keeps the cost of its last real run, so the gate stands where it would have stood
+//!   (counting skipped nodes as free would decide the waking batch as calm and run it late). When a node that was
+//!   skipped until now has a note, a playback batch or a transport change, the callback is raised at the start of the
+//!   batch (`idle_node_wakes`); a node woken by sound from upstream wakes the workers at its own level.
 //! * **Distribution.** Item `j` of a dispatched level of `n > 1` devices goes to participant
 //!   `j % p`, `p = min(workers + 1, n)`; participant 0 is the audio thread. Only workers that
 //!   received work are unparked. If a job queue is full the node simply runs on the audio
@@ -116,6 +127,8 @@ pub(crate) struct Job {
     stage: u8,
     last: bool,
     probe: Option<CostProbe>,
+    /// The engine's idle-skip switch of this batch.
+    idle_skip: bool,
     panicked: bool,
 }
 
@@ -359,7 +372,7 @@ fn worker(
     loop {
         if let Ok(mut job) = jobs.pop() {
             let (node, time, stage, last) = (&mut job.node, job.time, job.stage, job.last);
-            job.panicked = node.run(time, stage, last, job.probe);
+            job.panicked = node.run(time, stage, last, job.probe, job.idle_skip);
             // At most WORKER_QUEUE_CAPACITY jobs are in flight per worker, so this fits.
             while let Err(PushError::Full(back)) = done.push(job) {
                 job = back;
@@ -413,6 +426,18 @@ impl RoutingPlan {
             }
         }
         load
+    }
+
+    /// Whether a device that was skipped until now has an event this batch (a note, a playback
+    /// batch, a transport change): the plan is about to need the workers. Costs one bool test
+    /// per node; read only while the workers are not awake.
+    fn idle_node_wakes(&self, arena: &Arena, time: &TimeInfo) -> bool {
+        self.steps.iter().filter(|step| step.last).any(|step| {
+            matches!(
+                arena.nodes.get(self.devices[step.device].slot),
+                Some(Some(node)) if node.wakes_by_event(time)
+            )
+        })
     }
 
     /// How many devices of steps `a..b` a worker could take: those `run_level` would hand over,
@@ -471,6 +496,20 @@ impl RoutingPlan {
                 lower: busy && !probing,
             });
         }
+        // Idle devices keep the workers parked (`run_level` wakes them only for a node that
+        // really runs). When one wakes by an event the plan knows now, the workers are woken at
+        // the start of the batch, as a plan that was never idle has them awake from the start
+        // of the render call, so the wake-up still overlaps the batch's serial work.
+        if mode == GateMode::Load
+            && busy
+            && !probing
+            && !pool.in_callback
+            && arena.idle_skip
+            && self.has_parallel_level()
+            && self.idle_node_wakes(arena, &time)
+        {
+            pool.ensure_callback();
+        }
         let mut spins = 0u64;
         let mut any = false;
         for level in 0..self.level_starts.len().saturating_sub(1) {
@@ -483,10 +522,11 @@ impl RoutingPlan {
                     _ => busy && !probing && self.sendable(a, b, pool, arena) > 0,
                 };
             if dispatch {
-                any = true;
-                pool.ensure_callback();
-                let level_spins =
+                // The level gathers first; only a node that really runs is handed over, and
+                // the workers are woken only if one is (see `run_level`).
+                let (level_spins, handed) =
                     self.run_level(a, b, time, dropped, pool, arena, meters, fault, probe);
+                any |= handed;
                 spins = spins.saturating_add(level_spins);
             } else {
                 self.run_sequential(a, b, time, dropped, arena, meters, fault, probe);
@@ -515,7 +555,7 @@ impl RoutingPlan {
         meters: &Meters,
         fault: &FaultState,
         probe: Option<CostProbe>,
-    ) -> u64 {
+    ) -> (u64, bool) {
         let Self {
             devices,
             steps,
@@ -526,6 +566,7 @@ impl RoutingPlan {
             ..
         } = self;
         let delays = &mut console.delays;
+        let idle_skip = arena.idle_skip;
         // A level holds at most one stage of any device (stage s -> s+1 is an edge), so each
         // arena node moves at most once per level.
         let level = &steps[a..b];
@@ -541,6 +582,22 @@ impl RoutingPlan {
         // 2. Hand the worker shares over (moving boxes), waking only workers that got work.
         let n = b - a;
         let participants = (pool.links.len() + 1).min(n);
+        // A node that will be skipped (a quiescent device with silent inputs: the same pure
+        // question `Node::run` asks) stays home and costs nothing, so it is not counted as work
+        // for the workers. They are woken only when a node at a worker's position really runs:
+        // a level of idle devices wakes nobody, and a level in which they wake (a note, Play,
+        // sound arriving) hands over exactly the nodes it would hand over without the skip.
+        let handing = level.iter().enumerate().any(|(j, step)| {
+            j % participants != 0
+                && matches!(
+                    arena.nodes.get(slot_of(step)),
+                    Some(Some(node)) if !(idle_skip && node.skippable(&time))
+                )
+        });
+        if handing {
+            pool.ensure_callback();
+        }
+        let mut handed = false;
         let mut outstanding = 0usize;
         for (w, link) in pool.links.iter_mut().enumerate().take(participants - 1) {
             if link.dead {
@@ -554,10 +611,9 @@ impl RoutingPlan {
                 };
                 // A pinned device stays home and runs in step 3, on the
                 // audio thread. Read each batch, so the answer may change at run time.
-                if slot
-                    .as_ref()
-                    .is_none_or(|node| node.device.pinned_to_audio_thread())
-                {
+                if slot.as_ref().is_none_or(|node| {
+                    node.device.pinned_to_audio_thread() || (idle_skip && node.skippable(&time))
+                }) {
                     continue;
                 }
                 let Some(node) = slot.take() else {
@@ -570,6 +626,7 @@ impl RoutingPlan {
                     stage: step.stage,
                     last: step.last,
                     probe,
+                    idle_skip,
                     panicked: false,
                 };
                 match link.jobs.push(job) {
@@ -577,6 +634,7 @@ impl RoutingPlan {
                         outstanding += 1;
                         link.pending += 1;
                         sent = true;
+                        handed = true;
                     }
                     // Queue full: the node stays home and runs on the audio thread.
                     Err(PushError::Full(job)) => arena.nodes[job.index] = Some(job.node),
@@ -589,7 +647,7 @@ impl RoutingPlan {
         // 3. The audio thread runs whatever stayed home (its share and any overflow).
         for step in level {
             if let Some(node) = arena.node_mut(slot_of(step))
-                && node.run(time, step.stage, step.last, probe)
+                && node.run(time, step.stage, step.last, probe, idle_skip)
             {
                 fault.record(devices[step.device].id);
             }
@@ -644,7 +702,7 @@ impl RoutingPlan {
                 node.scatter(&step.routes, slots, note_slots, meters);
             }
         }
-        spins
+        (spins, handed)
     }
 }
 

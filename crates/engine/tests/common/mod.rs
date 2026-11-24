@@ -4,6 +4,7 @@
 pub mod audio;
 pub mod costed;
 pub mod hot;
+pub mod idle;
 pub mod patches;
 pub mod song;
 

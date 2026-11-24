@@ -1545,6 +1545,22 @@ impl Engine {
         }
     }
 
+    /// Switches the idle skip off or on (default on; test and benchmark hook, not a user
+    /// setting, never saved): with it off every device is called every batch, as before the
+    /// skip existed. Output is the same either way; that is what the skip must guarantee.
+    #[doc(hidden)]
+    pub fn set_idle_skip(&mut self, on: bool) {
+        self.arena.idle_skip = on;
+    }
+
+    /// How many batches the node of device `id` has skipped so far because the device was
+    /// quiescent (test hook; not a stable API). `None` for a device that is not in the arena.
+    #[doc(hidden)]
+    pub fn idle_skipped(&self, id: DeviceInstanceId) -> Option<u64> {
+        let slot = self.arena.slot_of(id)?;
+        self.arena.nodes.get(slot)?.as_deref().map(|n| n.skipped)
+    }
+
     /// Whether the load rule holds the plan busy now (test hook; not a stable API).
     #[doc(hidden)]
     pub fn workers_busy(&self) -> bool {
@@ -1810,6 +1826,7 @@ impl Engine {
             }
             ControlOp::Plan(mut swap) => {
                 std::mem::swap(&mut self.arena, &mut swap.arena);
+                self.arena.idle_skip = swap.arena.idle_skip;
                 std::mem::swap(&mut self.routing, &mut swap.routing);
                 self.meters.clear_all_device_values();
                 self.meters.clear_all_cpu();
