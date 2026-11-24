@@ -80,6 +80,30 @@ const CASES: &[Case] = &[
         // The voices release over 150 ms after each chord; skipped otherwise (13,270 of 15,000).
         min_skipped: [10_000, 10_000],
     },
+    Case {
+        name: "granular",
+        type_id: "atomik.granular",
+        outs: ["out_l", "out_r"],
+        params: &[
+            ("lfo.wave", 4.0),
+            ("lfo.rate", 7.3),
+            ("lfo.to_position", 0.3),
+            ("lfo.to_size", 0.5),
+            ("lfo.to_pitch", 3.0),
+            ("lfo.to_density", 0.4),
+            ("pos.spray", 0.3),
+            ("pitch.random", 20.0),
+            ("grain.reverse", 0.3),
+            ("filter.enabled", 1.0),
+            ("filter.cutoff", 3_000.0),
+            ("lfo.to_cutoff", 0.5),
+        ],
+        keys: &[48, 55, 64],
+        change: ("master.level", -3.0),
+        samples: false,
+        // The built-in source plays; the voices release over 400 ms after each chord (12,890 of 15,000).
+        min_skipped: [10_000, 10_000],
+    },
 ];
 
 /// One mono zone over every key: 8,192 frames of a wave built from two parabolas (no libm call),
@@ -323,4 +347,9 @@ fn the_organ_renders_the_same_bytes_skipped_or_not() {
 #[test]
 fn the_sampler_renders_the_same_bytes_skipped_or_not() {
     scenarios(case("sampler"));
+}
+
+#[test]
+fn the_granular_synth_renders_the_same_bytes_skipped_or_not() {
+    scenarios(case("granular"));
 }

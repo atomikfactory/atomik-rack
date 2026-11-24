@@ -1684,6 +1684,9 @@ pub struct Granular {
     frames: u64,
     grains_active: u32,
     voices_active: u32,
+    /// Whether the device said at the end of its last batch that it is quiescent (see `at_rest`);
+    /// cleared by everything that changes the state outside `process`.
+    rest: bool,
     #[cfg(test)]
     probe: Option<Arc<tests::Probe>>,
 }
@@ -1730,6 +1733,7 @@ impl Granular {
             frames: 0,
             grains_active: 0,
             voices_active: 0,
+            rest: false,
             #[cfg(test)]
             probe: None,
         };
@@ -2110,6 +2114,7 @@ impl Device for Granular {
     }
 
     fn reset(&mut self) {
+        self.rest = false;
         for v in &mut self.voices {
             v.kill();
             for f in &mut v.filters {
@@ -2136,6 +2141,7 @@ impl Device for Granular {
     }
 
     fn set_param(&mut self, id: ParamId, plain: f32) {
+        self.rest = false;
         let i = id.0 as usize;
         if i < PARAM_COUNT {
             self.values[i] = plain;
@@ -2144,6 +2150,7 @@ impl Device for Granular {
     }
 
     fn swap_samples(&mut self, map: Option<SampleMapRef>) -> Option<SampleMapRef> {
+        self.rest = false;
         let sr = self.shared.sample_rate;
         // 1. Voices still draining from the draining map are cut, which frees that map.
         for v in &mut self.voices {
@@ -2305,8 +2312,31 @@ impl Device for Granular {
         }
         self.grains_active = grains;
         self.voices_active = voices;
+        self.rest = self.at_rest();
     }
 
+    /// A granular synth is a source while a voice sounds and silent only by state. It rests when no voice
+    /// is active or waiting to start (a releasing voice, a voice fading out after a steal or a map swap and a
+    /// note waiting for such a fade are active; a voice that has ended has dropped its grains), the master
+    /// gain and the volume and expression gain sit on their targets and the master gain is a plain positive
+    /// number (so `+0.0` times it is `+0.0`; the level CV, when cabled, is silent and scales by exactly one,
+    /// and the soft limit and the controller gain map `+0.0` to `+0.0`). A silent batch then changes the
+    /// device LFO, the frame counter and the panel's "newest voice" view, which `idle_advance` moves on, and
+    /// nothing else: the voices' own LFOs and random streams belong to voices that are not running, and
+    /// every note draws what it needs from its own seed. The panel's grain trail is a function of the frame
+    /// counter, so it ages as it would. A param change, a reset and a swap of the map clear it at once; a
+    /// note, a controller message and a tuning change reach the device as a batch it runs.
+    fn quiescent(&self) -> bool {
+        self.rest
+    }
+
+    /// What a silent batch changes: the device LFO (it skips its shape), the frame counter the grain trail
+    /// is read against and the "newest voice" view of the panel, which a batch clears before it looks.
+    fn idle_advance(&mut self, frames: usize) {
+        self.lfo.skip(frames);
+        self.display.valid = false;
+        self.frames += frames as u64;
+    }
     fn has_meter_values(&self) -> bool {
         true
     }
@@ -2339,5 +2369,21 @@ impl Device for Granular {
     }
 }
 
+impl Granular {
+    /// The conditions of `quiescent` that read the state (see there).
+    fn at_rest(&self) -> bool {
+        !self
+            .voices
+            .iter()
+            .any(|v| v.is_active() || v.pending.is_some())
+            && self.master.is_settled()
+            && self.master.value().is_sign_positive()
+            && self.master.value().is_finite()
+            && self.ctl.gain_settled()
+    }
+}
+
+#[cfg(test)]
+mod idle_tests;
 #[cfg(test)]
 mod tests;

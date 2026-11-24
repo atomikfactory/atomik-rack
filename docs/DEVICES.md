@@ -1224,6 +1224,15 @@ Sockets: `notes_in`, `pitch_cv_in`, `position_cv_in`, `density_cv_in`, `cutoff_c
   handles in the lower half of the display: a press on one drags `pos.spray` instead, the band
   following the pointer (its width is twice the distance from the position; on a band so narrow
   that its edges lie on the position line, only a press in the lower half takes an edge).
+- **Idle.** With no voice active or waiting to start (a releasing voice, a voice fading out after a steal or a map
+  swap and a note waiting for such a fade all count as active; a voice that has ended has dropped its grains) and
+  the master gain and the volume and expression gain on their targets, the synth says it is quiescent and the engine
+  leaves it uncalled while it gets no note, controller or parameter message and no new map. It only moves the device
+  LFO on (the same phase steps and sample & hold draws as a processed silent batch), the frame counter the grain
+  trail is read against and the panel's "newest voice" view, so every one of the 63 meter values is what a processed
+  silent batch would publish; the voices' own LFOs and random streams belong to voices that are not running and are
+  seeded again by each note. A cable on the level CV does not keep it awake. The default patch rests 300 batches
+  (the 400 ms release) after the last key is released. The audio is bit for bit the same.
 
 ### Sounds
 

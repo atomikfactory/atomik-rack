@@ -869,6 +869,7 @@ three-note chord), before (the tree without the change) and after; the limit is 
 |---|---|---|---|---|
 | organ | 5.530 ms | 1.082 ms | 2.526 ms | 2.493, 2.493 ms (-1.3 %, noise) |
 | sampler | 2.452 ms | 0.951 ms | 0.282 ms | 0.284, 0.286 ms (+0.8 %, +1.6 %) |
+| granular | 2.274 ms | 1.259 ms | 4.656 ms | 4.713, 4.667 ms (+1.2 %, +0.2 %) |
 
 Organ: the answer is computed once at the end of a batch and only when no key sounds (a chord ends the check at the
 first voice). What it reads then is a handful of flags and settled-smoother tests, the scan-line zero counter the
@@ -885,3 +886,9 @@ so its chord row measures a sampler whose notes find no zone, the cheapest busy 
 0.8 to 1.6 % an upper bound on what a playing sampler pays; a sampler that plays a map costs far more per batch and the
 pass is the same. The skip-on row is the LFO stepped sample by sample (64 additions and compares a batch). A default
 patch is quiescent 113 batches after the last key is released (the 150 ms release) and one batch from the start.
+
+Granular: the same question as the sampler's, one pass over the voices at the end of a batch (the counts of grains
+and voices the panel reads are made by a pass of their own that was there already). Its skip-on row is dearer than the
+sampler's because the skipped batch also advances the frame counter and clears the panel's newest-voice view, and the
+LFO is stepped sample by sample as before. The chord row is the built-in source, so it is a real busy row. A default
+patch is quiescent 300 batches after the last key is released (the 400 ms release) and one batch from the start.
