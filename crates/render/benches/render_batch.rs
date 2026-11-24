@@ -15,9 +15,9 @@
 //! with 4 FX returns), `console-64` (64 strips, gate and compressor on), `lanes-200` and
 //! `lanes-2000` (automation lanes), `large-song` (100 tracks, 500 clips, 2,000 notes).
 //! Every scenario bounces `BARS` bars plus the release tail, so a run is a few seconds of audio.
-//! The `idle` rows (`idle/stereo-delay-x20/skip-off` and `skip-on`, and one pair for each other effect that can be
-//! skipped) render 256 batches of twenty silent effects through the engine with the idle skip off and on; only the
-//! render loop is timed.
+//! The `idle` rows (`idle/stereo-delay-x20/skip-off` and `skip-on`, and one pair for each other effect or
+//! instrument that can be skipped) render 256 batches of twenty silent devices through the engine with
+//! the idle skip off and on; only the render loop is timed.
 #![allow(
     clippy::disallowed_methods,
     reason = "wall-clock timing is the point of a benchmark"
@@ -79,13 +79,19 @@ fn bounce(doc: &RackDoc, workers: u16, block: usize) -> usize {
 const IDLE_BATCHES: usize = 256;
 /// Effects in each idle row.
 const IDLE_DELAYS: usize = 20;
-/// The effects that have an idle row (`idle/<name>-x20/skip-off|on`).
-const IDLE_TYPES: [&str; 5] = [
+/// The effects and instruments that have an idle row (`idle/<name>-x20/skip-off|on`).
+const IDLE_TYPES: [&str; 11] = [
     "atomik.stereo-delay",
     "atomik.echo",
     "atomik.reverb",
     "atomik.space-reverb",
     "atomik.modulation",
+    "atomik.organ",
+    "atomik.sampler",
+    "atomik.granular",
+    "atomik.fm-synth",
+    "atomik.wavetable-synth",
+    "atomik.poly-synth",
 ];
 
 /// The engine of an idle row: twenty effects of `type_id` with nothing connected, so every one

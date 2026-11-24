@@ -856,3 +856,66 @@ default (the device bench default mode and an unsynced LFO); the allpass states 
 hundred samples to empty, so an idle modulation effect is quiescent from its first batch. An LFO locked to a playing
 transport is never skipped, so the row of a project that plays a synced chorus is the busy row. Four more runs of the
 busy row after the change read 1.727 to 1.702 ms against 1.759 to 1.741 ms before: no cost that the machine can see.
+
+## Instruments that go quiet (2026-11-24)
+
+The engine rows of the effects above, now for the instruments that say they are quiescent
+(`cargo bench -p atomik-render --bench render_batch -- idle/<name>`): twenty of them, nothing cabled and no note, 256
+batches, skip off and on, median of 21 samples, one run each. What the answer must not cost a playing instrument is
+the device bench's chord row (`cargo bench -p atomik-devices --bench process -- device/<name>/256batches`: a held
+three-note chord), before (the tree without the change) and after; the limit is a rise of 2 % of the busy row.
+
+| instrument | idle row, skip off | idle row, skip on | busy row before | busy row after |
+|---|---|---|---|---|
+| organ | 5.530 ms | 1.082 ms | 2.526 ms | 2.493, 2.493 ms (-1.3 %, noise) |
+| sampler | 2.452 ms | 0.951 ms | 0.282 ms | 0.284, 0.286 ms (+0.8 %, +1.6 %) |
+| granular | 2.274 ms | 1.259 ms | 4.656 ms | 4.713, 4.667 ms (+1.2 %, +0.2 %) |
+| fm synth | 2.418 ms | 0.931 ms | 7.076, 7.181, 7.320 ms | 7.259, 7.027, 7.077, 7.068 ms (-1.2 % on the means, noise) |
+| wavetable synth | 2.315 ms | 1.115 ms | 3.980 ms | 4.042, 3.955 ms (+1.6 %, -0.6 %) |
+| poly synth | 2.306 ms | 1.002 ms | 2.338 ms | 2.330, 2.327 ms (-0.3 %, noise) |
+
+Organ: the answer is computed once at the end of a batch and only when no key sounds (a chord ends the check at the
+first voice). What it reads then is a handful of flags and settled-smoother tests, the scan-line zero counter the
+scanner shortcut already keeps, and (last) one test per tone wheel that the per-batch normalisation would change
+nothing, a fixed point the phasors reach a batch or two after the last key. The percussion envelope is not a
+condition: it multiplies a sum of nothing, so `idle_advance` lets it fall with the same multiplications. The default
+patch is quiescent 28 batches after the last key is released (the key envelope's 4 ms release down to 1e-4) and 2
+batches from the start. The skip-on row is the scanner phase stepped sample by sample (64 additions and wraps a
+batch), which is what keeps it bit-exact.
+
+Sampler: the answer is one pass over the voices at the end of a batch (the pass the batch starts with already asks the
+same question), the two gains' settled flags and the master gain's sign. The device bench rig gives the sampler no map,
+so its chord row measures a sampler whose notes find no zone, the cheapest busy batch there is, which makes a rise of
+0.8 to 1.6 % an upper bound on what a playing sampler pays; a sampler that plays a map costs far more per batch and the
+pass is the same. The skip-on row is the LFO stepped sample by sample (64 additions and compares a batch). A default
+patch is quiescent 113 batches after the last key is released (the 150 ms release) and one batch from the start.
+
+Granular: the same question as the sampler's, one pass over the voices at the end of a batch (the counts of grains
+and voices the panel reads are made by a pass of their own that was there already). Its skip-on row is dearer than the
+sampler's because the skipped batch also advances the frame counter and clears the panel's newest-voice view, and the
+LFO is stepped sample by sample as before. The chord row is the built-in source, so it is a real busy row. A default
+patch is quiescent 300 batches after the last key is released (the 400 ms release) and one batch from the start.
+
+FM synth: one pass over the voices, then the two stages behind them, each only when everything before it passed: the
+oversampler's decimator histories (a few hundred floats, only at 2x and 4x) and, with the chorus on, the two chorus
+rings (about 1,450 floats each, a vectorised OR). The chorus is off in the bench rig, so the chord row does not run the
+ring check (when the chorus is on and a voice sounds the pass stops at the first active voice all the same). The
+decimators are FIR, so one silent block empties them; the chorus needs its 30 ms ring (22 batches more). The default
+patch is quiescent 220 batches after the last key is released (the carriers' release), one batch from the start. The
+three baseline runs of the busy row show this machine's spread (2 %); the four runs after the change lie inside it.
+
+Wavetable synth: one pass over the voices at the end of a batch, the cable test on the LFO output and the three
+smoother tests; nothing in the sample loop. The published position of the newest voice is computed at the end of a
+batch already and reads -1 when no voice runs, which is the value a skipped batch leaves. The skip-on row is the LFO
+stepped sample by sample. The default patch is quiescent 217 batches after the last key is released and one batch
+from the start.
+
+Poly synth (and the mono bass, which is the same engine under another descriptor): the same pass over the voices, the
+smoother tests, and for each effect that is on the check of its lines: the chorus's two rings (a vectorised OR of about
+1,450 floats each) and the echo's two zero counters (`track_zeros` on the lines, set when the lines are made at
+`prepare`, so a write counts the zeros it stores: a compare and an add a sample, paid only while the echo is on; the
+default patch has it off). The echo is the long wait: its ring is 65,536 samples and the repeats (feedback 0.35,
+ping-pong) take about 43 passes of 0.3 s to flush below 1e-20, so a patch with the echo on rests about 13 s after the
+last key and one with feedback 0 about 1.4 s after it. LFO 2 is stepped only while it has a destination, exactly as
+the batch does. The default patch is quiescent 217 batches after the last key is released and one batch from the
+start; the mono bass with its defaults 96.

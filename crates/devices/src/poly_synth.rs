@@ -1861,6 +1861,9 @@ pub struct PolySynth {
     /// Set by `prepare`/`reset`: the next `process` snaps the master gain to its target.
     fresh: bool,
     seed: u64,
+    /// Whether the device said at the end of its last batch that it is quiescent (see `at_rest`);
+    /// cleared by everything that changes the state outside `process`.
+    rest: bool,
     #[cfg(test)]
     probe: Option<std::sync::Arc<tests::VoiceProbe>>,
 }
@@ -1953,6 +1956,7 @@ impl PolySynth {
             delay_feedback: 0.35,
             fresh: true,
             seed: 0,
+            rest: false,
             #[cfg(test)]
             probe: None,
         };
@@ -1966,6 +1970,15 @@ impl PolySynth {
         for i in 0..PARAM_COUNT {
             self.apply(i as u32, self.values[i]);
         }
+    }
+
+    /// Whether LFO 2 has a destination, so that it runs (its phase waits while it has none).
+    fn lfo2_runs(&self) -> bool {
+        let s = &self.shared;
+        s.lfo2_to_pitch != 0.0
+            || s.lfo2_to_cutoff != 0.0
+            || s.lfo2_to_level != 0.0
+            || s.mods.is_active()
     }
 
     /// Whether the oscillators need the longer path.
@@ -2152,6 +2165,7 @@ impl PolySynth {
         let lines = (sr * DELAY_MAX_S).ceil() as usize;
         for line in &mut self.delay {
             line.resize(lines);
+            line.track_zeros();
         }
         self.delay_used = false;
     }
@@ -2331,12 +2345,7 @@ impl PolySynth {
             }
         }
         // LFO 2 runs only while it has a destination (its phase waits otherwise).
-        let s = &self.shared;
-        if s.lfo2_to_pitch != 0.0
-            || s.lfo2_to_cutoff != 0.0
-            || s.lfo2_to_level != 0.0
-            || s.mods.is_active()
-        {
+        if self.lfo2_runs() {
             for b in &mut lfo2 {
                 *b = self.lfo2.next_sample();
             }
@@ -2489,6 +2498,7 @@ impl Device for PolySynth {
     }
 
     fn reset(&mut self) {
+        self.rest = false;
         for (i, v) in self.voices.iter_mut().enumerate() {
             v.amp.reset();
             v.fenv.reset();
@@ -2526,6 +2536,7 @@ impl Device for PolySynth {
     }
 
     fn set_param(&mut self, id: ParamId, plain: f32) {
+        self.rest = false;
         let i = id.0 as usize;
         if i < PARAM_COUNT {
             self.values[i] = plain;
@@ -2534,6 +2545,7 @@ impl Device for PolySynth {
     }
 
     fn process(&mut self, ctx: &mut ProcessContext<'_>) {
+        let lfo_out_on = ctx.is_connected(LFO_CV_OUT);
         let cutoff = *ctx.input(CUTOFF_CV_IN);
         let pitch = *ctx.input(PITCH_CV_IN);
         let resonance = *ctx.input(RESONANCE_CV_IN);
@@ -2551,7 +2563,7 @@ impl Device for PolySynth {
                 resonance_on: ctx.is_connected(RESONANCE_CV_IN),
                 level_on: ctx.is_connected(LEVEL_CV_IN),
                 pan_on: ctx.is_connected(PAN_CV_IN),
-                lfo_out_on: ctx.is_connected(LFO_CV_OUT),
+                lfo_out_on,
                 tune_cents: ctx.time.tune_cents,
             };
             self.render_batch(&inp, true, &mut out);
@@ -2559,8 +2571,57 @@ impl Device for PolySynth {
         *ctx.output(OUT_L) = out.l;
         *ctx.output(OUT_R) = out.r;
         *ctx.output(LFO_CV_OUT) = out.lfo;
+        self.rest = !lfo_out_on && self.at_rest();
+    }
+
+    /// A source while a voice sounds or a cable carries LFO 1; silent only by state otherwise. It rests when
+    /// no voice is active or waiting to start (a releasing voice and a steal fade count as active), LFO 1
+    /// is not cabled, the master gain and the volume and expression gain sit on their targets and the master
+    /// gain is a plain positive number (so `+0.0` times it is `+0.0`; the level CV and the pan CV, when
+    /// cabled, are silent and scale by exactly one or by a positive gain, and the soft limit and the
+    /// controller gain map `+0.0` to `+0.0`), and, with the chorus on, both chorus lines hold only zeros and,
+    /// with the echo on, both echo lines hold only zeros (the whole ring: a later change of the echo time
+    /// reads what is further back). The noise, the drift and the start angles belong to the voices and are
+    /// drawn only while one runs or starts. A silent batch then changes only the two LFOs and the chorus
+    /// LFO, which `idle_advance` moves on exactly as `render_batch` does. A param change and a reset clear it
+    /// at once; a note, a controller message and a tuning change reach the device as a batch it runs, and
+    /// the engine runs the batch of a new cabling.
+    fn quiescent(&self) -> bool {
+        self.rest
+    }
+
+    /// What a silent batch changes: LFO 1 (its shape is not evaluated, as `render_batch` does when
+    /// nothing reads it), LFO 2 only while it has a destination (its phase waits otherwise) and, with the
+    /// chorus on, the chorus LFO.
+    fn idle_advance(&mut self, frames: usize) {
+        self.lfo.skip(frames);
+        if self.lfo2_runs() {
+            self.lfo2.skip(frames);
+        }
+        if self.chorus_mix > 0.0 {
+            self.chorus.skip_silent(frames);
+        }
     }
 }
+
+impl PolySynth {
+    /// The conditions of `quiescent` that read the state (see there). The cheap ones come first.
+    fn at_rest(&self) -> bool {
+        !self
+            .voices
+            .iter()
+            .any(|v| v.is_active() || v.pending.is_some())
+            && self.master.is_settled()
+            && self.master.value().is_sign_positive()
+            && self.master.value().is_finite()
+            && self.ctl.gain_settled()
+            && (self.delay_mix <= 0.0 || self.delay.iter().all(DelayLine::holds_only_zeros))
+            && (self.chorus_mix <= 0.0 || self.chorus.is_empty())
+    }
+}
+
+#[cfg(test)]
+mod idle_tests;
 
 #[cfg(test)]
 mod tests {

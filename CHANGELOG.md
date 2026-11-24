@@ -314,6 +314,37 @@ may break APIs and the patch and project formats.
   so the sweep is where it would have been when sound returns; an effect synced to a playing transport is always
   processed. The audio is byte for byte the same. Twenty idle modulation effects cost 136 us a batch before and 5.1 us
   after.
+- **An idle organ is no longer processed.** An organ with no key down or releasing, its click spent, its scan lines
+  empty and its drawbars, scanner and volume settled is left uncalled by the engine while no note, controller or
+  parameter message reaches it; only its scanner phase and its percussion decay are moved on, so the vibrato and the
+  chorus are where they would have been when a key returns, and the audio is byte for byte the same. A mod wheel held
+  above zero on the rotary speed keeps it running. Twenty idle organs cost 21.6 us a batch before and 4.2 us after.
+- **An idle sampler is no longer processed.** A sampler with no voice active or waiting to start and its gains
+  settled is left uncalled by the engine while no note, controller or parameter message reaches it and no map is
+  swapped in; only its LFO is moved on, so the vibrato, the filter sweep and the tremolo of the next note start where
+  they would have, and the audio is byte for byte the same. Twenty idle samplers cost 9.6 us a batch before and 3.7 us
+  after.
+- **An idle granular synth is no longer processed.** A granular synth with no voice active or waiting to start and
+  its gains settled is left uncalled by the engine while no note, controller or parameter message reaches it and no
+  map is swapped in; only its LFO, its frame counter and the panel's newest-voice view are moved on, so the grain
+  trail and every panel value read what they would have, and the audio is byte for byte the same. Twenty idle granular
+  synths cost 8.9 us a batch before and 4.9 us after.
+- **An idle FM synth is no longer processed.** An FM synth with no voice active or waiting to start, nothing on its LFO
+  output, its gains settled and its oversampler and chorus emptied is left uncalled by the engine while no note,
+  controller or parameter message reaches it; only its two LFOs are moved on, so the vibrato, the tremolo, the index
+  and the chorus sweep of the next note start where they would have, and the audio is byte for byte the same. Twenty
+  idle FM synths cost 9.4 us a batch before and 3.6 us after.
+- **An idle wavetable synth is no longer processed.** A wavetable synth with no voice active or waiting to start,
+  nothing on its LFO output and its gains settled is left uncalled by the engine while no note, controller or
+  parameter message reaches it; only its LFO is moved on, so the position sweep, the vibrato and the filter sweep of
+  the next note start where they would have, and the audio is byte for byte the same. Twenty idle wavetable synths
+  cost 9.0 us a batch before and 4.4 us after.
+- **An idle poly synth and mono bass are no longer processed.** A poly synth (and the mono bass, which is the same
+  engine) with no voice active or waiting to start, nothing on its LFO output, its gains settled and its chorus and
+  echo emptied (the echo needs its 1.4 s ring and its repeats flushed) is left uncalled by the engine while no note,
+  controller or parameter message reaches it; only its LFOs and the chorus sweep are moved on, LFO 2 only while it
+  has a destination as before, so the next note finds them where they would have been, and the audio is byte for
+  byte the same. Twenty idle poly synths cost 9.0 us a batch before and 3.9 us after.
 
 ### Fixed
 - **Dropping an instrument above its mix channel.** An instrument dragged to the place above its own mix channel

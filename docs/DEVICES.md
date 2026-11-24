@@ -180,6 +180,19 @@ level; there is glide, legato, a stereo spread, drift and an in-device chorus an
     sides at the centre, the far side falls as cos(|pan|·π/2), the near side stays at 1.
 - **Randomness.** The noise and the sample & hold LFO are seeded from the patch seed and the device
   instance, so renders are reproducible.
+- **Idle.** With no voice active or waiting to start (a releasing voice and a steal fade count as active), no cable
+  on `lfo_cv_out`, the master gain and the volume and expression gain on their targets and, for each effect that
+  is on, its lines holding only zeros (the chorus: 30 ms of silence; the echo: its whole ring of 65,536 samples,
+  1.4 s at 48 kHz, and the repeats flushed to zero, which takes about 43 repeats at the default feedback), the
+  synth says it is quiescent and the engine leaves it uncalled while it gets no note, controller or parameter
+  message. It only moves the LFOs on, with the same additions and wraps as a processed silent batch: LFO 1 (its
+  shape is not evaluated, as `process` does when nothing reads it), LFO 2 only while it has a destination (its
+  phase waits otherwise, so a stretch skipped before a destination is set leaves it where it was) and the chorus
+  LFO. The noise, the drift and the start angles belong to the voices and are drawn only while one runs or starts.
+  A cable on the level, pan or resonance CV does not keep it awake. The default patch rests 217 batches (its
+  release) after the last key is released. The Mono Bass is this engine and rests the same way (96 batches with
+  its defaults). The Dual Layer is not skipped: it asks for none of this and is processed every batch. The audio is
+  bit for bit the same.
 
 ### Expansion (appended params)
 
@@ -499,6 +512,14 @@ Rotary, else 0).
 - **Output.** The drawbar sum is scaled by 0.15 (one key at full registration stays below 1), then the
   scanner, the drive (a rational soft clipper with up to 18 dB of gain in front), the level and a soft
   limit that keeps every sample below 2, then volume and expression.
+- **Idle.** With no key down or releasing, the key click spent and nothing that still has to glide (the drawbars,
+  the scanner, the volume), the scan lines holding only zeros and the tone wheels settled (the per-batch
+  normalisation changes no phasor), the organ says it is quiescent and the engine leaves it uncalled while it gets
+  no note, controller or parameter message. It only moves the scanner phase and the fall of the percussion
+  envelope on, with the same additions as a processed batch (the percussion decay multiplies a sum of nothing,
+  so it does not keep the organ awake), and every output is `+0.0` either way. A mod wheel above zero on the
+  rotary speed holds a value on `wheel_cv_out` and keeps the organ awake. The default patch rests 28 batches
+  after the last key is released (about 37 ms). The audio is bit for bit the same.
 
 ### Sounds
 
@@ -901,6 +922,15 @@ starts at a seeded random angle. Clean Up Bass (see the Poly Synth) works on it 
   as much). An imported table adds about 650 kB per sample, held by the sample map.
 - **Randomness.** The noise, the unison phases and the sample & hold LFO come from the patch seed
   and the device instance, so renders are reproducible.
+- **Idle.** With no voice active or waiting to start (a releasing voice and a steal fade count as active), no cable
+  on `lfo_cv_out`, and the master gain and the volume and expression gain on their targets, the synth says it is
+  quiescent and the engine leaves it uncalled while it gets no note, controller or parameter message. It only moves
+  the device LFO on, with the same phase steps and sample & hold draws as a processed silent batch (which does not
+  evaluate the shape either), so the position sweep, the vibrato and the filter sweep of the next note start where
+  they would have. The noise, the unison phases and the sub oscillator belong to the voices and are drawn or
+  stepped only while one runs or starts; the published position is already the idle value (-1, -1). A cable on the
+  level, pan or resonance CV does not keep it awake. The default patch rests 217 batches (its release) after the
+  last key is released. The audio is bit for bit the same.
 
 ---
 
@@ -1092,6 +1122,16 @@ patches load unchanged. The ids are the indices.
   synth's soft limiter: the output is always finite and |x| ≤ 4.
 - **Randomness.** Only the sample & hold LFO is random, seeded by the patch seed and the device
   instance, so renders are reproducible.
+- **Idle.** With no voice active or waiting to start (a releasing voice, a steal fade and an operator still
+  waiting for its delay count as active), no cable on `lfo_cv_out`, the master gain and the volume and expression
+  gain on their targets, the oversampler's decimators holding only zeros (a block of silence empties them) and, with
+  the chorus on, both chorus lines holding only zeros (30 ms of silence), the synth says it is quiescent and the
+  engine leaves it uncalled while it gets no note, controller or parameter message. It only moves the device LFO and
+  the chorus LFO on, with the same additions and wraps as a processed silent batch (the device LFO's shape is not
+  evaluated, as `process` does when nothing reads it), so the vibrato, the tremolo, the index and the chorus sweep of
+  the next note start where they would have. A cable on the level or pan CV does not keep it awake. The default patch
+  rests 220 batches (its release) after the last key is released, one batch more at 2x or 4x and 22 more with the
+  chorus on. The audio is bit for bit the same.
 
 ### Sounds
 
@@ -1216,6 +1256,15 @@ Sockets: `notes_in`, `pitch_cv_in`, `position_cv_in`, `density_cv_in`, `cutoff_c
   handles in the lower half of the display: a press on one drags `pos.spray` instead, the band
   following the pointer (its width is twice the distance from the position; on a band so narrow
   that its edges lie on the position line, only a press in the lower half takes an edge).
+- **Idle.** With no voice active or waiting to start (a releasing voice, a voice fading out after a steal or a map
+  swap and a note waiting for such a fade all count as active; a voice that has ended has dropped its grains) and
+  the master gain and the volume and expression gain on their targets, the synth says it is quiescent and the engine
+  leaves it uncalled while it gets no note, controller or parameter message and no new map. It only moves the device
+  LFO on (the same phase steps and sample & hold draws as a processed silent batch), the frame counter the grain
+  trail is read against and the panel's "newest voice" view, so every one of the 63 meter values is what a processed
+  silent batch would publish; the voices' own LFOs and random streams belong to voices that are not running and are
+  seeded again by each note. A cable on the level CV does not keep it awake. The default patch rests 300 batches
+  (the 400 ms release) after the last key is released. The audio is bit for bit the same.
 
 ### Sounds
 
@@ -3424,6 +3473,14 @@ Anything that cannot be played is left out and named in one message, never an er
     index that still matches it.
 - **Voice count.** `voices` is the polyphony limit, changeable at any time; voices above a lowered
   limit fade out over 2 ms. All 64 voices are allocated when the device is created and prepared.
+- **Idle.** With no voice active or waiting to start (a releasing voice, a voice fading out after a steal, a
+  lowered voice limit or a map swap, and a note waiting for such a fade all count as active) and the master gain and
+  the volume and expression gain on their targets, the sampler says it is quiescent and the engine leaves it
+  uncalled while it gets no note, controller or parameter message and no new map. It only moves the LFO on, with the
+  same phase steps and sample & hold draws as a processed silent batch (which does not evaluate the shape either), so
+  the vibrato, the filter sweep and the tremolo of the next note start where they would have. A cable on the level
+  CV does not keep it awake: a silent CV scales by exactly one. The default patch rests 113 batches (150 ms) after
+  the last key is released. The audio is bit for bit the same.
 
 ---
 

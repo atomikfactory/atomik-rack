@@ -686,7 +686,7 @@ pub fn skip_matches_process(make: &dyn Fn() -> DeviceHarness, run: &IdleRun<'_>)
         b
     };
     let meters = |h: &DeviceHarness| {
-        let mut m = [0.0f32; 8];
+        let mut m = [0.0f32; 64];
         let n = h.device().meter_values(&mut m);
         m[..n].iter().map(|v| v.to_bits()).collect::<Vec<_>>()
     };

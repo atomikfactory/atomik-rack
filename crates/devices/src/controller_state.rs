@@ -322,6 +322,12 @@ impl ControllerState {
         self.range = (self.range_semitones + self.range_cents * 0.01).min(MAX_BEND_RANGE);
     }
 
+    /// True when the volume and expression gain has reached its target: the next samples of
+    /// [`fill_gain`](Self::fill_gain) repeat the present one.
+    pub fn gain_settled(&self) -> bool {
+        self.gain.is_settled()
+    }
+
     /// Writes the volume and expression gain for the next `out.len()` samples (smoothed, so a
     /// change ramps over 5 ms). Full volume writes exactly 1.
     pub fn fill_gain(&mut self, out: &mut [f32]) {

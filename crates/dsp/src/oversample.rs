@@ -396,6 +396,19 @@ impl Oversampler {
         self.buf.fill(0.0);
     }
 
+    /// Whether every stage holds only `+0.0` in its history: silence through the oversampler then
+    /// comes out as `+0.0` and leaves the history as it is. The working buffers are written whole
+    /// before they are read, so they carry nothing from one block to the next.
+    pub fn holds_only_zeros(&self) -> bool {
+        let zero = |s: &[f32]| s.iter().fold(0u32, |a, x| a | x.to_bits()) == 0;
+        [&self.up1, &self.up2, &self.up3]
+            .iter()
+            .all(|u| zero(&u.lin[..HIST]))
+            && [&self.down1, &self.down2, &self.down3]
+                .iter()
+                .all(|d| zero(&d.lin_a[..HIST]) && zero(&d.lin_b[..HIST]))
+    }
+
     /// Round-trip latency of the current factor in base-rate samples.
     pub fn latency_frames(&self) -> u32 {
         self.factor.latency_frames()
@@ -739,6 +752,47 @@ mod tests {
             }
             println!("{factor:?}: round-trip max error {worst:.2e}");
             assert!(worst < 2e-3, "{factor:?}: {worst}");
+        }
+    }
+
+    #[test]
+    fn the_history_is_zero_exactly_when_silence_leaves_it_alone() {
+        for factor in [
+            OversampleFactor::X1,
+            OversampleFactor::X2,
+            OversampleFactor::X4,
+            OversampleFactor::X8,
+        ] {
+            let mut os = Oversampler::new(BLOCK);
+            os.set_factor(factor);
+            assert!(os.holds_only_zeros());
+            let zeros = [0.0f32; BLOCK];
+            let mut out = [0.0f32; BLOCK];
+            // A signal through the down stages (as a caller that fills the buffer itself does).
+            let x = sine(300, BLOCK, 0.8);
+            let hi = os.upsample(&zeros);
+            let n = hi.len();
+            for (i, h) in hi.iter_mut().enumerate() {
+                *h = 0.5 * x[i * BLOCK / n];
+            }
+            os.downsample(&mut out);
+            if factor != OversampleFactor::X1 {
+                assert!(!os.holds_only_zeros(), "{factor:?}");
+            }
+            let mut blocks = 0;
+            while !os.holds_only_zeros() {
+                os.upsample(&zeros).fill(0.0);
+                os.downsample(&mut out);
+                blocks += 1;
+                assert!(blocks < 4, "{factor:?}: never empty");
+            }
+            // From then on silence gives +0.0 and the history stays zero.
+            for _ in 0..3 {
+                os.upsample(&zeros).fill(0.0);
+                os.downsample(&mut out);
+                assert!(out.iter().all(|v| v.to_bits() == 0), "{factor:?}");
+                assert!(os.holds_only_zeros());
+            }
         }
     }
 

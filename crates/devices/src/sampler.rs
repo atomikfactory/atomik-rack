@@ -1109,6 +1109,9 @@ pub struct Sampler {
     /// tests' probe).
     #[cfg_attr(not(test), allow(dead_code))]
     cut_voices: u64,
+    /// Whether the device said at the end of its last batch that it is quiescent (see `at_rest`);
+    /// cleared by everything that changes the state outside `process`.
+    rest: bool,
     #[cfg(test)]
     probe: Option<Arc<tests::Probe>>,
 }
@@ -1166,6 +1169,7 @@ impl Sampler {
             current: None,
             draining: None,
             cut_voices: 0,
+            rest: false,
             #[cfg(test)]
             probe: None,
         };
@@ -1412,6 +1416,7 @@ impl Device for Sampler {
     }
 
     fn reset(&mut self) {
+        self.rest = false;
         for v in &mut self.voices {
             v.kill();
             for f in &mut v.filters {
@@ -1433,6 +1438,7 @@ impl Device for Sampler {
     }
 
     fn set_param(&mut self, id: ParamId, plain: f32) {
+        self.rest = false;
         let i = id.0 as usize;
         if i < PARAM_COUNT {
             self.values[i] = plain;
@@ -1441,6 +1447,7 @@ impl Device for Sampler {
     }
 
     fn swap_samples(&mut self, map: Option<SampleMapRef>) -> Option<SampleMapRef> {
+        self.rest = false;
         let sr = self.shared.sample_rate;
         let shared = self.shared;
         // 1. Voices still draining from the draining map are cut, which frees that map.
@@ -1589,10 +1596,45 @@ impl Device for Sampler {
         }
         *ctx.output(OUT_L) = mix[0];
         *ctx.output(OUT_R) = mix[1];
+        self.rest = self.at_rest();
         #[cfg(test)]
         self.update_probe();
     }
+
+    /// A sampler is a source while a voice sounds and silent only by state. It rests when no voice is
+    /// active or waiting to start (a releasing voice and a voice fading out after a steal or a map swap are
+    /// active), the master gain and the volume and expression gain sit on their targets and the master gain is
+    /// a plain positive number (so `+0.0` times it is `+0.0`; the level CV, when cabled, is silent and
+    /// scales by exactly one, and the soft limit and the controller gain map `+0.0` to `+0.0`). A silent
+    /// batch then changes nothing but the LFO, which `idle_advance` moves on; the sampler has no LFO output
+    /// and no random draw outside the LFO's sample and hold stream. A param change, a reset and a swap of the
+    /// map clear it at once; a note, a controller message and a tuning change reach the device as a batch it
+    /// runs.
+    fn quiescent(&self) -> bool {
+        self.rest
+    }
+
+    /// What a silent batch changes: the LFO, step by step as `process` leaves it (it skips its shape).
+    fn idle_advance(&mut self, frames: usize) {
+        self.lfo.skip(frames);
+    }
 }
 
+impl Sampler {
+    /// The conditions of `quiescent` that read the state (see there).
+    fn at_rest(&self) -> bool {
+        !self
+            .voices
+            .iter()
+            .any(|v| v.is_active() || v.pending.is_some())
+            && self.master.is_settled()
+            && self.master.value().is_sign_positive()
+            && self.master.value().is_finite()
+            && self.ctl.gain_settled()
+    }
+}
+
+#[cfg(test)]
+mod idle_tests;
 #[cfg(test)]
 mod tests;
