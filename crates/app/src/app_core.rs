@@ -10,7 +10,7 @@ use atomik_core::{NoteKind, ParamId, SampleRate, Tempo, Ticks};
 use atomik_device_sdk::{DeviceDescriptor, Registry, SocketId};
 use atomik_engine::{
     DeviceInstanceId, Endpoint, EngineConfig, EngineError, Graph, GraphError,
-    MAX_COMPENSATION_SECONDS, PdcReport, PreRoll, SongPosition, SongSnapshot, Topology,
+    MAX_COMPENSATION_SECONDS, PdcReport, PreRoll, SongPosition, SongTiming, Topology,
     TransportCommand, TransportState, compile_song,
 };
 use atomik_model::console::{
@@ -406,7 +406,9 @@ pub struct AppCore<S: EngineSink> {
     drum_draws: u64,
     transport_bar: TransportBar,
     piano_clip: Option<ClipId>,
-    snapshot: Option<SongSnapshot>,
+    /// The tempo map and meters of the song last submitted (ticks <-> frames, count-in,
+    /// recording conversion): not a copy of the song.
+    timing: Option<SongTiming>,
     sent_loop: Option<(i64, i64, bool)>,
     playing: bool,
     metronome: bool,
@@ -786,7 +788,7 @@ impl<S: EngineSink> AppCore<S> {
             plugins: plugins::PluginState::new(),
             patches: patches::PatchState::default(),
             piano_clip: None,
-            snapshot: None,
+            timing: None,
             sent_loop: None,
             playing: false,
             metronome: false,
@@ -2472,7 +2474,7 @@ impl<S: EngineSink> AppCore<S> {
             .collect();
         match compile_song(&input).and_then(|s| s.with_launch(&launch_inputs)) {
             Ok(snapshot) => {
-                self.snapshot = Some(snapshot.clone());
+                self.timing = Some(snapshot.timing());
                 self.set_launch_tracks(launch_tracks);
                 let result = self.sink.submit_song(&input, snapshot);
                 self.engine_result(result);
@@ -3726,9 +3728,9 @@ impl<S: EngineSink> AppCore<S> {
 
     // ------------------------------------------------------------------ transport
 
-    /// The last submitted song snapshot (tick ↔ frame maths, recording conversion).
-    pub fn song_snapshot(&self) -> Option<&SongSnapshot> {
-        self.snapshot.as_ref()
+    /// The tempo map and meters of the last submitted song (tick ↔ frame maths, recording).
+    pub fn song_timing(&self) -> Option<&SongTiming> {
+        self.timing.as_ref()
     }
 
     /// Whether the app asked the engine to play.
@@ -3970,7 +3972,7 @@ impl<S: EngineSink> AppCore<S> {
             return None;
         }
         let rate = f64::from(self.doc().sample_rate);
-        self.snapshot
+        self.timing
             .as_ref()?
             .pre_roll(Ticks(self.position.max(0)), self.pre_count_bars, rate)
     }
@@ -4085,9 +4087,9 @@ impl<S: EngineSink> AppCore<S> {
         self.recorded.clear();
         self.sink.drain_recorded(&mut self.recorded);
         let sample_rate = f64::from(self.document.doc().sample_rate);
-        if let Some(snapshot) = &self.snapshot {
+        if let Some(timing) = &self.timing {
             take.feed(&self.recorded, state, |s, frame| {
-                snapshot.position_at(s, frame, sample_rate)
+                timing.position_at(s, frame, sample_rate)
             });
         }
     }

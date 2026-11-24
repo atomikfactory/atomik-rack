@@ -765,19 +765,103 @@ impl SongSnapshot {
         engine_frame: u64,
         sample_rate: f64,
     ) -> SongPosition {
-        let map = self.map();
-        let (ls, le) = (
-            map.song_frame(state.loop_start, sample_rate),
-            map.song_frame(state.loop_end, sample_rate),
-        );
-        let lp = (state.loop_enabled && le > ls).then_some((ls, le));
-        let d = i128::from(engine_frame) - i128::from(state.engine_frame);
-        let (song_frame, loop_count) = unroll(state.song_frame, state.loop_count, d, lp);
-        SongPosition {
-            song_frame,
-            tick: self.frame_to_tick(song_frame as f64, sample_rate),
-            loop_count,
+        position_at(self.map(), state, engine_frame, sample_rate)
+    }
+
+    /// The tempo and meter of this song alone, a small value for the interface (see
+    /// [`SongTiming`]).
+    pub fn timing(&self) -> SongTiming {
+        SongTiming {
+            tempo: self.tempo.clone(),
+            meter: self.meter.clone(),
         }
+    }
+}
+
+/// [`SongSnapshot::position_at`] over a tempo map.
+fn position_at(
+    map: TempoMap<'_>,
+    state: &TransportState,
+    engine_frame: u64,
+    sample_rate: f64,
+) -> SongPosition {
+    let (ls, le) = (
+        map.song_frame(state.loop_start, sample_rate),
+        map.song_frame(state.loop_end, sample_rate),
+    );
+    let lp = (state.loop_enabled && le > ls).then_some((ls, le));
+    let d = i128::from(engine_frame) - i128::from(state.engine_frame);
+    let (song_frame, loop_count) = unroll(state.song_frame, state.loop_count, d, lp);
+    SongPosition {
+        song_frame,
+        tick: Ticks(map.tick(song_frame as f64, sample_rate).round() as i64),
+        loop_count,
+    }
+}
+
+/// The tempo map and the time signatures of a compiled song, without its notes, automation and
+/// audio: all the interface needs to convert between ticks and frames, to count in and to follow
+/// a recording (it keeps this, not a copy of the whole [`SongSnapshot`]). Taken with
+/// [`SongSnapshot::timing`], every conversion gives the same number as the snapshot's own.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SongTiming {
+    tempo: Vec<TempoSegment>,
+    meter: Vec<MeterSegment>,
+}
+
+impl SongTiming {
+    fn map(&self) -> TempoMap<'_> {
+        TempoMap::new(&self.tempo)
+    }
+
+    fn meter_map(&self) -> MeterMap<'_> {
+        MeterMap::new(&self.meter)
+    }
+
+    /// See [`SongSnapshot::tick_to_frame`].
+    pub fn tick_to_frame(&self, tick: Ticks, sample_rate: f64) -> f64 {
+        self.map().frame(tick.0 as f64, sample_rate)
+    }
+
+    /// See [`SongSnapshot::frame_to_tick`].
+    pub fn frame_to_tick(&self, frame: f64, sample_rate: f64) -> Ticks {
+        Ticks(self.frame_to_tick_exact(frame, sample_rate).round() as i64)
+    }
+
+    /// See [`SongSnapshot::frame_to_tick_exact`].
+    pub fn frame_to_tick_exact(&self, frame: f64, sample_rate: f64) -> f64 {
+        self.map().tick(frame, sample_rate)
+    }
+
+    /// See [`SongSnapshot::pre_roll`].
+    pub fn pre_roll(&self, tick: Ticks, bars: u8, sample_rate: f64) -> Option<PreRoll> {
+        pre_roll(self.map(), self.meter_map(), tick.0, bars, sample_rate)
+    }
+
+    /// See [`SongSnapshot::song_frame`].
+    pub fn song_frame(&self, tick: Ticks, sample_rate: f64) -> u64 {
+        self.map().song_frame(tick.0, sample_rate)
+    }
+
+    /// See [`SongSnapshot::meter_at`].
+    pub fn meter_at(&self, tick: Ticks) -> (u8, u8) {
+        self.meter_map().meter_at(tick.0)
+    }
+
+    /// See [`SongSnapshot::tempo_at`].
+    pub fn tempo_at(&self, tick: Ticks) -> Tempo {
+        let bpm = self.map().bpm(tick.0 as f64);
+        Tempo::new(bpm).unwrap_or_else(|_| unreachable!("segments come from valid tempos"))
+    }
+
+    /// See [`SongSnapshot::position_at`].
+    pub fn position_at(
+        &self,
+        state: &TransportState,
+        engine_frame: u64,
+        sample_rate: f64,
+    ) -> SongPosition {
+        position_at(self.map(), state, engine_frame, sample_rate)
     }
 }
 
@@ -1423,5 +1507,108 @@ mod tests {
             ..looped(0, 0, 0)
         };
         assert_eq!(snap.position_at(&s, 30_000, SR), pos(30_000, 19_200, 0));
+    }
+
+    /// A song with step and ramp tempo changes and two time-signature changes, with a note.
+    fn timing_song() -> SongSnapshot {
+        let mut inp = input(vec![track(1, vec![note(0, 480, 60)])], &[]);
+        inp.tempo = vec![
+            SongTempo {
+                tick: Ticks(0),
+                tempo: bpm(90.0),
+                ramp: false,
+            },
+            SongTempo {
+                tick: Ticks(4 * 4 * PPQ),
+                tempo: bpm(150.0),
+                ramp: true,
+            },
+            SongTempo {
+                tick: Ticks(9 * 4 * PPQ),
+                tempo: bpm(70.0),
+                ramp: false,
+            },
+        ];
+        inp.meter = vec![
+            atomik_core::MeterEvent::new(1, 4, 4),
+            atomik_core::MeterEvent::new(5, 7, 8),
+            atomik_core::MeterEvent::new(11, 3, 4),
+        ];
+        compile_song(&inp).unwrap()
+    }
+
+    #[test]
+    fn the_timing_converts_exactly_as_the_whole_snapshot_does() {
+        let song = timing_song();
+        let timing = song.timing();
+        let last = 14 * 4 * PPQ;
+        for rate in [44_100.0, SR] {
+            // Before the first tempo event, on and between the events, and far after the last.
+            let ticks = (-3 * PPQ..=last).step_by(PPQ as usize / 3 + 1);
+            for t in ticks.chain([0, 4 * 4 * PPQ, 9 * 4 * PPQ, 40 * 4 * PPQ]) {
+                let t = Ticks(t);
+                let (a, b) = (song.tick_to_frame(t, rate), timing.tick_to_frame(t, rate));
+                assert_eq!(a.to_bits(), b.to_bits(), "tick_to_frame at {t:?}");
+                assert_eq!(song.song_frame(t, rate), timing.song_frame(t, rate));
+                assert_eq!(song.meter_at(t), timing.meter_at(t));
+                let (a, b) = (song.tempo_at(t).bpm(), timing.tempo_at(t).bpm());
+                assert_eq!(a.to_bits(), b.to_bits(), "tempo_at {t:?}");
+                for bars in 0..=4 {
+                    assert_eq!(song.pre_roll(t, bars, rate), timing.pre_roll(t, bars, rate));
+                }
+                let frame = a * 1234.5 + t.0 as f64;
+                let (a, b) = (
+                    song.frame_to_tick_exact(frame, rate),
+                    timing.frame_to_tick_exact(frame, rate),
+                );
+                assert_eq!(a.to_bits(), b.to_bits(), "frame_to_tick_exact {frame}");
+                assert_eq!(
+                    song.frame_to_tick(frame, rate),
+                    timing.frame_to_tick(frame, rate)
+                );
+                assert_eq!(
+                    song.frame_to_tick(-frame, rate),
+                    timing.frame_to_tick(-frame, rate)
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn the_timing_follows_a_recording_through_the_loop_as_the_whole_snapshot_does() {
+        let song = timing_song();
+        let timing = song.timing();
+        let looped = TransportState {
+            playing: true,
+            engine_frame: 500_000,
+            song_frame: 200_000,
+            loop_count: 2,
+            loop_start: 4 * PPQ,
+            loop_end: 8 * PPQ,
+            loop_enabled: true,
+            ..Default::default()
+        };
+        let straight = TransportState {
+            loop_enabled: false,
+            ..looped
+        };
+        for state in [looped, straight] {
+            for frame in (0..1_200_000u64).step_by(7_919) {
+                assert_eq!(
+                    song.position_at(&state, frame, SR),
+                    timing.position_at(&state, frame, SR),
+                    "engine frame {frame}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn the_timing_holds_the_tempo_map_and_not_the_song() {
+        // A song with thousands of notes: the timing is the same few bytes as for an empty one.
+        let notes: Vec<SongNote> = (0..5_000).map(|i| note(i * 480, 240, 60)).collect();
+        let big = compile_song(&input(vec![track(1, notes)], &[(0, 120.0)])).unwrap();
+        let empty = compile_song(&input(Vec::new(), &[(0, 120.0)])).unwrap();
+        assert_eq!(big.timing(), empty.timing());
     }
 }

@@ -274,6 +274,9 @@ may break APIs and the patch and project formats.
   C runtime, made for every read; the whole part is now cut out of the delay's bits (and `aarch64` still uses its
   instruction), with no output bit changed. The two reverbs are about 10 % cheaper per batch (about 4.1 to 3.7 ms per
   256 batches), a granular synth about 10 % and the rotary speaker about 6 %.
+- **The interface keeps the tempo map, not a copy of the compiled song.** It only needs the tempos and time signatures
+  to convert between time and position, so a project with many notes no longer holds its notes twice; every position
+  shown is the same number as before.
 
 ### Fixed
 - **Dropping an instrument above its mix channel.** An instrument dragged to the place above its own mix channel
