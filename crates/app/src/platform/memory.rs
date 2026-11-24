@@ -142,8 +142,11 @@ mod tests {
     #[test]
     fn available_is_at_most_the_total() {
         let total = physical_memory().expect("total");
-        let free = available_memory().expect("the host tells its free memory");
-        assert!(free <= total, "{free} > {total}");
+        match available_memory() {
+            Some(free) => assert!(free <= total, "{free} > {total}"),
+            // macOS has no one-call figure (see `read_available`); every other host tells.
+            None => assert!(cfg!(target_os = "macos"), "the host tells its free memory"),
+        }
         assert_eq!(MemoryInfo::read().total, Some(total));
     }
 
