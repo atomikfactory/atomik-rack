@@ -4411,7 +4411,7 @@ pub fn is_project_path(path: &Path) -> bool {
 }
 
 fn write_file(path: &Path, text: &str) -> Result<(), AppError> {
-    std::fs::write(path, text).map_err(|source| AppError::Io {
+    crate::recovery::atomic_write(path, text.as_bytes()).map_err(|source| AppError::Io {
         path: path.to_path_buf(),
         source,
     })

@@ -241,7 +241,8 @@ impl<S: EngineSink> AppCore<S> {
     /// Writes the MIDI file for `what` to `path` and says so (or why not) in the view.
     pub fn export_midi(&mut self, what: MidiExport, path: &Path) {
         let message = match self.midi_bytes(what).and_then(|bytes| {
-            std::fs::write(path, bytes).map_err(|e| format!("{}: {e}", path.display()))
+            crate::recovery::atomic_write(path, &bytes)
+                .map_err(|e| format!("{}: {e}", path.display()))
         }) {
             Ok(()) => format!(
                 "Exported the {} to {}",

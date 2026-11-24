@@ -315,7 +315,8 @@ impl<S: EngineSink> AppCore<S> {
         let result = self
             .tab_bytes(what, format, path, pdf)
             .and_then(|(bytes, warnings)| {
-                std::fs::write(path, bytes).map_err(|e| format!("{}: {e}", path.display()))?;
+                crate::recovery::atomic_write(path, &bytes)
+                    .map_err(|e| format!("{}: {e}", path.display()))?;
                 Ok(with_warnings(
                     format!(
                         "Exported the {} as {} to {}",
@@ -380,7 +381,7 @@ impl<S: EngineSink> AppCore<S> {
             None => "the song has no chord sheet to export".to_owned(),
             Some(sheet) => {
                 let text = sheet.to_over_lyrics();
-                match std::fs::write(path, text) {
+                match crate::recovery::atomic_write(path, text.as_bytes()) {
                     Ok(()) => format!("Exported the chord sheet to {}", short_name(path)),
                     Err(e) => format!("{}: {e}", path.display()),
                 }
@@ -427,7 +428,7 @@ impl<S: EngineSink> AppCore<S> {
             None => "the song has no chord sheet to export".to_owned(),
             Some((sheet, opts)) => match atomik_tab::pdf::write_sheet_pdf(&sheet, &opts) {
                 Err(e) => e.to_string(),
-                Ok((bytes, warnings)) => match std::fs::write(path, bytes) {
+                Ok((bytes, warnings)) => match crate::recovery::atomic_write(path, &bytes) {
                     Ok(()) => with_warnings(
                         format!("Exported the chord sheet as PDF to {}", short_name(path)),
                         &warnings,

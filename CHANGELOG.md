@@ -53,6 +53,11 @@ may break APIs and the patch and project formats.
   `atomik-rack-session-*` folders in the temp folder whose session is gone, that nothing has touched for 14 days and
   that no recovery copy points at; a folder it cannot be sure about is kept. One log line says how many and how much.
 
+### Fixed
+- **Exporting a patch, a MIDI file or MIDI mappings, a tab or chord sheet, the device list or the diagnostics report
+  can no longer leave half a file.** They write a temporary file and rename it, as a project save does, so a failed
+  export keeps the file that was there.
+
 ## [0.5.0-rc.2] - 2026-11-24
 
 ### Added
