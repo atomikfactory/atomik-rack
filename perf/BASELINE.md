@@ -937,3 +937,29 @@ strips prepared at 48 kHz, plus one convolution reverb prepared with no impulse 
 The 16 MiB the taps held was resident (every cell of both rings is written when the tap is made); what is left of the
 255 MiB or so of the 64 strips is the two latency lines of 2 MiB each, which are zero filled by the allocator and not
 touched, so they count as private bytes and not as working set.
+
+## A convolution reverb with an impulse, and what it holds (2026-11-24)
+
+The device bench had no row for a convolver that plays an impulse (its rig loads none, so it measures the direct head
+and silence). `device/convolver-ir/256batches` loads a 3 s synthetic impulse (deterministic noise with an
+exponential decay, mono, which serves both channels), lets the build finish (about 70 batches) and times 256 batches
+like the other rows; `device/convolver-ir/batch-max` is the dearest single batch of 4096, five times over.
+
+```text
+device/convolver/256batches: median 2.590 ms (no impulse: 10.1 us a batch)
+device/convolver-ir/256batches: median 8.941 ms  p99 9.118 ms  min 8.880 ms  max 9.118 ms  (n=21) (34.9 us a batch)
+device/convolver-ir/batch-max: median 228.1 us  highest 603.2 us  (5 x 4096 batches)
+```
+
+The dearest batch is the one in four that sums the tail of every partition (562 for 3 s); it costs several times
+the mean and is the burst an xrun on two cores would come from. A batch is 1.33 ms of audio at 48 kHz.
+
+What a prepared convolver asks of the allocator (counting allocator, 48 kHz): 11.18 MiB with no impulse, 11.28 MiB
+with a 0.5 s one. It is sized for the longest impulse (5 s) whatever is loaded: two convolvers of 937 partitions with
+a spectrum of 257 bins each for the impulse, a second slot for a crossfaded swap and the input history. Only the input
+history (about 3.7 MiB for the two convolvers) is written when the device is prepared; the rest is zero filled by the
+allocator and touched as an impulse is built, so it is private bytes first and working set as impulses load.
+
+Latency lines of a channel strip: 4 MiB each (two lines of 2 MiB, 480 000 samples of reserve), 256 MiB for 64 strips,
+none of it touched until `latency.adjust` is raised. Private bytes of a process holding 64 strips: 271 MiB; working
+set 22.6 MiB.
