@@ -80,6 +80,13 @@ impl DelayLine {
         self.max
     }
 
+    /// Length of the ring in use, in samples: the number of writes after which none of the
+    /// earlier content is left.
+    #[inline]
+    pub fn ring_len(&self) -> usize {
+        self.active
+    }
+
     /// Longest delay [`DelayLine::grow`] can reach.
     pub fn reserve(&self) -> usize {
         self.reserve

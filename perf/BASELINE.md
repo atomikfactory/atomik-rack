@@ -808,3 +808,21 @@ before is the tree without the counter, after the tree with it (the line counts 
 A first form of the counter, kept for every line and branch free, cost the reverb 1.5 % and the space reverb 3.5 %
 (3.667 and 3.778 ms means), which is why a line now counts only after `track_zeros`: a line nobody asked about pays one
 predictable branch a write.
+
+## More effects that go quiet (2026-11-24)
+
+The same engine rows as above (`cargo bench -p atomik-render --bench render_batch -- idle`), one pair for each effect
+that now says it is quiescent: twenty of them, nothing cabled, 256 batches, skip off and on, median of 21 samples,
+three runs each. What the skip must not cost a busy effect is measured with the device bench
+(`cargo bench -p atomik-devices --bench process -- <name>`, the row of the effect with noise on every input), before
+(the tree without the change) and after, three runs each; the limit is a rise of 2 % of the busy row.
+
+| effect | idle row, skip off | idle row, skip on | busy row before | busy row after |
+|---|---|---|---|---|
+| echo | 21.73 ms, 21.08 ms, 21.38 ms | 1.251 ms, 1.241 ms, 1.238 ms | 1.014 ms, 1.007 ms, 1.016 ms | 1.027 ms, 1.023 ms, 1.019 ms (+1.1 %) |
+
+Echo: the first form, which asked both of its delay lines to count the zeros they store, cost the busy row 2.5 %
+(1.042 ms, 1.038 ms, 1.031 ms against the 1.012 ms above), so the echo ORs the bits of the two values it writes into one
+accumulator per batch instead and counts whole batches of zero writes against the ring length (a batch that held one
+value at its start does not count, so it can only claim less than it knows). That is the form that was kept. An idle
+echo needs its whole ring, 2^18 samples (5.5 s at 48 kHz), of zero writes before it is quiescent.

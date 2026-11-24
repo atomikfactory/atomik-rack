@@ -651,3 +651,75 @@ pub fn assert_bend_range(make: impl Fn() -> DeviceHarness, outs: &[&str], key: u
         "reset restores the param"
     );
 }
+
+/// What `skip_matches_process` runs: two instances of an effect, one of which is processed
+/// through everything while the other is skipped the way the engine skips it (its answer is
+/// true, the inputs are silent, nothing reached it) and is advanced with `idle_advance`.
+pub struct IdleRun<'a> {
+    /// The audio inputs that get noise while there is sound.
+    pub ins: &'a [&'a str],
+    /// The audio outputs compared bit for bit.
+    pub outs: &'a [&'a str],
+    /// Batches to run.
+    pub batches: usize,
+    /// Whether batch `n` has sound on its inputs.
+    pub sound: &'a dyn Fn(usize) -> bool,
+    /// Edits applied to both instances before batch `n` (a param change, a tempo change);
+    /// returns whether it changed anything, so the skipped one is processed that batch.
+    pub edit: &'a dyn Fn(usize, &mut DeviceHarness) -> bool,
+}
+
+/// Runs `run` on instances made by `make` and asserts that skipping changes no bit of any output
+/// and no meter value, and that every skipped batch of the processed instance is `+0.0`. Returns
+/// the number of batches that were skipped.
+pub fn skip_matches_process(make: &dyn Fn() -> DeviceHarness, run: &IdleRun<'_>) -> usize {
+    use atomik_core::BATCH;
+    let mut full = make();
+    let mut skip = make();
+    let mut state = 3u32;
+    let mut noise = || {
+        let mut b = [0.0f32; BATCH];
+        for x in &mut b {
+            state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            *x = (state >> 8) as f32 / (1u32 << 24) as f32 - 0.5;
+        }
+        b
+    };
+    let meters = |h: &DeviceHarness| {
+        let mut m = [0.0f32; 8];
+        let n = h.device().meter_values(&mut m);
+        m[..n].iter().map(|v| v.to_bits()).collect::<Vec<_>>()
+    };
+    let mut skipped = 0;
+    for n in 0..run.batches {
+        let sound = (run.sound)(n);
+        for key in run.ins {
+            let b = if sound { noise() } else { [0.0; BATCH] };
+            *full.input_mut(key) = b;
+            *skip.input_mut(key) = b;
+        }
+        let changed = (run.edit)(n, &mut full) | (run.edit)(n, &mut skip);
+        full.process();
+        if skip.device().quiescent() && !changed && !sound {
+            skip.device_mut().idle_advance(BATCH);
+            skipped += 1;
+            for key in run.outs {
+                assert!(
+                    full.output(key).iter().all(|x| x.to_bits() == 0),
+                    "batch {n}: the processed batch of {key} is not +0.0"
+                );
+            }
+        } else {
+            skip.process();
+            for key in run.outs {
+                let (a, b) = (full.output(key), skip.output(key));
+                assert!(
+                    a.iter().zip(b).all(|(x, y)| x.to_bits() == y.to_bits()),
+                    "batch {n}: {key} differs"
+                );
+            }
+        }
+        assert_eq!(meters(&full), meters(&skip), "batch {n}: the meters differ");
+    }
+    skipped
+}

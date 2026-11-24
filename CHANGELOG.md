@@ -197,7 +197,8 @@ may break APIs and the patch and project formats.
   never put to sleep (it may sound on its own after a silence, like a long feedback delay). CLAP plugins that answer
   "continue if not quiet" rest too (one that answers "tail" or "continue" is still called). A bounce is unchanged for
   plugins that make silence from silence.
-- **A bypassed plugin uses no CPU after a while.** An effect that has been bypassed for 10 seconds without a break is
+
+- **A bypassed plugin uses no CPU after a while.** An effect that has been bypassed for 10 seconds without a break is
   no longer run; its delay compensation, the dry signal and the end of held notes are unchanged, and a value you set
   meanwhile reaches the plugin (and so a saved project) within a twentieth of a second. Switching the bypass off
   after that clears the plugin and runs it for 20 ms (or its latency, if longer) with the output still dry before
@@ -296,7 +297,11 @@ may break APIs and the patch and project formats.
   away and whose input is silent is left uncalled by the engine until sound, a note, a parameter or tempo change, a
   new cabling or a transport change reaches it; the rendered audio is byte for byte the same. Twenty idle stereo
   delays cost 27 us a batch before and 3.2 us after. The device contract has two new methods for this (`quiescent`,
-  `idle_advance`), and no other device uses them yet.
+  `idle_advance`); the stereo delay is the first device to use them.
+- **An idle echo is no longer processed either.** Once an echo's repeats have died away (every write of its 5.5 s ring
+  was zero, its loop filters and diffusers are empty) and its input is silent, the engine leaves it uncalled and only
+  moves its wobble and its duck follower on; the audio is byte for byte the same. Twenty idle echoes cost 83 us a
+  batch before and 4.8 us after.
 
 ### Fixed
 - **Dropping an instrument above its mix channel.** An instrument dragged to the place above its own mix channel

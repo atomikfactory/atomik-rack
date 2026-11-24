@@ -84,6 +84,18 @@ impl SineLfo {
     pub(crate) fn next_sample(&mut self) -> f32 {
         self.next_with_offset(0.0)
     }
+
+    /// Leaves the oscillator where `n` calls of [`SineLfo::next_sample`] would, without
+    /// evaluating the sine: the same additions and wraps, one by one.
+    #[inline]
+    pub(crate) fn skip(&mut self, n: usize) {
+        for _ in 0..n {
+            self.phase += self.inc;
+            if self.phase >= 1.0 {
+                self.phase -= 1.0;
+            }
+        }
+    }
 }
 
 #[cfg(test)]

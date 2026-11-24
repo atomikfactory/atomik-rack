@@ -1401,6 +1401,13 @@ the delay line in [crates/dsp/src/echo.rs](../crates/dsp/src/echo.rs).
   (with colour, crush or diffusion on it evolves).
 - **Mix.** Output = dry × (1 − mix) + wet × duck × gate × mix; `mix` 0 is the dry input bit for bit.
   Feedback and mix are smoothed over 5 ms.
+- **Idle.** Once both lines hold only zeros (every write of the last 2^18 samples was `+0.0`: about 5.5 s of silence
+  after the last repeat at 48 kHz), the loop filters that are on, the diffusers and the trigger gate have settled,
+  the glide and the smoothers sit on their targets and no trigger cable is connected, the device says it is
+  quiescent and the engine leaves it uncalled while its inputs stay silent; it then only moves the wobble phase and
+  the duck follower on, as a processed silent batch would. Sound, a note, a parameter, tempo or transport change,
+  or a new cabling wakes it. A loop at full feedback (roll) holding sound never rests. The audio is bit for bit
+  the same either way.
 - **Not built.** The loop send and return breakout jacks (they need a staged device, which
   the bypass wrapper does not support).
 
