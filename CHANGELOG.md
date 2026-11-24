@@ -302,13 +302,18 @@ may break APIs and the patch and project formats.
   was zero, its loop filters and diffusers are empty) and its input is silent, the engine leaves it uncalled and only
   moves its wobble and its duck follower on; the audio is byte for byte the same. Twenty idle echoes cost 83 us a
   batch before and 4.8 us after.
-- **An idle reverb is no longer processed.** A reverb whose tail has run dry (every delay written nothing but zeros for
-  its whole length, the filters empty, the controls settled) and whose input is silent is left uncalled by the engine;
+- **An idle reverb is no longer processed.** A reverb whose tail has run dry (each delay has written only zeros for its
+  whole length, the filters empty, the controls settled) and whose input is silent is left uncalled by the engine;
   only its eight modulation oscillators and its meters are moved on, so the audio is byte for byte the same when sound
   returns. A frozen tail, a keyed duck or gate and a mix CV keep it running. Twenty idle reverbs cost 314 us a batch
   before and 21 us after.
 - **An idle space reverb is no longer processed.** The same for the space reverb, which also needs its high cut empty
   and its gate settled. Twenty idle space reverbs cost 322 us a batch before and 21 us after.
+- **An idle chorus, flanger or phaser is no longer processed.** The modulation effect, once its delay lines or its
+  allpass states have run dry and its input is silent, is left uncalled by the engine and only its sweep is moved on,
+  so the sweep is where it would have been when sound returns; an effect synced to a playing transport is always
+  processed. The audio is byte for byte the same. Twenty idle modulation effects cost 136 us a batch before and 5.1 us
+  after.
 
 ### Fixed
 - **Dropping an instrument above its mix channel.** An instrument dragged to the place above its own mix channel

@@ -822,6 +822,7 @@ three runs each. What the skip must not cost a busy effect is measured with the 
 | echo | 21.73 ms, 21.08 ms, 21.38 ms | 1.251 ms, 1.241 ms, 1.238 ms | 1.014 ms, 1.007 ms, 1.016 ms | 1.027 ms, 1.023 ms, 1.019 ms (+1.1 %) |
 | reverb | 80.29 ms, 80.39 ms, 80.58 ms | 5.270 ms, 5.363 ms, 5.317 ms | 3.547 ms, 3.549 ms, 3.542 ms | 3.578 ms, 3.541 ms, 3.554 ms (+0.3 %) |
 | space reverb | 82.23 ms, 83.52 ms, 83.11 ms | 5.269 ms, 5.243 ms, 5.260 ms | 3.588 ms, 3.596 ms, 3.613 ms | 3.652, 3.646, 3.709, 3.599, 3.614, 3.592, 3.629 ms (+1.0 %) |
+| modulation | 34.39 ms, 34.98 ms, 35.79 ms | 1.289 ms, 1.309 ms, 1.294 ms | 1.759 ms, 1.741 ms, 1.742 ms | 1.727, 1.740, 1.714, 1.702 ms (-1.5 %, noise) |
 
 Echo: the first form, which asked both of its delay lines to count the zeros they store, cost the busy row 2.5 %
 (1.042 ms, 1.038 ms, 1.031 ms against the 1.012 ms above), so the echo ORs the bits of the two values it writes into one
@@ -848,3 +849,10 @@ resting state is found by stepping a copy of it one more silent sample and compa
 gate closes to exact zero through the flush, or stalls just below 1 when it is open, so neither "is zero" nor "is one"
 is the test). The first runs after the change read 3.65 to 3.71 ms and the later ones 3.59 to 3.63 ms with the same
 binary: the spread of this machine between runs is about 2 %, which is why the seven runs are all listed.
+
+Modulation: the lines of the chorus and the flanger are looked at once a batch as the reverb's are (nothing in the
+sample loop); the phaser compares its allpass states and its feedback state with zero. The rows are the chorus at its
+default (the device bench default mode and an unsynced LFO); the allpass states and the lines take 43 batches or a few
+hundred samples to empty, so an idle modulation effect is quiescent from its first batch. An LFO locked to a playing
+transport is never skipped, so the row of a project that plays a synced chorus is the busy row. Four more runs of the
+busy row after the change read 1.727 to 1.702 ms against 1.759 to 1.741 ms before: no cost that the machine can see.

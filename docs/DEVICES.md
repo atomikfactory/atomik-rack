@@ -2172,6 +2172,14 @@ Chorus, flanger and phaser with tempo sync. Source:
   the feedback tails decay to silence after the input stops. Delay times never leave the allocated
   line (at most 1.9 × `delay` for the flanger, 1.905 × `delay` for the chorus; the line holds 57.2
   ms plus margin).
+- **Idle.** Chorus and flanger are at rest once both delay lines hold only zeros (every write of the last ring,
+  about 2,760 samples or 43 batches at 48 kHz, was `+0.0`), the phaser once its allpass states and its feedback
+  state are exactly zero; the five smoothed controls must sit on their targets, no mix CV may be connected and the
+  LFO must not be locked to a playing transport. The device then says it is quiescent and the engine leaves it
+  uncalled while its inputs stay silent; it only moves the free-running LFO phase on, with the same additions
+  and wraps as a processed batch, so the sweep is where it would have been when sound returns. An LFO synced to a
+  playing transport takes its phase from the frame and is always processed; synced to a stopped transport it
+  free-runs at the synced rate and rests like an unsynced one. The audio is bit for bit the same either way.
 
 ---
 

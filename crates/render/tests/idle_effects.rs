@@ -72,6 +72,7 @@ impl Device for TimedNoise {
 
 /// One effect of the table.
 struct Case {
+    name: &'static str,
     type_id: &'static str,
     /// Parameters set before the render: the sound must make the tail audible, the modulation
     /// swept (a skip that misplaces a free-running part is heard after the silence).
@@ -84,6 +85,7 @@ struct Case {
 
 const CASES: &[Case] = &[
     Case {
+        name: "echo",
         type_id: "atomik.echo",
         params: &[
             ("time.mode", 1.0),
@@ -102,6 +104,7 @@ const CASES: &[Case] = &[
         min_skipped: [3_000, 1_500, 2_000],
     },
     Case {
+        name: "reverb",
         type_id: "atomik.reverb",
         params: &[
             ("algorithm", 1.0),
@@ -118,6 +121,7 @@ const CASES: &[Case] = &[
         min_skipped: [8_000, 7_500, 7_500],
     },
     Case {
+        name: "space-reverb",
         type_id: "atomik.space-reverb",
         params: &[
             ("algorithm", 1.0),
@@ -134,6 +138,72 @@ const CASES: &[Case] = &[
         // The early-reflection ring (1.4 s) and the tail (400 dB down in about 2 s) run dry about
         // 4.5 s in; the noise comes back at 14 s.
         min_skipped: [7_000, 6_000, 6_000],
+    },
+    Case {
+        name: "chorus",
+        type_id: "atomik.modulation",
+        params: &[
+            ("mode", 0e+00),
+            ("rate", 3.7),
+            ("depth", 1.0),
+            ("feedback", 0.5),
+            ("delay", 12.0),
+            ("spread", 90.0),
+            ("mix", 0.6),
+            ("stages", 8.0),
+        ],
+        change: ("feedback", 0.3),
+        // Dry about 50 ms after the noise; it is skipped until the noise returns at 14 s.
+        min_skipped: [10_000, 9_000, 9_000],
+    },
+    Case {
+        name: "flanger",
+        type_id: "atomik.modulation",
+        params: &[
+            ("mode", 1e+00),
+            ("rate", 3.7),
+            ("depth", 1.0),
+            ("feedback", 0.5),
+            ("delay", 12.0),
+            ("spread", 90.0),
+            ("mix", 0.6),
+            ("stages", 8.0),
+        ],
+        change: ("feedback", 0.3),
+        // Dry about 50 ms after the noise; it is skipped until the noise returns at 14 s.
+        min_skipped: [10_000, 9_000, 9_000],
+    },
+    Case {
+        name: "phaser",
+        type_id: "atomik.modulation",
+        params: &[
+            ("mode", 2e+00),
+            ("rate", 3.7),
+            ("depth", 1.0),
+            ("feedback", 0.5),
+            ("delay", 12.0),
+            ("spread", 90.0),
+            ("mix", 0.6),
+            ("stages", 8.0),
+        ],
+        change: ("feedback", 0.3),
+        // Dry about 50 ms after the noise; it is skipped until the noise returns at 14 s.
+        min_skipped: [10_000, 9_000, 9_000],
+    },
+    // Locked to the transport: a rendered song plays, so the sweep takes its phase from the frame and
+    // the effect is processed throughout (and renders the same bytes trivially).
+    Case {
+        name: "chorus-synced",
+        type_id: "atomik.modulation",
+        params: &[
+            ("mode", 0.0),
+            ("sync", 3.0),
+            ("depth", 1.0),
+            ("feedback", 0.5),
+            ("mix", 0.6),
+        ],
+        change: ("feedback", 0.3),
+        min_skipped: [0, 0, 0],
     },
 ];
 
@@ -219,16 +289,16 @@ fn compare(
 ) -> u64 {
     let off = render(case, false, &script);
     let on = render(case, true, &script);
-    assert_eq!(off.skipped, 0, "{}: the switch is off", case.type_id);
+    assert_eq!(off.skipped, 0, "{}: the switch is off", case.name);
     assert!(
         on.bits.iter().flatten().any(|&b| b != 0),
         "{}: the project does sound",
-        case.type_id
+        case.name
     );
     assert!(
         on.bits == off.bits,
         "{}: the skip changed the render",
-        case.type_id
+        case.name
     );
     on.skipped
 }
@@ -251,9 +321,9 @@ fn scenarios(case: &Case) {
         ]
     });
     assert!(
-        skipped > case.min_skipped[0],
+        skipped >= case.min_skipped[0],
         "{}: {skipped} batches skipped",
-        case.type_id
+        case.name
     );
     let bypass = |fx, d: &DeviceDescriptor, plain| HotEdit::Param {
         device: fx,
@@ -264,9 +334,9 @@ fn scenarios(case: &Case) {
         vec![at(10, bypass(fx, d, 1.0)), at(13, bypass(fx, d, 0.0))]
     });
     assert!(
-        skipped > case.min_skipped[1],
+        skipped >= case.min_skipped[1],
         "{}: {skipped} batches skipped (bypass)",
-        case.type_id
+        case.name
     );
     let skipped = compare(case, |fx, d| {
         vec![
@@ -277,27 +347,34 @@ fn scenarios(case: &Case) {
         ]
     });
     assert!(
-        skipped > case.min_skipped[2],
+        skipped >= case.min_skipped[2],
         "{}: {skipped} batches skipped (bypass and tempo)",
-        case.type_id
+        case.name
     );
 }
 
-fn case(type_id: &str) -> &'static Case {
-    CASES.iter().find(|c| c.type_id == type_id).unwrap()
+fn case(name: &str) -> &'static Case {
+    CASES.iter().find(|c| c.name == name).unwrap()
 }
 
 #[test]
 fn the_echo_renders_the_same_bytes_skipped_or_not() {
-    scenarios(case("atomik.echo"));
+    scenarios(case("echo"));
 }
 
 #[test]
 fn the_reverb_renders_the_same_bytes_skipped_or_not() {
-    scenarios(case("atomik.reverb"));
+    scenarios(case("reverb"));
 }
 
 #[test]
 fn the_space_reverb_renders_the_same_bytes_skipped_or_not() {
-    scenarios(case("atomik.space-reverb"));
+    scenarios(case("space-reverb"));
+}
+
+#[test]
+fn the_modulation_effect_renders_the_same_bytes_skipped_or_not() {
+    for name in ["chorus", "flanger", "phaser", "chorus-synced"] {
+        scenarios(case(name));
+    }
 }

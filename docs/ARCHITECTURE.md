@@ -8229,9 +8229,9 @@ A bug in a device must cost that device, not the session. The rules:
   same on the audio thread, on a worker, live, offline and for any block size. The hand-over of a level counts only the
   nodes that really run (see `crate::workers`), so a level of skipped devices wakes no worker. `Engine::set_idle_skip`
   is the test-only switch; [idle_skip.rs](../crates/engine/tests/idle_skip.rs) holds the rule's tests. The built-in
-  devices that answer `quiescent` are the stereo delay, the echo, the reverb and the space reverb (the bypass wrapper forwards for
-  every effect it wraps); each one has a unit test that skipping equals processing and an engine-level render test
-  ([idle_stereo_delay.rs](../crates/render/tests/idle_stereo_delay.rs),
+  devices that answer `quiescent` are the stereo delay, the echo, the reverb, the space reverb and the modulation
+  effect (the bypass wrapper forwards for every effect it wraps); each one has a unit test that skipping equals
+  processing and an engine-level render test ([idle_stereo_delay.rs](../crates/render/tests/idle_stereo_delay.rs),
   [idle_effects.rs](../crates/render/tests/idle_effects.rs)).
 - `catch_unwind` costs nothing while nothing panics, so HI-1 holds. The panic path allocates (the
   payload, the default hook's message); it runs once per faulted device and is a documented
