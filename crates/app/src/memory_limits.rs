@@ -42,9 +42,26 @@ pub fn import_limits_for(total: Option<u64>) -> ImportLimits {
     }
 }
 
+/// A size for a message: binary units, one decimal ("3.2 GB", "640 MB").
+pub fn size_text(bytes: u64) -> String {
+    if bytes >= GIB {
+        format!("{:.1} GB", bytes as f64 / GIB as f64)
+    } else {
+        format!("{} MB", bytes.div_ceil(1 << 20))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sizes_read_in_gigabytes_or_megabytes() {
+        assert_eq!(size_text(3 * GIB + GIB / 5), "3.2 GB");
+        assert_eq!(size_text(GIB), "1.0 GB");
+        assert_eq!(size_text(640 << 20), "640 MB");
+        assert_eq!(size_text(1), "1 MB");
+    }
 
     #[test]
     fn undo_budget_follows_the_memory() {

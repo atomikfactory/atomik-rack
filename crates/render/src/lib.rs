@@ -37,6 +37,7 @@ pub mod cli;
 pub mod delivery;
 pub mod device_input;
 pub mod energy;
+pub mod estimate;
 pub mod export;
 pub mod flac;
 pub mod flat;

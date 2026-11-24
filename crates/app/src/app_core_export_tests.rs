@@ -1231,3 +1231,60 @@ fn real_ffmpeg_writes_the_podcast_preset_as_a_mono_mp3_at_minus_16() {
         );
     }
 }
+
+#[test]
+fn an_export_that_may_not_fit_asks_once_and_a_dialog_closed_leaves_no_file() {
+    use crate::platform::memory::MemoryInfo;
+    let t = Tmp::new();
+    let mut c = core();
+    let path = t.file("song.wav");
+    let v = values(ExportDepth::Pcm24);
+    let small = MemoryInfo {
+        total: Some(8 << 30),
+        available: Some(1 << 20),
+    };
+    // The free memory is not known: nothing is asked.
+    assert!(
+        c.export_memory_question(ExportScope::Song, &path, &v)
+            .is_none()
+    );
+    // Under one MiB the render may not fit: the question names both figures and starts nothing.
+    c.set_memory_info(small);
+    let question = c
+        .export_memory_question(ExportScope::Song, &path, &v)
+        .expect("asks");
+    assert!(
+        question.contains("needs about") && question.contains("1 MB is free"),
+        "{question}"
+    );
+    assert!(!c.audio_export_busy() && !path.exists());
+    // The same export asked for again goes on, and the question is forgotten after that.
+    assert!(
+        c.export_memory_question(ExportScope::Song, &path, &v)
+            .is_none()
+    );
+    assert!(
+        c.export_memory_question(ExportScope::Song, &path, &v)
+            .is_some()
+    );
+    // A dialog that closed forgets it too, and so do the stems ask like any export.
+    c.forget_memory_question();
+    assert!(
+        c.export_memory_question(ExportScope::Song, &path, &v)
+            .is_some()
+    );
+    assert!(
+        c.export_memory_question(ExportScope::Stems, &t.file("stems"), &v)
+            .is_some()
+    );
+    // Plenty of free memory: nothing is asked.
+    c.set_memory_info(MemoryInfo {
+        total: Some(64 << 30),
+        available: Some(32 << 30),
+    });
+    assert!(
+        c.export_memory_question(ExportScope::Song, &path, &v)
+            .is_none()
+    );
+    assert!(!path.exists(), "nothing was written");
+}

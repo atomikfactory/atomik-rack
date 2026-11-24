@@ -977,6 +977,20 @@ impl<S: EngineSink> AppCore<S> {
                     t.frozen = None;
                 }
             }
+            // A render that may not fit in the memory that is free asks first: the same freeze
+            // again goes on (the estimate is rough and the system can page).
+            if let Ok(needed) =
+                atomik_render::estimate::freeze_bytes(&doc, &job.request, &|_| false)
+                && let Some(free) = self.memory_ask(&format!("freeze:{}", job.name), needed)
+            {
+                self.reject(format!(
+                    "{} needs about {} of memory and {} is free: ask again to go on",
+                    job.name,
+                    crate::memory_limits::size_text(needed),
+                    crate::memory_limits::size_text(free)
+                ));
+                continue;
+            }
             let bundle = match self.import_bundle() {
                 Ok(b) => b,
                 Err(e) => {

@@ -378,6 +378,11 @@ may break APIs and the patch and project formats.
   the message the program already gave for a file that is too long, instead of decoding until the allocation
   fails. The sample rate conversion reports a lack of memory as an error instead of aborting. A machine with 16 GB
   or more has the limit it always had.
+- **A bounce, export, stem export or freeze that may not fit in the free memory asks first.** The program estimates
+  what the render holds (the audio files it reads, plus the output twice) and, when that is more than the memory
+  that is free, says so with both figures, under the options of the export panel or as a message for a freeze;
+  asking again goes on. Nothing changes when the free memory is not known or is enough; the command-line tools and
+  the QA server never ask.
 
 ### Fixed
 - **Dropping an instrument above its mix channel.** An instrument dragged to the place above its own mix channel

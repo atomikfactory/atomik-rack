@@ -192,6 +192,7 @@ impl<B: AudioBackend> Shell<B> {
         self.export = Some(view);
         self.export_target = Some((scope, path.to_path_buf()));
         self.export_replace = None;
+        self.core.forget_memory_question();
         self.repaint = true;
     }
 
@@ -220,6 +221,11 @@ impl<B: AudioBackend> Shell<B> {
             .map_or_else(String::new, |n| n.to_string_lossy().into_owned());
         let mut view = self.export_view_for(scope, &name, values);
         view.choose_preset(&preset.name);
+        // A render that may not fit in the free memory asks first: choosing the preset again goes on.
+        if let Some(question) = self.core.export_memory_question(scope, path, &values) {
+            self.notify(question);
+            return;
+        }
         if self
             .core
             .start_audio_export(scope, path.to_path_buf(), values)
@@ -327,6 +333,15 @@ impl<B: AudioBackend> Shell<B> {
                     self.export_replace = Some(file);
                     if let Some(view) = &mut self.export {
                         view.set_warning(Some(warning));
+                    }
+                    self.repaint = true;
+                    return;
+                }
+                // A render that may not fit in the free memory asks first, in the dialog: a second
+                // EXPORT goes on.
+                if let Some(question) = self.core.export_memory_question(scope, &path, &values) {
+                    if let Some(view) = &mut self.export {
+                        view.set_warning(Some(question));
                     }
                     self.repaint = true;
                     return;

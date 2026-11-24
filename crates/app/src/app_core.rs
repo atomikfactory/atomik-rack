@@ -288,6 +288,9 @@ pub struct AppCore<S: EngineSink> {
     /// The machine's memory as the limits see it: `None` reads the system on every use, a test
     /// injects a figure ([`AppCore::set_memory_info`]).
     memory: Option<crate::platform::memory::MemoryInfo>,
+    /// A render that may not fit was asked about, and this is its key: asking again for the
+    /// same one goes on.
+    memory_ack: Option<String>,
     view: RackView,
     ids: BTreeMap<DeviceKey, DeviceInstanceId>,
     /// The MIDI Out ports last handed to the sink (see `app_core_midi_out.rs`).
@@ -682,6 +685,7 @@ impl<S: EngineSink> AppCore<S> {
             document: Document::new(doc),
             // The unit tests do not depend on the machine they run on.
             memory: cfg!(test).then_some(crate::platform::memory::MemoryInfo::UNKNOWN),
+            memory_ack: None,
             view,
             ids: BTreeMap::new(),
             midi_out_sent: Vec::new(),
@@ -855,6 +859,28 @@ impl<S: EngineSink> AppCore<S> {
     pub fn set_memory_info(&mut self, info: crate::platform::memory::MemoryInfo) {
         self.memory = Some(info);
         self.apply_memory_limits();
+    }
+
+    /// Whether a render that needs about `needed` bytes must be asked about first: the free memory
+    /// when it is, `None` when it fits, when the system does not say, or when the same `key` was
+    /// asked about just before (this call then forgets it, so the question comes back next time).
+    pub(super) fn memory_ask(&mut self, key: &str, needed: u64) -> Option<u64> {
+        let free = self.memory_info().available?;
+        if needed <= free {
+            self.memory_ack = None;
+            return None;
+        }
+        if self.memory_ack.as_deref() == Some(key) {
+            self.memory_ack = None;
+            return None;
+        }
+        self.memory_ack = Some(key.to_owned());
+        Some(free)
+    }
+
+    /// Forgets the render that was asked about (its dialog closed without going on).
+    pub fn forget_memory_question(&mut self) {
+        self.memory_ack = None;
     }
 
     /// Gives the open document the undo budget that fits the machine.

@@ -542,6 +542,21 @@ The settings are `backup_folder`, `backup_keep` and `backup_audio` of `WorkflowP
 so it is a new unsaved song whose audio is read from the copy's own `Audio` folder; after the question about unsaved
 changes it is `PendingAction::RestoreBackup`.
 
+**Memory figures and the limits that follow them.** `platform::memory` reads the machine's physical memory in the
+one file of the app that may use `unsafe` (`MemoryInfo { total, available }`: the total once, the free figure on each
+call; macOS has no free figure and says `None`). `AppCore` holds them (`memory_info`; a test replaces them with
+`set_memory_info`; the unit tests start with none). Three limits are pure functions of them and leave a machine with
+16 GiB or more, or one that does not tell, as it always was: the undo budget of each document the app makes
+(`undo_bytes_for`: 128 MiB under 8 GiB), the largest import (`import_limits_for`, see the audio-file section), and the question before a
+render. `atomik_render::estimate` (`export_bytes`, `stems_bytes`, `freeze_bytes`) gives what a render holds: the
+decoded size of every audio asset it reads (an asset several tracks use counts once; a bounce never streams, so a
+streamed asset counts in full) plus the output held twice (the rendered buffers and the copy that the conversion or
+the loudness finish makes), with the output channels of the document, a pair more for each strip of a stem pass (at
+most `TAPS_PER_PASS`) and the tapped pair of a freeze, which also renders the latency margin. When that is more than
+the free memory the export panel shows both figures (`AppCore::export_memory_question`) and a second EXPORT goes on,
+and a freeze or a preset export says it in a message and goes on when asked again (`memory_ask`). It is a question,
+not a refusal: the figure is rough and the system can page. The command-line tools and the QA server never ask.
+
 ### 2.4 Playback, per 64-frame batch
 
 ```
