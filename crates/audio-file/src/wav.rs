@@ -20,15 +20,44 @@ fn map_hound(e: hound::Error) -> AudioFileError {
 /// Writes interleaved 32-bit float WAV. The round trip through [`read_wav_f32`] is exact.
 pub fn write_wav_f32(path: &Path, data: &AudioData) -> Result<()> {
     data.validate()?;
+    let frames = data.frames();
+    write_wav_f32_blocks(
+        path,
+        data.sample_rate,
+        data.channels.len(),
+        frames as u64,
+        WRITE_FRAMES,
+        |at, out| {
+            let at = at as usize;
+            for (o, ch) in out.iter_mut().zip(&data.channels) {
+                let n = o.len();
+                o.copy_from_slice(&ch[at..at + n]);
+            }
+            Ok(())
+        },
+    )
+}
+
+/// The file [`write_wav_f32`] writes for audio of `frames` frames, with the samples taken from
+/// `read` a block at a time instead of from one buffer: `read(from, out)` fills `out` (one `Vec`
+/// per channel, all of one length, at most `block_frames`) with the frames `from..`. The bytes
+/// are the ones `write_wav_f32` writes for the same samples.
+pub(crate) fn write_wav_f32_blocks(
+    path: &Path,
+    sample_rate: u32,
+    nch: usize,
+    frames: u64,
+    block_frames: usize,
+    mut read: impl FnMut(u64, &mut [Vec<f32>]) -> Result<()>,
+) -> Result<()> {
     let spec = hound::WavSpec {
-        channels: data.channels.len() as u16,
-        sample_rate: data.sample_rate,
+        channels: u16::try_from(nch)
+            .map_err(|_| AudioFileError::InvalidData("too many channels".into()))?,
+        sample_rate,
         bits_per_sample: 32,
         sample_format: hound::SampleFormat::Float,
     };
-    let frames = data.frames();
-    let nch = data.channels.len();
-    let data_bytes = frames as u64 * nch as u64 * 4;
+    let data_bytes = frames * nch as u64 * 4;
     // The header comes from hound (an empty file), so its bytes are the ones hound would write;
     // the two size fields are patched here. Data that does not fit a 32-bit size keeps the
     // sample-at-a-time path and its error.
@@ -38,26 +67,47 @@ pub fn write_wav_f32(path: &Path, data: &AudioData) -> Result<()> {
         .map_err(map_hound)?;
     let mut head = head.into_inner();
     let head_len = head.len();
+    let block = block_frames.clamp(1, usize::try_from(frames.max(1)).unwrap_or(usize::MAX));
+    let mut planar = vec![vec![0.0f32; block]; nch];
     if head_len < 8 || data_bytes + head_len as u64 - 8 > u64::from(u32::MAX) {
-        return write_wav_f32_slow(path, data, spec);
+        let mut w = hound::WavWriter::create(path, spec).map_err(map_hound)?;
+        let mut at = 0;
+        while at < frames {
+            let take = (frames - at).min(block as u64) as usize;
+            for ch in &mut planar {
+                ch.resize(take, 0.0);
+            }
+            read(at, &mut planar)?;
+            for i in 0..take {
+                for ch in &planar {
+                    w.write_sample(ch[i]).map_err(map_hound)?;
+                }
+            }
+            at += take as u64;
+        }
+        return w.finalize().map_err(map_hound);
     }
     head[4..8].copy_from_slice(&((head_len as u64 - 8 + data_bytes) as u32).to_le_bytes());
     head[head_len - 4..].copy_from_slice(&(data_bytes as u32).to_le_bytes());
     let mut file = File::create(path)?;
     file.write_all(&head)?;
-    let mut block = vec![0u8; 4 * nch * WRITE_FRAMES.min(frames.max(1))];
+    let mut bytes = vec![0u8; 4 * nch * block];
     let mut at = 0;
     while at < frames {
-        let take = (frames - at).min(WRITE_FRAMES);
-        let bytes = &mut block[..take * nch * 4];
-        for (c, ch) in data.channels.iter().enumerate() {
-            for (i, s) in ch[at..at + take].iter().enumerate() {
+        let take = (frames - at).min(block as u64) as usize;
+        for ch in &mut planar {
+            ch.resize(take, 0.0);
+        }
+        read(at, &mut planar)?;
+        let bytes = &mut bytes[..take * nch * 4];
+        for (c, ch) in planar.iter().enumerate() {
+            for (i, s) in ch.iter().enumerate() {
                 let o = (i * nch + c) * 4;
                 bytes[o..o + 4].copy_from_slice(&s.to_le_bytes());
             }
         }
         file.write_all(bytes)?;
-        at += take;
+        at += take as u64;
     }
     file.flush()?;
     Ok(())
@@ -65,16 +115,6 @@ pub fn write_wav_f32(path: &Path, data: &AudioData) -> Result<()> {
 
 /// Frames converted per write: 64 KiB of stereo.
 const WRITE_FRAMES: usize = 8192;
-
-fn write_wav_f32_slow(path: &Path, data: &AudioData, spec: hound::WavSpec) -> Result<()> {
-    let mut w = hound::WavWriter::create(path, spec).map_err(map_hound)?;
-    for i in 0..data.frames() {
-        for ch in &data.channels {
-            w.write_sample(ch[i]).map_err(map_hound)?;
-        }
-    }
-    w.finalize().map_err(map_hound)
-}
 
 /// Reads a WAV file via `hound`. 32-bit float is exact; integer PCM is scaled by `2^-(bits-1)`.
 /// A NaN or infinite sample becomes silence. The memory taken never exceeds what the file's

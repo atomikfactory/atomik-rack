@@ -4,6 +4,7 @@
 //!
 //! Every file is written to a temporary file in the same directory (`<name>.tmp~`), flushed,
 //! fsynced and renamed into place, so a crash never leaves a partial file under a real name.
+//! A temporary file a crash did leave is removed by [`Bundle::remove_orphans`].
 
 use std::collections::BTreeSet;
 use std::fs::{self, OpenOptions};
@@ -14,16 +15,18 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use crate::data::AudioData;
 use crate::decode::{ImportLimits, decode_file_for_import};
 use crate::error::{AudioFileError, Result};
-use crate::hash::content_hash;
-use crate::peaks::PeakPyramid;
+use crate::hash::{ContentHasher, content_hash};
+use crate::peaks::{PeakBuilder, PeakPyramid};
 use crate::resample::resample_owned;
-use crate::wav::{WavStreamReader, read_wav_f32, write_wav_f32};
+use crate::wav::{WavStreamReader, read_wav_f32, write_wav_f32, write_wav_f32_blocks};
 
 const AUDIO_DIR: &str = "Audio";
 const PEAKS_DIR: &str = ".peaks";
 const TEMP_SUFFIX: &str = ".tmp~";
 /// File name returned by [`Bundle::asset_path`] for a malformed hash (never exists).
 const INVALID_NAME: &str = "_invalid-hash.wav";
+/// Frames a block-wise store holds per channel at a time.
+const STORE_BLOCK_FRAMES: usize = 8192;
 
 /// What the model stores about an asset in the sample pool.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -325,6 +328,98 @@ impl Bundle {
     /// Stores already-decoded audio (a finished recording) the same way, without decoding.
     pub fn add_recording(&mut self, data: &AudioData, name: &str) -> Result<AssetInfo> {
         self.store(data, name)
+    }
+
+    /// [`Self::add_recording`] for audio that is not in memory and is too long to be: the same
+    /// asset (hash, file bytes, peaks, [`AssetInfo`]) as `add_recording` gives for the same
+    /// samples, made from blocks. `read(from, out)` fills `out` (one `Vec` per channel, all of
+    /// one length) with the frames `from..` of the audio of `frames` frames; it is called for the
+    /// whole range once per channel (the hash runs channel by channel), then once more for the
+    /// file when the asset is new, and must give the same samples every time. Samples are stored
+    /// as given, like `add_recording` stores them: a source that must not hand out NaN or
+    /// infinity filters them itself.
+    ///
+    /// The memory held is one block of every channel besides the peaks, whatever `frames` is.
+    /// An asset the bundle holds already is not written again, and no temporary file is left
+    /// whether the store ends well, fails or finds the asset present.
+    ///
+    /// # Errors
+    /// `Empty` for no frames, whatever `read` returns, or a failure writing the bundle: nothing
+    /// is stored then.
+    pub fn add_recording_from(
+        &mut self,
+        sample_rate: u32,
+        channels: u16,
+        frames: u64,
+        name: &str,
+        read: impl FnMut(u64, &mut [Vec<f32>]) -> Result<()>,
+    ) -> Result<AssetInfo> {
+        self.store_blocks(
+            sample_rate,
+            channels,
+            frames,
+            name,
+            STORE_BLOCK_FRAMES,
+            read,
+        )
+    }
+
+    fn store_blocks(
+        &mut self,
+        sample_rate: u32,
+        channels: u16,
+        frames: u64,
+        name: &str,
+        block_frames: usize,
+        mut read: impl FnMut(u64, &mut [Vec<f32>]) -> Result<()>,
+    ) -> Result<AssetInfo> {
+        if sample_rate == 0 {
+            return Err(AudioFileError::InvalidData("sample rate is zero".into()));
+        }
+        if channels == 0 {
+            return Err(AudioFileError::InvalidData("no channels".into()));
+        }
+        if frames == 0 {
+            return Err(AudioFileError::Empty);
+        }
+        let nch = usize::from(channels);
+        let block = block_frames.clamp(1, usize::try_from(frames).unwrap_or(usize::MAX));
+        let mut planar = vec![vec![0.0f32; block]; nch];
+        let mut hasher = ContentHasher::new(sample_rate, u32::from(channels), frames);
+        let mut peaks = PeakBuilder::new(sample_rate, nch);
+        for c in 0..nch {
+            let mut at = 0u64;
+            while at < frames {
+                let take = (frames - at).min(block as u64) as usize;
+                for ch in &mut planar {
+                    ch.resize(take, 0.0);
+                }
+                read(at, &mut planar)?;
+                hasher.update(&planar[c]);
+                peaks.push(c, &planar[c]);
+                at += take as u64;
+            }
+        }
+        let hash = hasher.finish();
+        let peaks = peaks.finish(frames)?;
+        fs::create_dir_all(self.peaks_dir())?;
+        let asset = self.asset_path(&hash);
+        if !asset.is_file() {
+            write_atomic(&asset, |tmp| {
+                write_wav_f32_blocks(tmp, sample_rate, nch, frames, block, &mut read)
+            })?;
+        }
+        if !self.peaks_path(&hash).is_file() {
+            self.write_peaks(&hash, &peaks)?;
+        }
+        Ok(AssetInfo {
+            hash,
+            channels,
+            sample_rate,
+            frames,
+            original_name: name.to_owned(),
+            replaced_samples: 0,
+        })
     }
 
     /// Resamples the stored asset `hash` to `rate` and stores the result as a new asset named
@@ -732,3 +827,7 @@ mod tests {
         assert!(!is_valid_hash(&"ab".repeat(31)));
     }
 }
+
+#[cfg(test)]
+#[path = "bundle_blocks_tests.rs"]
+mod blocks_tests;

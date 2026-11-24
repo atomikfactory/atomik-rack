@@ -11,27 +11,59 @@ use crate::data::AudioData;
 /// first). Raw bits are hashed, so `-0.0` differs from `0.0` and NaN payloads count. The value
 /// is identical on every platform.
 pub fn content_hash(data: &AudioData) -> String {
-    let mut h = Sha256::new();
-    h.update(data.sample_rate.to_le_bytes());
-    h.update((data.channels.len() as u32).to_le_bytes());
-    h.update((data.frames() as u64).to_le_bytes());
-    let mut buf = Vec::with_capacity(16 * 1024);
+    let mut h = ContentHasher::new(
+        data.sample_rate,
+        data.channels.len() as u32,
+        data.frames() as u64,
+    );
     for ch in &data.channels {
-        for chunk in ch.chunks(4096) {
-            buf.clear();
-            for s in chunk {
-                buf.extend_from_slice(&s.to_bits().to_le_bytes());
-            }
-            h.update(&buf);
+        h.update(ch);
+    }
+    h.finish()
+}
+
+/// [`content_hash`] fed piece by piece: the header, then the samples of channel 0 in order, then
+/// those of channel 1, and so on, in pieces of any size. Gives the value [`content_hash`] gives
+/// for the same audio.
+pub(crate) struct ContentHasher {
+    h: Sha256,
+    buf: Vec<u8>,
+}
+
+impl ContentHasher {
+    /// Starts the hash of audio of `frames` frames of `channels` channels at `sample_rate`.
+    pub(crate) fn new(sample_rate: u32, channels: u32, frames: u64) -> Self {
+        let mut h = Sha256::new();
+        h.update(sample_rate.to_le_bytes());
+        h.update(channels.to_le_bytes());
+        h.update(frames.to_le_bytes());
+        Self {
+            h,
+            buf: Vec::with_capacity(16 * 1024),
         }
     }
-    let digest = h.finalize();
-    let mut out = String::with_capacity(64);
-    for b in digest {
-        out.push(char::from_digit(u32::from(b >> 4), 16).unwrap_or('0'));
-        out.push(char::from_digit(u32::from(b & 15), 16).unwrap_or('0'));
+
+    /// Adds the next samples of the current channel (raw bits).
+    pub(crate) fn update(&mut self, samples: &[f32]) {
+        for chunk in samples.chunks(4096) {
+            self.buf.clear();
+            for s in chunk {
+                self.buf.extend_from_slice(&s.to_bits().to_le_bytes());
+            }
+            self.h.update(&self.buf);
+        }
     }
-    out
+
+    /// The lowercase hex digest.
+    pub(crate) fn finish(self) -> String {
+        let digest = self.h.finalize();
+        let mut out = String::with_capacity(64);
+        for b in digest {
+            out.push(char::from_digit(u32::from(b >> 4), 16).unwrap_or('0'));
+            out.push(char::from_digit(u32::from(b & 15), 16).unwrap_or('0'));
+        }
+        out
+    }
 }
 
 #[cfg(test)]

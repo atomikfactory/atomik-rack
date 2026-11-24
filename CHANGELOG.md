@@ -651,6 +651,11 @@ may break APIs and the patch and project formats.
   installed with a descriptor that did not match it until some later restart. The manager now takes that change
   once the plugin is active and builds the device and the listed layout from the new list, when it loads
   in the app's own process and when it loads in the background; the change is not reported a second time.
+- **A long take is stored without needing its size in memory.** Stopping a recording read every lap back whole
+  to store it, so a 60 minute stereo take asked for 1.4 GB at once, and a take too long for the memory was kept
+  only as a recovered take after the next start. A lap that the session streams now goes from the recording file
+  to its asset a block at a time (the same asset, name and waveform as before); it needs a few hundred kilobytes
+  whatever the length. A short take that stays in memory is stored as before.
 
 ## [0.5.0-rc.1] - 2026-11-18
 

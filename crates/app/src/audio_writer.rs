@@ -22,13 +22,18 @@
 //!   in-progress files are deleted once their laps are stored. **One asset per lap and track**:
 //!   an asset is exactly the audio of one pass (its sub-tick head is skipped by `source_offset`).
 //! * **Cancel.** [`Ctl::Cancel`] (or a dropped sender) deletes the files and ends the thread.
-//! * **No abort at the end of a long take.** A lap is read back whole to be hashed and stored,
-//!   so its buffers are the one allocation that grows with the take. They are reserved with
-//!   `try_reserve_exact`: when the memory is not there the take ends with a notice, the in-progress
-//!   files stay where they are (the orphan scan of [`crate::recovery`] brings them back at the next
-//!   start) and the app goes on. The same holds for any other failure while the laps are stored:
-//!   the in-progress files are only deleted once every lap is stored. Hashing, the file write and
-//!   the peak scan work in bounded blocks and need nothing proportional to the take.
+//! * **No abort at the end of a long take.** A lap the engine will stream (see
+//!   [`StreamRule::admit`]) is never read back whole: `Bundle::add_recording_from` hashes it,
+//!   scans its peaks and writes its asset from the in-progress file a block at a time, so stopping
+//!   a take of any length needs one block of every channel and nothing proportional to the take
+//!   (besides the finished peaks, about 1 % of the audio). A lap that stays in memory is read
+//!   whole, as the engine holds it anyway; its buffers are reserved with `try_reserve_exact`:
+//!   when the memory is not there the take ends with a notice, the in-progress files stay where
+//!   they are (the orphan scan of [`crate::recovery`] brings them back at the next start) and the
+//!   app goes on. The same holds for any other failure while the laps are stored: the in-progress
+//!   files are only deleted once every lap is stored. A temporary file a store leaves when the
+//!   process dies is `<hash>.wav.tmp~` in `Audio/`: the recovery scan only reads `rec-*.wav`, so it
+//!   is never offered as a take, and the orphan clean-up of the bundle removes it.
 //! * **A write error stops the take at once.** The thread that cannot write sets the take's
 //!   failure flag (a shared [`AtomicBool`] the UI thread reads every frame, nothing on the audio
 //!   thread) and ends with the reason as its result; the app then ends the recording as if the
@@ -37,7 +42,9 @@
 use crate::audio_import::{Msg, RecDoneGuard};
 use crate::audio_record::{PlannedTrack, TakeRange, split_laps};
 use crate::stream_source::{StreamRule, open_stream_asset};
-use atomik_audio_file::{AssetInfo, AudioData, Bundle, PeakPyramid, WavStreamReader};
+use atomik_audio_file::{
+    AssetInfo, AudioData, AudioFileError, Bundle, PeakPyramid, WavStreamReader,
+};
 use atomik_engine::{RecordTap, SongAsset, SongPosition};
 use atomik_model::DeviceKey;
 use atomik_ui::i18n;
@@ -282,6 +289,14 @@ fn store_failure(config: &WriterConfig, e: StoreError) -> String {
     }
 }
 
+/// Why a lap cannot be read from its in-progress file: the file ends early.
+fn short_text(path: &std::path::Path, got: u64, want: u64) -> String {
+    format!(
+        "{} is shorter than expected ({got} of {want} frames)",
+        path.display()
+    )
+}
+
 /// The buffers to read a lap of `len` frames of `channels` channels into, zero-filled, or `None`
 /// when they cannot be had: the take is as long as the user played, so the request may be larger
 /// than the memory, and a failed allocation of that size would abort the whole program.
@@ -511,25 +526,49 @@ fn store_laps(
         let channels = track.planned.tap_index.len();
         for seg in &segments {
             let len = usize::try_from(seg.frames).map_err(io)?;
-            let mut planar =
-                lap_buffers(channels, len, faults.lap_limit_samples).ok_or(StoreError::TooLong)?;
-            let n = reader.read_frames(seg.first, &mut planar).map_err(io)?;
-            if n < len {
-                return Err(StoreError::Failed(format!(
-                    "{} is shorter than expected ({n} of {len} frames)",
-                    track.path.display()
-                )));
-            }
-            let data = AudioData::new(config.sample_rate, planar).map_err(io)?;
             let name = format!("{} take {}", track.name, seg.lap + 1);
-            let info = bundle.add_recording(&data, &name).map_err(io)?;
-            let peaks = Arc::new(bundle.load_peaks(&info.hash).map_err(io)?);
-            let asset = if rule.admit(info.frames, info.channels, true) {
-                drop(data);
-                open_stream_asset(&bundle, &info.hash).map_err(io)?
+            let streams = rule.admit(seg.frames, u16::try_from(channels).map_err(io)?, true);
+            let (info, asset) = if streams {
+                // A lap the engine streams is never held: it goes from the in-progress file to
+                // its asset a block at a time.
+                let info = bundle
+                    .add_recording_from(
+                        config.sample_rate,
+                        u16::try_from(channels).map_err(io)?,
+                        seg.frames,
+                        &name,
+                        |from, out| {
+                            let want = out.first().map_or(0, Vec::len);
+                            let n = reader.read_frames(seg.first + from, out)?;
+                            if n < want {
+                                return Err(AudioFileError::Decode(short_text(
+                                    &track.path,
+                                    from + n as u64,
+                                    seg.frames,
+                                )));
+                            }
+                            Ok(())
+                        },
+                    )
+                    .map_err(io)?;
+                let asset = open_stream_asset(&bundle, &info.hash).map_err(io)?;
+                (info, asset)
             } else {
-                SongAsset::memory(Arc::from(data.channels))
+                let mut planar = lap_buffers(channels, len, faults.lap_limit_samples)
+                    .ok_or(StoreError::TooLong)?;
+                let n = reader.read_frames(seg.first, &mut planar).map_err(io)?;
+                if n < len {
+                    return Err(StoreError::Failed(short_text(
+                        &track.path,
+                        n as u64,
+                        seg.frames,
+                    )));
+                }
+                let data = AudioData::new(config.sample_rate, planar).map_err(io)?;
+                let info = bundle.add_recording(&data, &name).map_err(io)?;
+                (info, SongAsset::memory(Arc::from(data.channels)))
             };
+            let peaks = Arc::new(bundle.load_peaks(&info.hash).map_err(io)?);
             laps.push(RecordedLap {
                 device: track.planned.device.clone(),
                 lap: seg.lap,
