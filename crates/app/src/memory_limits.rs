@@ -1,7 +1,9 @@
-//! The limits that follow the machine's memory: the undo history's budget. A pure function of the
-//! physical memory the platform layer reports ([`crate::platform::memory`]); a machine with 8 GiB
-//! or more, or one that does not tell, gets the limit that was always there.
+//! The limits that follow the machine's memory: the undo history's budget, and how large an
+//! import may be. Pure functions of the physical memory the platform layer reports
+//! ([`crate::platform::memory`]); a machine with 16 GiB or more, or one that does not tell,
+//! gets the limits that were always there.
 
+use atomik_audio_file::{DEFAULT_MAX_SAMPLES, ImportLimits};
 use atomik_model::MAX_UNDO_BYTES;
 
 const GIB: u64 = 1 << 30;
@@ -12,12 +14,31 @@ const SMALL_MACHINE: u64 = 8 * GIB;
 /// The undo budget, in bytes, on a machine with less than [`SMALL_MACHINE`].
 const SMALL_UNDO_BYTES: usize = 128 << 20;
 
+/// Memory from which an import has the whole of its default cap (4 GiB is a quarter of it).
+const FULL_CAP_MACHINE: u64 = 16 * GIB;
+
 /// The undo history's memory limit for a machine with `total` bytes of physical memory: 128 MiB
 /// under 8 GiB, [`MAX_UNDO_BYTES`] from there on and when the memory is not known.
 pub fn undo_bytes_for(total: Option<u64>) -> usize {
     match total {
         Some(t) if t < SMALL_MACHINE => SMALL_UNDO_BYTES,
         _ => MAX_UNDO_BYTES,
+    }
+}
+
+/// What an import may decode on a machine with `total` bytes of physical memory. The decoded
+/// size (frames x channels x 4 bytes) may not exceed a quarter of the memory, and never the
+/// default cap of 4 GiB, so a machine with 16 GiB or more has exactly the default. Below 16 GiB a
+/// file that has to be converted to the session's rate counts twice (the conversion holds a
+/// second copy). An unknown size leaves the default.
+pub fn import_limits_for(total: Option<u64>) -> ImportLimits {
+    let Some(total) = total.filter(|t| *t < FULL_CAP_MACHINE) else {
+        return ImportLimits::default();
+    };
+    let quarter_samples = (total / 4 / 4).min(DEFAULT_MAX_SAMPLES);
+    ImportLimits {
+        max_samples: quarter_samples,
+        max_samples_resampled: quarter_samples / 2,
     }
 }
 
@@ -32,6 +53,24 @@ mod tests {
         assert_eq!(undo_bytes_for(Some(8 * GIB - 1)), 128 << 20);
         assert_eq!(undo_bytes_for(Some(8 * GIB)), MAX_UNDO_BYTES);
         assert_eq!(undo_bytes_for(Some(64 * GIB)), MAX_UNDO_BYTES);
+    }
+
+    #[test]
+    fn import_limit_is_a_quarter_of_the_memory_and_never_above_the_default() {
+        let default = ImportLimits::default();
+        assert_eq!(import_limits_for(None), default);
+        assert_eq!(import_limits_for(Some(16 * GIB)), default);
+        assert_eq!(import_limits_for(Some(256 * GIB)), default);
+        // 8 GiB: a quarter is 2 GiB of f32, 512 Mi samples; converting counts twice.
+        let eight = import_limits_for(Some(8 * GIB));
+        assert_eq!(eight.max_samples, (2 * GIB / 4));
+        assert_eq!(eight.max_samples_resampled, GIB / 4);
+        // 4 GiB: 1 GiB of f32.
+        let four = import_limits_for(Some(4 * GIB));
+        assert_eq!(four.max_samples, GIB / 4);
+        assert_eq!(four.max_samples_resampled, GIB / 8);
+        // Just under 16 GiB is below the default cap, not above it.
+        assert!(import_limits_for(Some(16 * GIB - 1)).max_samples <= default.max_samples);
     }
 }
 

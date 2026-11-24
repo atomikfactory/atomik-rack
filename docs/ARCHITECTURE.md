@@ -4366,7 +4366,12 @@ Nothing in this crate runs on the audio thread. Every function may allocate and 
   holds at most `DEFAULT_MAX_SAMPLES` (2^30 samples, 4 GiB of `f32`) and checks the size before it
   grows a buffer, since an allocation failure aborts the process and no `catch_unwind` sees it;
   `decode_file_with` and `decode_bytes_with` take the limit as a parameter and also return the
-  count of repaired samples (`Decoded`). `AudioData::new` turns every NaN and infinity into silence
+  count of repaired samples (`Decoded`). An import passes `ImportLimits` (`Bundle::import_limited`,
+  `decode_file_for_import`): one figure for a file already at the song's rate and a lower one for a
+  file that has to be converted, picked once the file's rate is known; a lossless file whose header
+  declares more than the figure is refused before the decoder is made. The app takes the figures
+  from the machine's memory (`import_limits_for`: a quarter of it, never above the cap, the default
+  from 16 GiB on). `AudioData::new` turns every NaN and infinity into silence
   (`new_counted` says how many), so nothing non-finite reaches the mixer; `AssetInfo` carries the
   count of an import.
 - **WAV** (`read_wav_f32`, `read_wav_f32_limited`, `WavStreamReader`): the header's sample count is a

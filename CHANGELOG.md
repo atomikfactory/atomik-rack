@@ -372,6 +372,12 @@ may break APIs and the patch and project formats.
 - **The undo history keeps a smaller budget on a machine with little memory.** A machine with less than 8 GB of
   physical memory keeps 128 MiB of undo history instead of 512 MiB, for every song it opens or starts; a machine
   with 8 GB or more, or one that does not tell its memory, behaves as before.
+- **An import larger than the machine can hold is refused before it starts.** A file whose decoded size
+  (frames x channels x 4 bytes, twice when it has to be converted to the song's rate on a machine under 16 GB) is
+  over a quarter of the physical memory, and never more than the 4 GiB of before, is refused from its header with
+  the message the program already gave for a file that is too long, instead of decoding until the allocation
+  fails. The sample rate conversion reports a lack of memory as an error instead of aborting. A machine with 16 GB
+  or more has the limit it always had.
 
 ### Fixed
 - **Dropping an instrument above its mix channel.** An instrument dragged to the place above its own mix channel

@@ -7,8 +7,8 @@ mod common;
 use std::io::Write;
 
 use atomik_audio_file::{
-    AudioData, AudioFileError, Bundle, WavStreamReader, decode_bytes, decode_bytes_with,
-    decode_file, read_wav_f32, read_wav_f32_limited, write_wav_f32,
+    AudioData, AudioFileError, Bundle, ImportLimits, WavStreamReader, decode_bytes,
+    decode_bytes_with, decode_file, read_wav_f32, read_wav_f32_limited, write_wav_f32,
 };
 use atomik_testkit::no_alloc::peak_heap_of as peak_of;
 
@@ -184,4 +184,54 @@ fn an_import_reports_the_samples_it_replaced_and_stores_a_finite_asset() {
             .replaced_samples,
         0
     );
+}
+
+#[test]
+fn an_import_over_its_limit_is_refused_by_the_header_before_anything_is_held() {
+    // The 16-bit stereo fixture is 4410 frames at 44.1 kHz: 8820 samples.
+    let src = common::fixture("stereo_wav16.wav");
+    let dir = common::tmp_dir("import-limit");
+    let mut bundle = Bundle::create(&dir.join("project")).unwrap();
+    let limits = ImportLimits {
+        max_samples: 8000,
+        max_samples_resampled: 8000,
+    };
+    let (r, peak) = peak_of(|| bundle.import_limited(&src, common::RATE, limits));
+    let message = r.unwrap_err().to_string();
+    assert!(
+        message.contains("audio too long (more than 8000 samples"),
+        "{message}"
+    );
+    assert!(peak < FEW_MIB, "the refusal peaked at {peak} bytes");
+}
+
+#[test]
+fn a_file_that_needs_converting_uses_the_lower_figure_and_a_big_limit_imports_as_before() {
+    let src = common::fixture("stereo_wav16.wav");
+    let dir = common::tmp_dir("import-limit-rates");
+    let mut bundle = Bundle::create(&dir.join("project")).unwrap();
+    let limits = ImportLimits {
+        max_samples: 8820,
+        max_samples_resampled: 100,
+    };
+    // At the session's rate the file fits exactly; to another rate it counts against the lower
+    // figure and is refused.
+    let (same, _) = bundle
+        .import_limited(&src, common::RATE, limits)
+        .expect("fits at its own rate");
+    assert!(
+        bundle
+            .import_limited(&src, 48_000, limits)
+            .unwrap_err()
+            .to_string()
+            .contains("more than 100 samples")
+    );
+    // A large limit gives the same asset as a plain import.
+    let mut plain = Bundle::create(&dir.join("plain")).unwrap();
+    let want = plain.import(&src, common::RATE).unwrap();
+    assert_eq!(same.hash, want.hash);
+    let (big, _) = plain
+        .import_limited(&src, 48_000, ImportLimits::default())
+        .unwrap();
+    assert_eq!(big.hash, plain.import(&src, 48_000).unwrap().hash);
 }

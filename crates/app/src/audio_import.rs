@@ -10,7 +10,7 @@
 
 use crate::audio_writer::TakeResult;
 use crate::stream_source::{open_stream_asset, should_stream};
-use atomik_audio_file::{AssetInfo, Bundle, FileMeta, PeakPyramid};
+use atomik_audio_file::{AssetInfo, Bundle, FileMeta, ImportLimits, PeakPyramid};
 use atomik_device_sdk::SampleBuffer;
 use atomik_engine::SongAsset;
 use atomik_model::Song;
@@ -619,10 +619,12 @@ pub(crate) fn load_asset(bundle: &Bundle, hash: &str, threshold: u64) -> Result<
 pub(crate) fn import_file(
     bundle: &mut Bundle,
     path: &Path,
-    rate: u32,
+    (rate, limits): (u32, ImportLimits),
     threshold: u64,
 ) -> Result<Loaded, String> {
-    let info = bundle.import(path, rate).map_err(|e| e.to_string())?;
+    let (info, _) = bundle
+        .import_limited(path, rate, limits)
+        .map_err(|e| e.to_string())?;
     let mut loaded = load_asset(bundle, &info.hash, threshold)?;
     loaded.meta = atomik_audio_file::read_file_meta(path);
     loaded.info = Some(info);
@@ -635,7 +637,7 @@ pub(crate) fn spawn_import(
     generation: u64,
     batch: u64,
     mut bundle: Bundle,
-    rate: u32,
+    (rate, limits): (u32, ImportLimits),
     threshold: u64,
     paths: Vec<PathBuf>,
 ) -> std::io::Result<()> {
@@ -644,7 +646,7 @@ pub(crate) fn spawn_import(
         .spawn(move || {
             let _done = DoneGuard(tx.clone(), Some(Msg::BatchDone { generation }));
             for path in paths {
-                let result = import_file(&mut bundle, &path, rate, threshold);
+                let result = import_file(&mut bundle, &path, (rate, limits), threshold);
                 let _ = tx.send(Msg::Imported {
                     generation,
                     batch,

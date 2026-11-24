@@ -107,7 +107,12 @@ fn convert(data: &AudioData, target_rate: u32) -> Result<AudioData> {
 
     let (pad, extra_drop) = alignment(src, dst, resampler.output_delay());
     let padded = pad + frames + TAIL;
-    let mut planar = Vec::with_capacity(nch * padded);
+    // The working copy is twice the size of the input: a machine short of memory gets an error,
+    // not an abort.
+    let mut planar = Vec::new();
+    planar.try_reserve_exact(nch * padded).map_err(|_| {
+        AudioFileError::Unsupported("not enough memory to convert the sample rate".into())
+    })?;
     for ch in &data.channels {
         planar.resize(planar.len() + pad, 0.0);
         planar.extend(ch.iter().map(|s| f64::from(*s)));

@@ -40,8 +40,8 @@ pub use bundle::{
 };
 pub use data::AudioData;
 pub use decode::{
-    DEFAULT_MAX_SAMPLES, Decoded, decode_bytes, decode_bytes_with, decode_file, decode_file_with,
-    decode_vec_with,
+    DEFAULT_MAX_SAMPLES, Decoded, ImportLimits, decode_bytes, decode_bytes_with, decode_file,
+    decode_file_for_import, decode_file_with, decode_vec_with,
 };
 pub use edit::{FadeShape, crop, fade_in, fade_out, normalise, range_peak, reverse};
 pub use error::{AudioFileError, Result};
