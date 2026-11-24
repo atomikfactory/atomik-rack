@@ -808,6 +808,19 @@ pub struct RackView {
     /// The values the controls show instead of the stored ones (the automation at the playhead,
     /// see [`RackView::set_shown_values`]); top level only.
     shown: atomik_model::ShownValues,
+    /// Counts the changes of `shown`; with the document revision it names a kept overlay.
+    shown_gen: u64,
+    /// The revision of the document the host hands the next calls (see
+    /// [`Self::set_doc_revision`]).
+    doc_rev: Option<u64>,
+    /// The document with `shown` laid over it, kept while neither moves (see
+    /// `RackView::shown_doc`).
+    shown_memo: Option<container_input::ShownMemo>,
+    /// How many times that overlay was built (a diagnostic, see [`Self::shown_doc_builds`]).
+    shown_builds: u64,
+    /// The kept overlay the devices were last synced with: while a sync gets that very document
+    /// the stored copies of the devices are known to be current.
+    synced_shown: Option<Arc<RackDoc>>,
     /// The breadcrumb element under the pointer.
     crumb_hover: Option<CrumbHit>,
     /// Where the container of the scope sits among the devices of the rack (the place a device
@@ -1130,6 +1143,11 @@ impl RackView {
             driven: BTreeMap::new(),
             automated: BTreeMap::new(),
             shown: Default::default(),
+            shown_gen: 0,
+            doc_rev: None,
+            shown_memo: None,
+            shown_builds: 0,
+            synced_shown: None,
             crumb_hover: None,
             scope_rack_at: 0,
             host_doc: None,
@@ -1333,10 +1351,16 @@ impl RackView {
                             || v.spec.fx.is_some() == v.analyser.tuner_on))
                 });
         if !same_structure || !self.areas_current(doc, registry) {
+            self.synced_shown = None;
             self.rebuild(doc, registry);
             self.repaint = true;
             return;
         }
+        // The stored copies of the devices came from this very document: nothing to compare.
+        let same_doc = self
+            .synced_shown
+            .as_ref()
+            .is_some_and(|a| std::ptr::eq(Arc::as_ptr(a), doc));
         let mut renewed = false;
         for (i, d) in shown.iter().enumerate() {
             let d: &RackDevice = d;
@@ -1347,7 +1371,7 @@ impl RackView {
             let automated = self.automated_for(&d.key);
             let has_channel = doc.console.channel_of(&d.key).is_some();
             let v = &mut self.devices[i + 1];
-            if v.device.as_ref() != Some(d)
+            if (!same_doc && v.device.as_ref() != Some(d))
                 || v.driven != driven
                 || v.automated != automated
                 || v.has_channel != has_channel
@@ -1435,6 +1459,11 @@ impl RackView {
         self.refresh_console(doc, registry, cables_changed || renewed);
         self.refresh_mix(doc, registry);
         self.refresh_groups(doc);
+        self.synced_shown = self
+            .shown_memo
+            .as_ref()
+            .filter(|m| std::ptr::eq(Arc::as_ptr(&m.doc), doc))
+            .map(|m| m.doc.clone());
     }
 
     /// Re-reads the group chips from `doc`'s console.
@@ -3137,8 +3166,28 @@ impl RackView {
             return false;
         }
         self.shown.clone_from(shown);
+        self.shown_gen += 1;
+        if self.shown.is_empty() {
+            self.shown_memo = None;
+            self.synced_shown = None;
+        }
         self.repaint = true;
         true
+    }
+
+    /// Tells the view the revision ([`atomik_model::Document::revision`]) of the document the
+    /// next `handle` and `paint` calls get, so the copy of the document with the shown values
+    /// is built once per revision and set of shown values instead of once per call; `None` (the
+    /// default) builds it every time. The host sets it right before such a call and clears it
+    /// right after: a stale number would hide a change.
+    pub fn set_doc_revision(&mut self, revision: Option<u64>) {
+        self.doc_rev = revision;
+    }
+
+    /// How many times the document with the shown values was built for a declared revision (a
+    /// diagnostic for tests and benches).
+    pub fn shown_doc_builds(&self) -> u64 {
+        self.shown_builds
     }
 
     /// The value the control of `param` on top-level device `device` shows now, `None` for a

@@ -1076,3 +1076,18 @@ render target has anything to save; the gaps between the rows are run-to-run noi
 more often, by chance, and shows more GPU). The frame time is not in the sampler's output. The effects show only while
 something animates for real (a playing pattern, a drag, a 4K window); that needs the owner's hand check, since this
 run may not play audio.
+
+## Rack paint with a shown automation lane (2026-11-24)
+
+`cargo test -p atomik-ui --release --test bench_shown_memo -- --ignored --nocapture`: a stopped rack of 100 devices
+(no cables, a small document) at 1920x1080, one automation lane showing a value, a repaint forced on every paint,
+200 paints after two warm-up paints; allocations counted on the thread. "Built each paint" is what every paint did
+before (the revision is not declared); "kept" declares the document revision, as the app does. Three runs.
+
+| Rack paint, one shown lane | ms/paint | Allocations/paint |
+|---|---|---|
+| Overlay built each paint | 0.44 / 0.52 / 0.48 | 892 |
+| Overlay kept while nothing changed | 0.41 / 0.43 / 0.43 | 586 |
+
+The document in this bench is small; a project with a console, assets, cables and macros copies more per build, so the
+gain there is larger. The 586 allocations left are the other per-paint work of `prepare` and the paint itself.

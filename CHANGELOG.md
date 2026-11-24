@@ -16,6 +16,12 @@ may break APIs and the patch and project formats.
   start, and the button says which. The frame rate and the render size apply at once; the worker count from the next
   engine start. Rendered audio does not change.
 
+### Changed
+- **The rack builds the automation values it shows once, not on every paint.** While an automation lane has points,
+  the rack laid its values over a copy of the whole document on every paint; the copy is now kept while the
+  document and the shown values are unchanged, so a stopped rack with automation paints with about a third fewer
+  allocations. What the knobs show does not change.
+
 ## [0.5.0-rc.2] - 2026-11-24
 
 ### Added

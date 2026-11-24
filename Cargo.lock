@@ -771,6 +771,7 @@ dependencies = [
  "atomik-model",
  "atomik-plugin-host",
  "atomik-tab",
+ "atomik-testkit",
  "atomik-ui",
  "parley",
  "png",

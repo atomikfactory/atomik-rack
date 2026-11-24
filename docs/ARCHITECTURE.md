@@ -891,7 +891,13 @@ sound moved. The views show an overlay instead
 - **The document is not touched.** `RackDoc::view_with_shown` copies the devices with the shown
   values in place (an empty song: no view reads it); the document, its history and `is_dirty` never
   see the overlay. The rack applies it in `prepare`, the console and the plugin list in `sync`;
-  inside a container's own view the controls show the stored values.
+  inside a container's own view the controls show the stored values. The rack keeps its overlay
+  (`shown_doc` in `rack/container_input.rs`) while the document revision the host declared with
+  `RackView::set_doc_revision` around `handle` and `paint`, and the generation of its shown values
+  (bumped by `set_shown_values` when the set changes), are the ones it was built for: a rack that
+  is painted again with nothing changed builds no copy, and its sync skips the compare of the
+  devices against the same overlay. A call without a declared revision builds the overlay every
+  time.
 - **What the user holds.** A lane in `AutoTake` that `PassRecorder::is_writing` (Overwrite from the
   start, Latch from the first touch, Touch while held) is left out, so the control shows the user's
   value and, in Touch, follows the lane again at the release. With the song stopped `ParamChanged`

@@ -27,7 +27,38 @@ use atomik_model::{
     MAX_MACRO_NAME_CHARS, MacroTarget, PluginCommand, RackDoc, SocketRef,
 };
 use std::borrow::Cow;
+use std::sync::Arc;
 use vello::kurbo::{Point, Rect, Vec2};
+
+/// What [`RackView::prepare`] hands the views: the host document, a copy built for this call, or
+/// a copy kept from an earlier one (see [`RackView::set_doc_revision`]).
+pub(super) enum Prepared<'a> {
+    Borrowed(&'a RackDoc),
+    Shared(Arc<RackDoc>),
+    Owned(Box<RackDoc>),
+}
+
+impl std::ops::Deref for Prepared<'_> {
+    type Target = RackDoc;
+
+    fn deref(&self) -> &RackDoc {
+        match self {
+            Prepared::Borrowed(d) => d,
+            Prepared::Shared(d) => d,
+            Prepared::Owned(d) => d,
+        }
+    }
+}
+
+/// The top-level document with the shown values laid over it, and what it was built from.
+#[derive(Debug)]
+pub(super) struct ShownMemo {
+    /// The revision of the document it was built from.
+    revision: u64,
+    /// The generation of the shown values it was built with (`RackView::shown_gen`).
+    shown_gen: u64,
+    pub(super) doc: Arc<RackDoc>,
+}
 
 /// Height of one row of the macro menu.
 const MENU_ROW_H: f64 = 18.0;
@@ -134,22 +165,52 @@ impl RackView {
         self.repaint = true;
     }
 
+    /// The top-level document with the shown values laid over it (see
+    /// [`RackDoc::view_with_shown`]). The overlay is a copy of the devices, console, assets,
+    /// cables and macros, so it is kept while it stays valid: the host declared the revision of
+    /// `doc` ([`RackView::set_doc_revision`]) and the shown values are the ones it was built
+    /// for. Without a declared revision, or with nothing to show, nothing is kept.
+    fn shown_doc<'a>(&mut self, doc: &'a RackDoc) -> Prepared<'a> {
+        if self.shown.is_empty() {
+            return Prepared::Borrowed(doc);
+        }
+        let Some(revision) = self.doc_rev else {
+            return match doc.view_with_shown(&self.shown) {
+                Cow::Borrowed(d) => Prepared::Borrowed(d),
+                Cow::Owned(d) => Prepared::Owned(Box::new(d)),
+            };
+        };
+        if let Some(m) = &self.shown_memo
+            && m.revision == revision
+            && m.shown_gen == self.shown_gen
+        {
+            return Prepared::Shared(m.doc.clone());
+        }
+        let view = match doc.view_with_shown(&self.shown) {
+            Cow::Borrowed(d) => return Prepared::Borrowed(d),
+            Cow::Owned(d) => Arc::new(d),
+        };
+        self.shown_builds += 1;
+        self.shown_memo = Some(ShownMemo {
+            revision,
+            shown_gen: self.shown_gen,
+            doc: view.clone(),
+        });
+        Prepared::Shared(view)
+    }
+
     /// The document the views are built from: the host document at the top level, else the
     /// scope document of the container in view (see the module documentation). Leaves a scope
     /// whose container is gone for the nearest one that exists.
-    pub(super) fn prepare<'a>(
-        &mut self,
-        doc: &'a RackDoc,
-        registry: &Registry,
-    ) -> Cow<'a, RackDoc> {
+    pub(super) fn prepare<'a>(&mut self, doc: &'a RackDoc, registry: &Registry) -> Prepared<'a> {
         if self.scope.is_empty() {
             self.compute_bank_driven(doc);
             self.compute_automated(doc);
             // The panels show the value an automation lane gives a param while the song plays
             // or is positioned (`shown`), and the value a macro gives it, not the stored one.
-            let base = doc.view_with_shown(&self.shown);
+            let base = self.shown_doc(doc);
             let base = match base.view_with_driven_values(registry) {
-                Some(view) => Cow::Owned(view),
+                Some(view) => Prepared::Owned(Box::new(view)),
                 None => base,
             };
             // Unfolded containers: the devices of their inside join the rack's own (see
@@ -162,7 +223,7 @@ impl RackView {
             if inline {
                 self.compute_inline_driven(&base);
                 if let Some(flat) = super::inline::flatten(&base) {
-                    return Cow::Owned(flat);
+                    return Prepared::Owned(Box::new(flat));
                 }
             }
             return base;
@@ -190,7 +251,7 @@ impl RackView {
             if keep == 0 {
                 self.driven.clear();
                 self.automated.clear();
-                return Cow::Borrowed(doc);
+                return Prepared::Borrowed(doc);
             }
         }
         self.scope_rack_at = doc
@@ -208,7 +269,7 @@ impl RackView {
         self.compute_driven(doc);
         self.automated.clear();
         let Some(container) = path.as_ref().and_then(|p| doc.inner(p)) else {
-            return Cow::Borrowed(doc);
+            return Prepared::Borrowed(doc);
         };
         self.scope_macros = std::array::from_fn(|i| container.macros[i].name.clone());
         // The params a macro bank drives inside this container show the value it gives them.
@@ -224,7 +285,7 @@ impl RackView {
                 }
             }
         }
-        Cow::Owned(RackDoc {
+        Prepared::Owned(Box::new(RackDoc {
             sample_rate: doc.sample_rate,
             tempo_bpm: doc.tempo_bpm,
             seed: doc.seed,
@@ -247,7 +308,7 @@ impl RackView {
             camera: None,
             folded_inserts: Vec::new(),
             spectrum_curves: Vec::new(),
-        })
+        }))
     }
 
     /// Which params of the devices in view a macro drives (of this container or one around it).

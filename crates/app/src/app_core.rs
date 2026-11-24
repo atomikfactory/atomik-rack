@@ -1543,7 +1543,12 @@ impl<S: EngineSink> AppCore<S> {
         let revision = self.document.revision();
         let doc = self.document.doc();
         let actions = match pane {
-            Pane::Rack => self.view.handle(event, doc, &self.registry),
+            Pane::Rack => {
+                self.view.set_doc_revision(Some(revision));
+                let actions = self.view.handle(event, doc, &self.registry);
+                self.view.set_doc_revision(None);
+                actions
+            }
             Pane::Transport => self.transport_bar.handle(event, doc, &self.registry),
             Pane::Arrangement => {
                 self.arrangement.set_doc_revision(Some(revision));
@@ -3521,7 +3526,9 @@ impl<S: EngineSink> AppCore<S> {
 
     /// Paints the rack view (physical pixels; see the `atomik-ui` hosting contract).
     pub fn paint(&mut self, canvas: &mut dyn Canvas) {
+        self.view.set_doc_revision(Some(self.document.revision()));
         self.view.paint(canvas, self.document.doc(), &self.registry);
+        self.view.set_doc_revision(None);
     }
 
     /// Paints one pane (physical pixels; the sequencer views draw inside their bounds).
@@ -3529,7 +3536,11 @@ impl<S: EngineSink> AppCore<S> {
         let revision = self.document.revision();
         let doc = self.document.doc();
         match pane {
-            Pane::Rack => self.view.paint(canvas, doc, &self.registry),
+            Pane::Rack => {
+                self.view.set_doc_revision(Some(revision));
+                self.view.paint(canvas, doc, &self.registry);
+                self.view.set_doc_revision(None);
+            }
             Pane::Transport => self.transport_bar.paint(canvas, doc, &self.registry),
             Pane::Arrangement => {
                 self.arrangement.set_doc_revision(Some(revision));
