@@ -104,6 +104,29 @@ const CASES: &[Case] = &[
         // The built-in source plays; the voices release over 400 ms after each chord (12,890 of 15,000).
         min_skipped: [10_000, 10_000],
     },
+    Case {
+        name: "fm-synth",
+        type_id: "atomik.fm-synth",
+        outs: ["out_l", "out_r"],
+        params: &[
+            ("lfo.wave", 4.0),
+            ("lfo.rate", 7.3),
+            ("lfo.to_pitch", 2.0),
+            ("lfo.to_amp", 0.6),
+            ("lfo.to_index", 0.4),
+            ("oversample", 1.0),
+            ("chorus.mix", 0.4),
+            ("chorus.rate", 1.3),
+            ("unison.voices", 3.0),
+            ("pitch.env_amount", 5.0),
+        ],
+        keys: &[48, 55, 64],
+        change: ("master.level", -3.0),
+        samples: false,
+        // The release (the default patch rests 220 batches after the keys), the decimators and
+        // the chorus ring are spent a second after each chord (13,020 of 15,000).
+        min_skipped: [10_000, 10_000],
+    },
 ];
 
 /// One mono zone over every key: 8,192 frames of a wave built from two parabolas (no libm call),
@@ -352,4 +375,9 @@ fn the_sampler_renders_the_same_bytes_skipped_or_not() {
 #[test]
 fn the_granular_synth_renders_the_same_bytes_skipped_or_not() {
     scenarios(case("granular"));
+}
+
+#[test]
+fn the_fm_synth_renders_the_same_bytes_skipped_or_not() {
+    scenarios(case("fm-synth"));
 }

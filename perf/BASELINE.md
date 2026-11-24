@@ -870,6 +870,7 @@ three-note chord), before (the tree without the change) and after; the limit is 
 | organ | 5.530 ms | 1.082 ms | 2.526 ms | 2.493, 2.493 ms (-1.3 %, noise) |
 | sampler | 2.452 ms | 0.951 ms | 0.282 ms | 0.284, 0.286 ms (+0.8 %, +1.6 %) |
 | granular | 2.274 ms | 1.259 ms | 4.656 ms | 4.713, 4.667 ms (+1.2 %, +0.2 %) |
+| fm synth | 2.418 ms | 0.931 ms | 7.076, 7.181, 7.320 ms | 7.259, 7.027, 7.077, 7.068 ms (-1.2 % on the means, noise) |
 
 Organ: the answer is computed once at the end of a batch and only when no key sounds (a chord ends the check at the
 first voice). What it reads then is a handful of flags and settled-smoother tests, the scan-line zero counter the
@@ -892,3 +893,11 @@ and voices the panel reads are made by a pass of their own that was there alread
 sampler's because the skipped batch also advances the frame counter and clears the panel's newest-voice view, and the
 LFO is stepped sample by sample as before. The chord row is the built-in source, so it is a real busy row. A default
 patch is quiescent 300 batches after the last key is released (the 400 ms release) and one batch from the start.
+
+FM synth: one pass over the voices, then the two stages behind them, each only when everything before it passed: the
+oversampler's decimator histories (a few hundred floats, only at 2x and 4x) and, with the chorus on, the two chorus
+rings (about 1,450 floats each, a vectorised OR). The chorus is off in the bench rig, so the chord row does not run the
+ring check (when the chorus is on and a voice sounds the pass stops at the first active voice all the same). The
+decimators are FIR, so one silent block empties them; the chorus needs its 30 ms ring (22 batches more). The default
+patch is quiescent 220 batches after the last key is released (the carriers' release), one batch from the start. The
+three baseline runs of the busy row show this machine's spread (2 %); the four runs after the change lie inside it.

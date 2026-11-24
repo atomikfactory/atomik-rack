@@ -1423,6 +1423,9 @@ pub struct FmSynth {
     /// Set by `prepare`/`reset`: the next `process` snaps the master gain to its target.
     fresh: bool,
     seed: u64,
+    /// Whether the device said at the end of its last batch that it is quiescent (see `at_rest`);
+    /// cleared by everything that changes the state outside `process`.
+    rest: bool,
     #[cfg(test)]
     probe: Option<std::sync::Arc<tests::VoiceProbe>>,
 }
@@ -1508,6 +1511,7 @@ impl FmSynth {
             ctl: ControllerState::new(),
             fresh: true,
             seed: 0,
+            rest: false,
             #[cfg(test)]
             probe: None,
         };
@@ -1929,6 +1933,7 @@ impl Device for FmSynth {
     }
 
     fn reset(&mut self) {
+        self.rest = false;
         for v in &mut self.voices {
             for e in &mut v.env {
                 e.reset();
@@ -1970,6 +1975,7 @@ impl Device for FmSynth {
     }
 
     fn set_param(&mut self, id: ParamId, plain: f32) {
+        self.rest = false;
         let i = id.0 as usize;
         if i < PARAM_COUNT {
             self.values[i] = plain;
@@ -2084,10 +2090,54 @@ impl Device for FmSynth {
         *ctx.output(OUT_L) = left;
         *ctx.output(OUT_R) = right;
         *ctx.output(LFO_CV_OUT) = lfo;
+        self.rest = !ctx.is_connected(LFO_CV_OUT) && self.at_rest();
         #[cfg(test)]
         self.update_probe();
     }
+
+    /// A source while a voice sounds, a cable carries the LFO or the CV makes sound from nothing; silent
+    /// only by state otherwise. It rests when no voice is active or waiting to start (a releasing voice, a
+    /// steal fade and a delayed operator count as active), the LFO output is not cabled, the master gain and
+    /// the volume and expression gain sit on their targets and the master gain is a plain positive number (so
+    /// `+0.0` times it is `+0.0`; the level CV and the pan CV, when cabled, are silent and scale by exactly one
+    /// or by a positive gain, and the soft limit and the controller gain map `+0.0` to `+0.0`), the
+    /// oversampler holds only zeros (its decimators are FIR: a block of silence empties them) and, with the
+    /// chorus on, both its lines hold only zeros. A silent batch then changes only the device LFO and the
+    /// chorus LFO, which `idle_advance` moves on; the FM synth draws no random numbers. A param change and a
+    /// reset clear it at once; a note, a controller message and a tuning change reach the device as a batch
+    /// it runs, and the engine runs the batch of a new cabling.
+    fn quiescent(&self) -> bool {
+        self.rest
+    }
+
+    /// What a silent batch changes: the device LFO (it skips its shape, as `process` does when nothing
+    /// reads it) and, with the chorus on, the chorus LFO.
+    fn idle_advance(&mut self, frames: usize) {
+        self.lfo.skip(frames);
+        if self.chorus_mix > 0.0 {
+            self.chorus.skip_silent(frames);
+        }
+    }
 }
 
+impl FmSynth {
+    /// The conditions of `quiescent` that read the state (see there). The cheap ones come first.
+    fn at_rest(&self) -> bool {
+        let alg = self.shared.algorithm;
+        !self
+            .voices
+            .iter()
+            .any(|v| v.is_active(alg) || v.pending.is_some())
+            && self.master.is_settled()
+            && self.master.value().is_sign_positive()
+            && self.master.value().is_finite()
+            && self.ctl.gain_settled()
+            && (self.factor == 1 || self.os.iter().all(Oversampler::holds_only_zeros))
+            && (self.chorus_mix <= 0.0 || self.chorus.is_empty())
+    }
+}
+
+#[cfg(test)]
+mod idle_tests;
 #[cfg(test)]
 mod tests;

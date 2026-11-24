@@ -98,6 +98,21 @@ impl Chorus {
         }
     }
 
+    /// Whether both delay lines hold only `+0.0` (every entry of their rings): silence into them
+    /// reads `+0.0` at any delay and is written back as `+0.0`, so a silent stretch changes
+    /// nothing but the LFO phase (see [`Chorus::skip_silent`]). A look at the two rings, vectorised,
+    /// for a caller that asks once a batch.
+    pub fn is_empty(&self) -> bool {
+        self.lines.iter().all(|l| l.last_written_zero(l.ring_len()))
+    }
+
+    /// Leaves the chorus where `n` silent samples through [`Chorus::process`] would, for a chorus
+    /// that [`is_empty`](Chorus::is_empty): the LFO moves on by the same additions and wraps and
+    /// the lines, which hold only zeros, are left alone.
+    pub fn skip_silent(&mut self, n: usize) {
+        self.lfo.skip(n);
+    }
+
     /// Processes one stereo sample.
     #[inline]
     pub fn process(&mut self, l: f32, r: f32) -> (f32, f32) {
@@ -252,6 +267,39 @@ mod tests {
             &a,
             &b,
         );
+    }
+
+    #[test]
+    fn an_empty_chorus_skips_silence_like_it_processes_it() {
+        let mut a = Chorus::new(SR, 50.0);
+        a.set_rate_hz(3.3);
+        a.set_mix(0.7);
+        a.set_depth_ms(4.0);
+        assert!(a.is_empty());
+        let mut b = a.clone();
+        let (mut l, mut r) = (noise(5, 512, 1.0), noise(6, 512, 1.0));
+        a.process_block(&mut l, &mut r);
+        b.process_block(&mut l.clone(), &mut r.clone());
+        assert!(!a.is_empty());
+        // Silence until the rings are empty: the chorus that skips takes the moment it says so.
+        let mut n = 0;
+        while !a.is_empty() {
+            let (mut x, mut y) = ([0.0f32; 64], [0.0f32; 64]);
+            a.process_block(&mut x, &mut y);
+            b.process_block(&mut [0.0; 64], &mut [0.0; 64]);
+            n += 1;
+            assert!(n < 200, "never empty");
+        }
+        for _ in 0..50 {
+            b.process_block(&mut [0.0; 64], &mut [0.0; 64]);
+            a.skip_silent(64);
+        }
+        let (mut l, mut r) = (noise(7, 512, 1.0), noise(8, 512, 1.0));
+        let (mut l2, mut r2) = (l.clone(), r.clone());
+        a.process_block(&mut l, &mut r);
+        b.process_block(&mut l2, &mut r2);
+        assert!(l.iter().zip(&l2).all(|(p, q)| p.to_bits() == q.to_bits()));
+        assert!(r.iter().zip(&r2).all(|(p, q)| p.to_bits() == q.to_bits()));
     }
 
     proptest::proptest! {

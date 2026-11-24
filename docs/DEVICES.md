@@ -1100,6 +1100,16 @@ patches load unchanged. The ids are the indices.
   synth's soft limiter: the output is always finite and |x| ≤ 4.
 - **Randomness.** Only the sample & hold LFO is random, seeded by the patch seed and the device
   instance, so renders are reproducible.
+- **Idle.** With no voice active or waiting to start (a releasing voice, a steal fade and an operator still
+  waiting for its delay count as active), no cable on `lfo_cv_out`, the master gain and the volume and expression
+  gain on their targets, the oversampler's decimators holding only zeros (a block of silence empties them) and, with
+  the chorus on, both chorus lines holding only zeros (30 ms of silence), the synth says it is quiescent and the
+  engine leaves it uncalled while it gets no note, controller or parameter message. It only moves the device LFO and
+  the chorus LFO on, with the same additions and wraps as a processed silent batch (the device LFO's shape is not
+  evaluated, as `process` does when nothing reads it), so the vibrato, the tremolo, the index and the chorus sweep of
+  the next note start where they would have. A cable on the level or pan CV does not keep it awake. The default patch
+  rests 220 batches (its release) after the last key is released, one batch more at 2x or 4x and 22 more with the
+  chorus on. The audio is bit for bit the same.
 
 ### Sounds
 

@@ -329,6 +329,11 @@ may break APIs and the patch and project formats.
   map is swapped in; only its LFO, its frame counter and the panel's newest-voice view are moved on, so the grain
   trail and every panel value read what they would have, and the audio is byte for byte the same. Twenty idle granular
   synths cost 8.9 us a batch before and 4.9 us after.
+- **An idle FM synth is no longer processed.** An FM synth with no voice active or waiting to start, nothing on its LFO
+  output, its gains settled and its oversampler and chorus emptied is left uncalled by the engine while no note,
+  controller or parameter message reaches it; only its two LFOs are moved on, so the vibrato, the tremolo, the index
+  and the chorus sweep of the next note start where they would have, and the audio is byte for byte the same. Twenty
+  idle FM synths cost 9.4 us a batch before and 3.6 us after.
 
 ### Fixed
 - **Dropping an instrument above its mix channel.** An instrument dragged to the place above its own mix channel
