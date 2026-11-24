@@ -117,6 +117,24 @@ const CASES: &[Case] = &[
         // about 3.5 s in; the noise comes back at 14 s.
         min_skipped: [8_000, 7_500, 7_500],
     },
+    Case {
+        type_id: "atomik.space-reverb",
+        params: &[
+            ("algorithm", 1.0),
+            ("decay", 0.3),
+            ("damping", 0.4),
+            ("modulation", 1.0),
+            ("mix", 0.5),
+            ("predelay", 20.0),
+            ("highcut", 8_000.0),
+            ("gate", 150.0),
+            ("gate_level", -30.0),
+        ],
+        change: ("highcut", 5_000.0),
+        // The early-reflection ring (1.4 s) and the tail (400 dB down in about 2 s) run dry about
+        // 4.5 s in; the noise comes back at 14 s.
+        min_skipped: [7_000, 6_000, 6_000],
+    },
 ];
 
 struct Rendered {
@@ -277,4 +295,9 @@ fn the_echo_renders_the_same_bytes_skipped_or_not() {
 #[test]
 fn the_reverb_renders_the_same_bytes_skipped_or_not() {
     scenarios(case("atomik.reverb"));
+}
+
+#[test]
+fn the_space_reverb_renders_the_same_bytes_skipped_or_not() {
+    scenarios(case("atomik.space-reverb"));
 }

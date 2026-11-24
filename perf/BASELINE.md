@@ -821,6 +821,7 @@ three runs each. What the skip must not cost a busy effect is measured with the 
 |---|---|---|---|---|
 | echo | 21.73 ms, 21.08 ms, 21.38 ms | 1.251 ms, 1.241 ms, 1.238 ms | 1.014 ms, 1.007 ms, 1.016 ms | 1.027 ms, 1.023 ms, 1.019 ms (+1.1 %) |
 | reverb | 80.29 ms, 80.39 ms, 80.58 ms | 5.270 ms, 5.363 ms, 5.317 ms | 3.547 ms, 3.549 ms, 3.542 ms | 3.578 ms, 3.541 ms, 3.554 ms (+0.3 %) |
+| space reverb | 82.23 ms, 83.52 ms, 83.11 ms | 5.269 ms, 5.243 ms, 5.260 ms | 3.588 ms, 3.596 ms, 3.613 ms | 3.652, 3.646, 3.709, 3.599, 3.614, 3.592, 3.629 ms (+1.0 %) |
 
 Echo: the first form, which asked both of its delay lines to count the zeros they store, cost the busy row 2.5 %
 (1.042 ms, 1.038 ms, 1.031 ms against the 1.012 ms above), so the echo ORs the bits of the two values it writes into one
@@ -841,3 +842,9 @@ a third of a second) and then the tail to fall below the 1e-20 flush; in the idl
 batch. The skip-on row is mostly the eight LFOs stepped sample by sample (512 additions a batch), which is what keeps
 their phases bit-exact. Busy rows of this form, three runs each against the base of 3.546 ms (reverb) and 3.599 ms
 (space reverb, below): 3.578, 3.541 and 3.554 ms; 3.622, 3.603 and 3.657 ms (+0.8 %).
+
+Space reverb: the engine of the reverb, so the same form; it adds its high cut (compared with zero) and its gate, whose
+resting state is found by stepping a copy of it one more silent sample and comparing every field bit for bit (the
+gate closes to exact zero through the flush, or stalls just below 1 when it is open, so neither "is zero" nor "is one"
+is the test). The first runs after the change read 3.65 to 3.71 ms and the later ones 3.59 to 3.63 ms with the same
+binary: the spread of this machine between runs is about 2 %, which is why the seven runs are all listed.

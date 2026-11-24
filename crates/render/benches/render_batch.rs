@@ -80,7 +80,12 @@ const IDLE_BATCHES: usize = 256;
 /// Effects in each idle row.
 const IDLE_DELAYS: usize = 20;
 /// The effects that have an idle row (`idle/<name>-x20/skip-off|on`).
-const IDLE_TYPES: [&str; 3] = ["atomik.stereo-delay", "atomik.echo", "atomik.reverb"];
+const IDLE_TYPES: [&str; 4] = [
+    "atomik.stereo-delay",
+    "atomik.echo",
+    "atomik.reverb",
+    "atomik.space-reverb",
+];
 
 /// The engine of an idle row: twenty effects of `type_id` with nothing connected, so every one
 /// reads silence, with the idle skip on or off, rendered once so each is past its first batch.

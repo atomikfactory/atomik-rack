@@ -307,6 +307,8 @@ may break APIs and the patch and project formats.
   only its eight modulation oscillators and its meters are moved on, so the audio is byte for byte the same when sound
   returns. A frozen tail, a keyed duck or gate and a mix CV keep it running. Twenty idle reverbs cost 314 us a batch
   before and 21 us after.
+- **An idle space reverb is no longer processed.** The same for the space reverb, which also needs its high cut empty
+  and its gate settled. Twenty idle space reverbs cost 322 us a batch before and 21 us after.
 
 ### Fixed
 - **Dropping an instrument above its mix channel.** An instrument dragged to the place above its own mix channel

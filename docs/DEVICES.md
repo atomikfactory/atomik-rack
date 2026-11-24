@@ -1592,6 +1592,12 @@ The last seven before `bypass` (`duck` to `key_gate_hold`) are the reverb's keye
 - **Duck and key gate.** As the reverb, after the high cut and the gate.
 - **Mix and latency.** As the reverb: latency 0, and at `mix` 0 the input is copied bit for bit.
 - **Meter values.** `[output peak L, output peak R, tail RMS]`.
+- **Idle.** The rule of the reverb (every delay empty for its whole ring, the largest algorithm's early-reflection
+  ring being 1.4 s at 48 kHz; filters, allpasses and controls settled; no key duck or gate, no mix CV), and in
+  addition the high cut holds exact zeros and the gate does not move on another silent sample: with a hold set it
+  has closed (about half a second after the hold ran out), with no hold it is open. The device then says it is
+  quiescent and the engine leaves it uncalled while its inputs stay silent; the modulation oscillators and the
+  meters are moved on, so the audio is bit for bit the same either way.
 
 ---
 

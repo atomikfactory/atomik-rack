@@ -165,3 +165,87 @@ fn every_algorithm_resumes_with_its_modulation_in_place() {
         assert!(skipped > 2_000, "algorithm {algorithm}: {skipped}");
     }
 }
+
+fn space() -> DeviceHarness {
+    harness(Box::new(crate::space_reverb::SpaceReverb::new()))
+}
+
+/// The space reverb with its high cut and a gate on, a short decay and the modulation up.
+fn space_configured(h: &mut DeviceHarness) {
+    for (k, v) in [
+        ("algorithm", 1.0),
+        ("decay", 0.3),
+        ("damping", 0.4),
+        ("modulation", 1.0),
+        ("mix", 0.5),
+        ("predelay", 20.0),
+        ("highcut", 6_000.0),
+        ("gate", 120.0),
+        ("gate_level", -30.0),
+    ] {
+        h.set_param(k, v);
+    }
+}
+
+#[test]
+fn the_space_reverb_rests_once_its_gate_has_closed_and_its_high_cut_is_empty() {
+    let mut h = space();
+    space_configured(&mut h);
+    assert!(!quiet(&h), "nothing has run");
+    let silence = [0.0; BATCH];
+    feed(&mut h, silence, silence);
+    assert!(
+        !quiet(&h),
+        "the gate has a hold set and starts open: it is closing"
+    );
+    let mut s = 4;
+    for _ in 0..40 {
+        feed(&mut h, noise(&mut s), noise(&mut s));
+        assert!(!quiet(&h));
+    }
+    let batches = dry(&mut h, 12_000);
+    // The early-reflection ring of the largest algorithm is 65,536 samples (1,024 batches).
+    assert!(batches >= 1_024, "{batches} batches");
+    h.set_param("gate", 0.0);
+    assert!(!quiet(&h), "a param change is heard first");
+    // With no hold the gate opens again (1 ms) and settles a little below 1.
+    dry(&mut h, 3_000);
+    h.set_param("highcut", 3_000.0);
+    feed(&mut h, silence, silence);
+    assert!(!quiet(&h), "the high cut control has not arrived");
+    dry(&mut h, 3_000);
+}
+
+#[test]
+fn a_space_reverb_skipped_through_the_silence_renders_what_processing_it_does() {
+    let make = || {
+        let mut h = space();
+        space_configured(&mut h);
+        h
+    };
+    let skipped = skip_matches_process(
+        &make,
+        &IdleRun {
+            ins: &["in_l", "in_r"],
+            outs: &["out_l", "out_r"],
+            batches: 20_000,
+            sound: &|n| n < 30 || (12_000..12_040).contains(&n),
+            edit: &|n, h| match n {
+                8_000 => {
+                    h.set_param("highcut", 4_000.0);
+                    true
+                }
+                9_000 => {
+                    h.set_param("gate_level", -50.0);
+                    true
+                }
+                10_000 => {
+                    h.set_param("gate", 0.0);
+                    true
+                }
+                _ => false,
+            },
+        },
+    );
+    assert!(skipped > 6_000, "the scenario skips a lot: {skipped}");
+}
