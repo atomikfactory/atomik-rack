@@ -15,7 +15,7 @@ fn ring_for(max_delay: usize) -> usize {
 }
 
 /// Fractional delay line.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub struct DelayLine {
     /// The whole allocation (zeroed, so the operating system commits its pages when first
     /// written).
@@ -28,6 +28,23 @@ pub struct DelayLine {
     /// Longest delay [`DelayLine::grow`] can reach.
     reserve: usize,
     write: usize,
+    /// How many of the latest writes stored `+0.0`, in a row, while `tracking`. The ring holds
+    /// only zeros once this reaches `active`. Not part of the line's identity: it is derived from
+    /// the content.
+    zero_run: usize,
+    /// [`DelayLine::track_zeros`] was called: `write` keeps `zero_run`. Off by default, so a line
+    /// that nobody asks pays one predictable branch per write and nothing else.
+    tracking: bool,
+}
+
+impl PartialEq for DelayLine {
+    fn eq(&self, other: &Self) -> bool {
+        self.buf == other.buf
+            && self.active == other.active
+            && self.max == other.max
+            && self.reserve == other.reserve
+            && self.write == other.write
+    }
 }
 
 impl DelayLine {
@@ -47,6 +64,8 @@ impl DelayLine {
             max,
             reserve,
             write: 0,
+            zero_run: ring_for(max),
+            tracking: false,
         }
     }
 
@@ -83,6 +102,26 @@ impl DelayLine {
     pub fn clear(&mut self) {
         self.buf[..self.active].fill(0.0);
         self.write = 0;
+        self.zero_run = self.active;
+    }
+
+    /// Starts keeping the fact [`DelayLine::holds_only_zeros`] answers, from the content as it
+    /// is now (non-RT: it looks at the ring once). `write` then counts the zeros it stores, at
+    /// the price of a compare and an add a sample; a line that was never asked pays one
+    /// predictable branch. A new line (`new`, `resize`) is not tracked.
+    pub fn track_zeros(&mut self) {
+        self.tracking = true;
+        let silent = self.buf[..self.active].iter().all(|x| x.to_bits() == 0);
+        self.zero_run = if silent { self.active } else { 0 };
+    }
+
+    /// Whether the ring in use holds only `+0.0` (a value flushed to zero by `write` counts as
+    /// the zero it was stored as): true once [`DelayLine::track_zeros`] was called and the last
+    /// `active` writes stored zeros (or the line was cleared). One compare; a line that is not
+    /// tracked never claims it.
+    #[inline]
+    pub fn holds_only_zeros(&self) -> bool {
+        self.tracking && self.zero_run >= self.active
     }
 
     /// Reads the input from `delay` samples ago (clamped to `1..=max_delay`), linearly interpolated.
@@ -108,8 +147,15 @@ impl DelayLine {
     /// Appends one sample.
     #[inline]
     pub fn write(&mut self, x: f32) {
-        self.buf[self.write] = if x.abs() < 1e-20 { 0.0 } else { x };
+        let stored = if x.abs() < 1e-20 { 0.0 } else { x };
+        self.buf[self.write] = stored;
         self.write = (self.write + 1) & (self.active - 1);
+        if self.tracking {
+            // All ones when a zero was stored, so the run grows; zero otherwise, so it restarts
+            // (it cannot wrap round in practice: 2^64 writes).
+            let zero = usize::from(stored.to_bits() == 0).wrapping_neg();
+            self.zero_run = self.zero_run.wrapping_add(1) & zero;
+        }
     }
 }
 
@@ -332,6 +378,123 @@ mod floor_tests {
             );
             line.write(x);
             old.write(x);
+        }
+    }
+}
+
+#[cfg(test)]
+mod zero_run_tests {
+    use super::*;
+
+    fn tracked(max: usize) -> DelayLine {
+        let mut d = DelayLine::new(max);
+        d.track_zeros();
+        d
+    }
+
+    /// What `holds_only_zeros` must say, by looking at the ring.
+    fn scan(line: &DelayLine) -> bool {
+        line.buf[..line.active].iter().all(|x| x.to_bits() == 0)
+    }
+
+    #[test]
+    fn a_new_or_cleared_line_holds_only_zeros_and_a_write_of_a_value_breaks_it() {
+        let mut d = tracked(16);
+        assert!(d.holds_only_zeros());
+        d.write(0.25);
+        assert!(!d.holds_only_zeros());
+        d.clear();
+        assert!(d.holds_only_zeros());
+    }
+
+    #[test]
+    fn the_line_is_dry_again_after_exactly_one_ring_of_zeros() {
+        let mut d = tracked(16);
+        let len = d.active;
+        d.write(1.0);
+        for k in 0..len - 1 {
+            d.write(0.0);
+            assert!(!d.holds_only_zeros(), "{k} zeros after the value");
+        }
+        d.write(0.0);
+        assert!(d.holds_only_zeros());
+        assert!(scan(&d));
+    }
+
+    #[test]
+    fn what_write_flushes_counts_as_the_zero_it_is_stored_as_and_other_bits_do_not() {
+        let mut d = tracked(4);
+        let len = d.active;
+        for x in [-0.0f32, 1e-25, -1e-25] {
+            d.write(1.0);
+            for _ in 0..len {
+                d.write(x);
+            }
+            assert!(d.holds_only_zeros(), "{x:e}");
+            assert!(scan(&d), "{x:e}");
+        }
+        d.write(f32::NAN);
+        for _ in 0..len - 1 {
+            d.write(0.0);
+        }
+        assert!(!d.holds_only_zeros(), "a NaN is not a zero");
+        d.write(0.0);
+        assert!(d.holds_only_zeros());
+    }
+
+    #[test]
+    fn grow_and_a_clone_keep_the_fact_and_resize_stops_tracking() {
+        let mut d = DelayLine::with_reserve(8, 1_000);
+        d.track_zeros();
+        d.write(1.0);
+        d.grow(500);
+        assert!(d.holds_only_zeros() && scan(&d), "grow clears the line");
+        d.write(2.0);
+        let c = d.clone();
+        assert!(!c.holds_only_zeros());
+        assert_eq!(c, d);
+        d.resize(64);
+        assert!(
+            !d.holds_only_zeros(),
+            "a new line is not tracked until asked"
+        );
+        d.track_zeros();
+        assert!(d.holds_only_zeros());
+    }
+
+    #[test]
+    fn a_line_that_is_not_tracked_never_claims_it_and_tracking_starts_from_the_content() {
+        let mut d = DelayLine::new(8);
+        assert!(!d.holds_only_zeros(), "nobody asked");
+        d.write(1.0);
+        d.track_zeros();
+        assert!(!d.holds_only_zeros(), "the ring holds a value");
+        for _ in 0..d.active {
+            d.write(0.0);
+        }
+        assert!(d.holds_only_zeros() && scan(&d));
+        let mut e = DelayLine::new(8);
+        e.write(1.0);
+        assert!(!e.holds_only_zeros());
+        e.clear();
+        assert!(!e.holds_only_zeros(), "clearing does not turn tracking on");
+    }
+    #[test]
+    fn the_fact_always_matches_a_scan_of_the_ring() {
+        let mut d = tracked(37);
+        let mut state = 7u32;
+        for n in 0..20_000u32 {
+            state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            // Bursts of sound separated by silences of different lengths.
+            let sounding = (n / 97) % 5 == 0 && state & 3 != 0;
+            let x = match (sounding, state >> 28) {
+                (true, _) => (state >> 8) as f32 / (1u32 << 24) as f32 - 0.5,
+                (false, 0) => -0.0,
+                (false, 1) => 1e-30,
+                (false, _) => 0.0,
+            };
+            d.write(x);
+            assert_eq!(d.holds_only_zeros(), scan(&d), "n {n}");
         }
     }
 }

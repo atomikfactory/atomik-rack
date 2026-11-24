@@ -98,6 +98,17 @@ pub(crate) struct Node {
     /// The preview clock of a note player that previews while the song stands still (see
     /// [`crate::preview_clock`]); a plain value, so no allocation anywhere.
     pub(crate) preview: Option<PreviewClock>,
+    /// The device answered [`Device::quiescent`] `true` after its last `process` and nothing has
+    /// touched it since: while its inputs stay silent the node is skipped (see
+    /// [`Node::skippable`]). Always false for a multi-stage device.
+    pub(crate) idle: bool,
+    /// The time of the node's last batch, run or skipped; read only while `idle`.
+    idle_time: Option<TimeInfo>,
+    /// The descriptor has a stage above 0 (such a node is never skipped).
+    multi_stage: bool,
+    /// Batches skipped so far (test hook, see [`crate::Engine::idle_skipped`]); written by the
+    /// thread that runs the node, read by the audio thread between batches.
+    pub(crate) skipped: u64,
 }
 
 /// The cable routes of one stage of one device in one routing (a single-stage
@@ -201,10 +212,11 @@ impl RenderPlan {
 impl Node {
     pub(crate) fn new(device: Box<dyn Device>) -> Self {
         let sockets = device.descriptor().sockets;
+        let stages = device.descriptor().stages;
         Self {
             has_meter_values: device.has_meter_values(),
             variable_latency: device.variable_latency(),
-            stages: device.descriptor().stages,
+            stages,
             device,
             sockets,
             signals: vec![[0.0; BATCH]; sockets.len()],
@@ -231,6 +243,10 @@ impl Node {
             cost_known: false,
             note_tap: None,
             preview: None,
+            idle: false,
+            idle_time: None,
+            multi_stage: stages.iter().any(|&s| s > 0),
+            skipped: 0,
         }
     }
 }
@@ -242,7 +258,17 @@ impl Node {
     /// panics): the node is marked faulted and silenced, `fresh_fault` asks the engine to record
     /// it, and `None` comes back. A node that already faulted is not called. What `call` moved
     /// into the device is dropped by the unwind, which only happens on this fault path.
+    ///
+    /// Any call that may change the device clears the idle flag (the device is asked again after
+    /// its next `process`); a read-only question uses [`Node::ask`].
     pub(crate) fn contain<R>(&mut self, call: impl FnOnce(&mut dyn Device) -> R) -> Option<R> {
+        self.idle = false;
+        self.ask(call)
+    }
+
+    /// Like [`Node::contain`] for a call that only reads the device (its meters, its latency):
+    /// the idle flag is kept.
+    pub(crate) fn ask<R>(&mut self, call: impl FnOnce(&mut dyn Device) -> R) -> Option<R> {
         if self.faulted {
             return None;
         }
@@ -350,16 +376,26 @@ impl Node {
     /// while the node has no cost yet (a run on a worker costs more than the same run on the
     /// audio thread, so only inline batches are marked due once the plan is busy). While the
     /// per-device timing is on, its two clock reads serve both `busy_ns` and the cost.
+    ///
+    /// **Idle skip.** With `idle_skip` on, a node whose device answered [`Device::quiescent`] after
+    /// its last run is not called while [`Node::skippable`] holds: `gather` has already left every
+    /// output at `+0.0` and every note output empty, so the device only gets
+    /// [`Device::idle_advance`]. The batch is not timed and does not feed the cost the load rule
+    /// reads.
     pub(crate) fn run(
         &mut self,
         time: TimeInfo,
         stage: u8,
         last: bool,
         probe: Option<CostProbe>,
+        idle_skip: bool,
     ) -> bool {
         if self.faulted {
             self.silence();
             return false;
+        }
+        if idle_skip && self.skippable(&time) {
+            return self.idle_batch(time);
         }
         let started = crate::timing::start();
         let accurate = probe.is_some_and(|p| p.due) || !self.cost_known;
@@ -378,7 +414,9 @@ impl Node {
             }),
             None => song_time,
         };
-        let outcome = catch_unwind(AssertUnwindSafe(|| self.run_device(time, stage, last)));
+        let outcome = catch_unwind(AssertUnwindSafe(|| {
+            self.run_device(time, stage, last, idle_skip);
+        }));
         if last && let Some(clock) = &mut self.preview {
             clock.advance(song_time.ticks_per_frame);
         }
@@ -431,7 +469,7 @@ impl Node {
         if self.faulted { 0 } else { self.seen_ns }
     }
 
-    fn run_device(&mut self, time: TimeInfo, stage: u8, last: bool) {
+    fn run_device(&mut self, time: TimeInfo, stage: u8, last: bool, idle_skip: bool) {
         let playback: &[Batch] = if self.playback_on {
             &self.playback
         } else {
@@ -477,7 +515,77 @@ impl Node {
                     self.notes[i].clear();
                 }
             }
+            // Asked after the batch, from the state the device is left in. A node on its own
+            // preview clock is never skipped, so it is not asked either.
+            self.idle =
+                idle_skip && !self.multi_stage && self.preview.is_none() && self.device.quiescent();
+            self.idle_time = self.idle.then_some(time);
         }
+    }
+
+    /// Whether this batch can be skipped: the device was quiescent after its last batch (and
+    /// nothing has touched it since), the node is healthy, single-stage and not previewing, no
+    /// note, playback batch or transport event reaches it, and every audio and CV input is
+    /// bitwise `+0.0`. A pure function of the node and of what `gather` delivered, so the
+    /// answer is the same on any thread; the dispatcher and [`Node::run`] both ask it.
+    pub(crate) fn skippable(&self, time: &TimeInfo) -> bool {
+        self.idle
+            && !self.faulted
+            && !self.playback_on
+            && self.preview.is_none()
+            && self
+                .idle_time
+                .as_ref()
+                .is_some_and(|prev| steady(prev, time))
+            && self.inputs_silent()
+    }
+
+    /// No note event in any note input and every audio and CV input is bitwise `+0.0`.
+    fn inputs_silent(&self) -> bool {
+        self.sockets.iter().enumerate().all(|(i, s)| {
+            if !s.direction.is_input() {
+                true
+            } else if is_notes(s.kind) {
+                self.notes[i].is_empty()
+            } else {
+                self.signals[i].iter().all(|x| x.to_bits() == 0)
+            }
+        })
+    }
+
+    /// The skipped batch: the device only advances what runs free. Returns true if it panicked
+    /// doing so (like [`Node::run`]).
+    fn idle_batch(&mut self, time: TimeInfo) -> bool {
+        let device = self.device.as_mut();
+        let outcome = catch_unwind(AssertUnwindSafe(|| {
+            let _rt = atomik_core::rt_guard::audio_thread();
+            device.idle_advance(BATCH);
+        }));
+        if outcome.is_err() {
+            self.faulted = true;
+            self.silence();
+            return true;
+        }
+        self.idle_time = Some(time);
+        self.skipped += 1;
+        false
+    }
+
+    /// Whether this node was quiescent after its last batch and no note, playback batch or
+    /// transport event reaches it now: the part of [`Node::skippable`] that does not read the
+    /// gathered audio. A node that is idle and has such an event is about to wake.
+    pub(crate) fn wakes_by_event(&self, time: &TimeInfo) -> bool {
+        self.idle
+            && !self.faulted
+            && (self.playback_on
+                || self.preview.is_some()
+                || !self
+                    .idle_time
+                    .as_ref()
+                    .is_some_and(|prev| steady(prev, time))
+                || self.sockets.iter().enumerate().any(|(i, s)| {
+                    s.direction.is_input() && is_notes(s.kind) && !self.notes[i].is_empty()
+                }))
     }
 
     /// Zeroes every output of a faulted node (a bounded fill; no allocation).
@@ -515,11 +623,14 @@ impl Node {
 /// Real-time side of a routing. Nothing here allocates, frees, locks or blocks.
 impl RoutingPlan {
     /// Marks this routing's nodes as routed and copies their `connected` flags. Called when
-    /// the routing becomes current; touches no device state.
+    /// the routing becomes current; touches no device state. A device that was skipped as
+    /// quiescent runs once more: the flags it sees may have changed, and a device may act on
+    /// that (a CV input it no longer has).
     pub(crate) fn install(&self, arena: &mut Arena) {
         for d in &self.devices {
             if let Some(node) = arena.node_mut(d.slot) {
                 node.routed = true;
+                node.idle = false;
                 if node.connected.len() == d.connected.len() {
                     node.connected.copy_from_slice(&d.connected);
                 }
@@ -599,6 +710,7 @@ impl RoutingPlan {
             ..
         } = self;
         let delays = &mut console.delays;
+        let idle_skip = arena.idle_skip;
         for step in &steps[a..b] {
             let Some(node) = arena.node_mut(devices[step.device].slot) else {
                 continue;
@@ -606,7 +718,7 @@ impl RoutingPlan {
             let r = &step.routes;
             let overflow = node.gather(r, step.stage, slots, note_slots, spare_notes, delays);
             count_overflow(dropped, overflow);
-            if node.run(time, step.stage, step.last, probe) {
+            if node.run(time, step.stage, step.last, probe, idle_skip) {
                 fault.record(devices[step.device].id);
             }
             node.scatter(r, slots, note_slots, meters);
@@ -730,6 +842,26 @@ impl Pool {
 
 fn is_notes(kind: SocketKind) -> bool {
     kind == SocketKind::Notes
+}
+
+/// Whether the transport did nothing but advance between two consecutive batches of a node:
+/// the frame moved by exactly one batch, the tick stood still (a stopped transport) or moved by
+/// one batch of ticks, no loop wrap on either, and every other field (rate, tempo, playing,
+/// loop, time signature, tune, harmony) is the same. Anything else (a tempo change, Play, Stop,
+/// a locate, a loop jump, a gap in the node's batches) makes a quiescent device run.
+fn steady(prev: &TimeInfo, now: &TimeInfo) -> bool {
+    const TICK_MARGIN: f64 = 1e-6;
+    let moved = now.tick - prev.tick;
+    let advance = prev.ticks_per_frame * BATCH as f64;
+    let margin = TICK_MARGIN + 1e-12 * now.tick.abs();
+    let tick_ok = moved.abs() <= margin || (moved - advance).abs() <= margin;
+    if !tick_ok || prev.frame.wrapping_add(BATCH as u64) != now.frame {
+        return false;
+    }
+    let mut expected = *prev;
+    expected.frame = now.frame;
+    expected.tick = now.tick;
+    prev.loop_wrap.is_none() && expected == *now
 }
 
 /// Liveness position of the interface sink: after every device.
@@ -1601,5 +1733,63 @@ mod tests {
         assert!(plan.order().is_empty());
         assert_eq!(plan.slot_count(), 0);
         assert!(format!("{plan:?}").contains("RenderPlan"));
+    }
+}
+
+#[cfg(test)]
+mod steady_tests {
+    use super::*;
+    use atomik_core::{SampleRate, Tempo};
+
+    fn at(frame: u64, bpm: f64, playing: bool) -> TimeInfo {
+        TimeInfo::at(
+            frame,
+            SampleRate::new(48_000.0).unwrap(),
+            Tempo::new(bpm).unwrap(),
+            playing,
+        )
+    }
+
+    fn next(t: &TimeInfo) -> TimeInfo {
+        TimeInfo::at(t.frame + BATCH as u64, t.sample_rate, t.tempo, t.playing)
+    }
+
+    #[test]
+    fn a_batch_that_only_advances_is_steady() {
+        let a = at(6_400, 120.0, true);
+        assert!(steady(&a, &next(&a)));
+        // A stopped transport keeps its tick.
+        let mut s = at(6_400, 120.0, false);
+        s.tick = 1_000.0;
+        let mut n = next(&s);
+        n.tick = 1_000.0;
+        assert!(steady(&s, &n));
+    }
+
+    #[test]
+    fn every_other_change_is_not() {
+        let a = at(6_400, 120.0, true);
+        let n = next(&a);
+        let with = |edit: &dyn Fn(&mut TimeInfo)| {
+            let mut t = n;
+            edit(&mut t);
+            steady(&a, &t)
+        };
+        assert!(!with(&|t| t.tempo = Tempo::new(121.0).unwrap()));
+        assert!(!with(&|t| t.playing = false));
+        assert!(!with(&|t| t.tick += 1.0), "a jump of the position");
+        assert!(!with(&|t| t.tick = f64::NAN));
+        assert!(!with(&|t| t.frame += 1), "a gap in the node's batches");
+        assert!(!with(&|t| t.time_signature = (3, 4)));
+        assert!(!with(&|t| t.tune_cents = 5.0));
+        assert!(!with(&|t| t.loop_ticks = Some((0.0, 960.0))));
+        assert!(!with(&|t| {
+            t.loop_wrap = Some(atomik_core::LoopWrap {
+                offset: 3,
+                to_tick: 0.0,
+            });
+        }));
+        assert!(!with(&|t| t.ticks_per_frame *= 1.5));
+        assert!(!steady(&a, &a), "the same batch twice is no advance");
     }
 }

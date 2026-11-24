@@ -356,6 +356,9 @@ pub(crate) struct Arena {
     index: Vec<(DeviceInstanceId, usize)>,
     /// A node panicked outside `process` since the last [`Arena::settle_faults`].
     fresh_fault: bool,
+    /// Quiescent devices are skipped while their inputs stay silent (see [`Node::run`]); off only
+    /// for tests ([`crate::Engine::set_idle_skip`]). The engine carries it over a plan swap.
+    pub(crate) idle_skip: bool,
 }
 
 /// Non-RT construction.
@@ -366,6 +369,7 @@ impl Arena {
             nodes: (0..capacity).map(|_| None).collect(),
             index: Vec::with_capacity(capacity),
             fresh_fault: false,
+            idle_skip: true,
         }
     }
 
@@ -457,7 +461,7 @@ impl Arena {
             if let Some(node) = self.nodes.get_mut(slot).and_then(|n| n.as_deref_mut())
                 && node.has_meter_values
             {
-                let n = node.contain(|device| device.meter_values(&mut buf));
+                let n = node.ask(|device| device.meter_values(&mut buf));
                 self.fresh_fault |= node.fresh_fault;
                 if let Some(n) = n {
                     meters.publish_device_values(slot, id, &buf[..n.min(MAX_METER_VALUES)]);
@@ -506,7 +510,7 @@ impl Arena {
             if let Some(node) = self.nodes.get_mut(slot).and_then(|n| n.as_deref_mut())
                 && node.variable_latency
             {
-                let frames = node.contain(|device| device.latency_frames());
+                let frames = node.ask(|device| device.latency_frames());
                 self.fresh_fault |= node.fresh_fault;
                 if let Some(frames) = frames {
                     bank.publish(slot, frames);

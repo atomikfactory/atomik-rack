@@ -292,6 +292,11 @@ may break APIs and the patch and project formats.
 - **The interface keeps the tempo map, not a copy of the compiled song.** It only needs the tempos and time signatures
   to convert between time and position, so a project with many notes no longer holds its notes twice; every position
   shown is the same number as before.
+- **An idle stereo delay is no longer processed.** A stereo delay (alone or inside its bypass) whose repeats have died
+  away and whose input is silent is left uncalled by the engine until sound, a note, a parameter or tempo change, a
+  new cabling or a transport change reaches it; the rendered audio is byte for byte the same. Twenty idle stereo
+  delays cost 27 us a batch before and 3.2 us after. The device contract has two new methods for this (`quiescent`,
+  `idle_advance`), and no other device uses them yet.
 
 ### Fixed
 - **Dropping an instrument above its mix channel.** An instrument dragged to the place above its own mix channel

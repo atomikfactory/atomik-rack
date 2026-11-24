@@ -143,6 +143,36 @@ pub trait Device: Send + 'static {
         None
     }
 
+    /// RT-safe. Whether the device has gone silent and may be left uncalled while its inputs
+    /// stay silent. The engine asks once after each `process` (single-stage devices only) and,
+    /// while the answer was `true`, does not call `process` for a batch in which
+    ///
+    /// * every audio and CV input is `+0.0` in every sample (bitwise: `-0.0` and NaN are not),
+    /// * no note event, playback batch or parameter change reaches the device, and
+    /// * the transport only advances (same tempo, same playing state, no jump of the position),
+    ///
+    /// and calls [`Device::idle_advance`] once instead. Any other call into the device
+    /// (`set_param`, `swap_samples`, `swap_player_data`) makes the engine ask again after the
+    /// next `process`.
+    ///
+    /// **Contract.** A device may answer `true` only if, from its present state, processing a
+    /// batch with such inputs would (i) write only `+0.0` to every output, (ii) emit no note,
+    /// and (iii) leave the device in exactly the state [`Device::idle_advance`] (BATCH frames)
+    /// leaves it in, a state in which it would answer `true` again. Every tail, ramp, smoother
+    /// and filter state must already be at its exact resting value. A source (anything that
+    /// makes sound or CV from nothing or from the song position) never answers `true`.
+    /// Called on the audio thread: no allocation, no lock, cheap. The default is `false`: the
+    /// device is called every batch.
+    fn quiescent(&self) -> bool {
+        false
+    }
+
+    /// RT-safe. Advances whatever runs free in the device (an LFO phase, a counter) by `frames`
+    /// samples, exactly as `process` would have advanced it over a silent batch; called in
+    /// place of `process` for a batch the engine skipped (see [`Device::quiescent`]). The
+    /// default does nothing. Same audio-thread rules as `process`.
+    fn idle_advance(&mut self, _frames: usize) {}
+
     /// Processing latency in frames introduced by this device.
     fn latency_frames(&self) -> u32 {
         0

@@ -36,6 +36,11 @@
 //!   applied to the produced signal so both read the same (see [`matching`]). Off, the wrapper
 //!   is bit-identical to one without the switch. The applied gain is published after the
 //!   effect's own meter values (see [`match_gain_of`]).
+//! * **Quiescent.** The wrapper forwards [`Device::quiescent`] and [`Device::idle_advance`] only in the two states
+//!   that do nothing but record the dry input: the effect running at the wet end (bypass off, no crossfade, loudness
+//!   match off) with a quiescent effect, or the effect stopped behind a settled bypass; in both the dry ring must
+//!   hold only `+0.0`, which the wrapper counts as it writes. A crossfade, a bypass counting down to its stop and the
+//!   loudness match are not quiescent. A stopped effect does not get `idle_advance` (it is not running).
 //! * Deterministic and allocation-free outside `prepare`.
 
 use std::collections::BTreeMap;
@@ -191,6 +196,10 @@ pub struct Bypassable<D: Device> {
     stop_after: u32,
     /// The effect is stopped (and was reset): `process` skips it.
     stopped: bool,
+    /// Frames of `+0.0` input written to the dry ring in a row (saturating): the ring holds only
+    /// zeros once this reaches its length, which a quiescent wrapper needs (see
+    /// `Device::quiescent`).
+    quiet: usize,
 }
 
 impl<D: Device> Bypassable<D> {
@@ -268,11 +277,29 @@ impl<D: Device> Bypassable<D> {
             settled: 0,
             stop_after: 0,
             stopped: false,
+            quiet: 0,
         })
     }
 
     fn target(&self) -> f32 {
         if self.bypassed { 1.0 } else { 0.0 }
+    }
+
+    /// Records that a batch of `dry_in` went into the ring: the run of `+0.0` frames grows, a
+    /// batch with any other value (`-0.0` included) restarts it. A batch that ends in zeros but
+    /// starts with sound counts as sound, so the run never overstates what the ring holds.
+    fn note_written(&mut self, dry_in: &[Batch; 2]) {
+        let silent = dry_in.iter().all(|c| c.iter().all(|x| x.to_bits() == 0));
+        self.quiet = if silent {
+            self.quiet.saturating_add(BATCH)
+        } else {
+            0
+        };
+    }
+
+    /// The dry ring is prepared and holds only `+0.0`.
+    fn ring_silent(&self) -> bool {
+        !self.ring[0].is_empty() && self.quiet >= self.ring[0].len()
     }
 
     /// Stops the effect: it is reset (so it starts clean when it is switched back on) and its
@@ -302,6 +329,7 @@ impl<D: Device> Bypassable<D> {
             left[i] = self.ring[0][r];
             right[i] = self.ring[1][r];
         }
+        self.note_written(dry_in);
         *ctx.output(self.out_l) = left;
         *ctx.output(self.out_r) = right;
     }
@@ -322,6 +350,7 @@ impl<D: Device> Device for Bypassable<D> {
             .next_power_of_two();
         self.ring = [vec![0.0; len], vec![0.0; len]];
         self.mask = len - 1;
+        self.quiet = len;
         self.write = 0;
         self.snap = true;
         self.settled = 0;
@@ -336,6 +365,7 @@ impl<D: Device> Device for Bypassable<D> {
         for r in &mut self.ring {
             r.fill(0.0);
         }
+        self.quiet = self.ring[0].len();
         self.write = 0;
         self.snap = true;
         self.settled = 0;
@@ -411,6 +441,7 @@ impl<D: Device> Device for Bypassable<D> {
             left[i] = mix(left[i], self.ring[0][r], self.mix);
             right[i] = mix(right[i], self.ring[1][r], self.mix);
         }
+        self.note_written(&dry_in);
         *ctx.output(self.out_l) = left;
         *ctx.output(self.out_r) = right;
         if target >= 1.0 && self.mix >= 1.0 {
@@ -426,6 +457,36 @@ impl<D: Device> Device for Bypassable<D> {
     fn process_stage(&mut self, stage: u8, ctx: &mut ProcessContext<'_>) {
         if stage == 0 {
             self.process(ctx);
+        }
+    }
+
+    /// Quiescent in the two states that do nothing but record the dry input: the effect runs
+    /// with the bypass off, settled at the wet end, the loudness match off and the dry ring
+    /// holding only zeros (so a silent batch writes zeros over zeros) and the effect itself is
+    /// quiescent; or the effect is stopped behind a settled bypass (the ring holds only zeros).
+    /// A crossfade, the loudness match with its gain, the first batch after `prepare`/`reset`,
+    /// and a bypass that is engaged but still counting down to the stop are not quiescent: each
+    /// moves state a skipped batch would not.
+    fn quiescent(&self) -> bool {
+        if !self.stopped && !self.inner.quiescent() {
+            return false;
+        }
+        if self.snap || self.matching || !self.ring_silent() || !self.matcher.is_unity() {
+            return false;
+        }
+        if self.stopped {
+            return self.target() >= 1.0;
+        }
+        self.target() <= 0.0 && self.mix <= 0.0
+    }
+
+    /// What a silent batch does to the wrapper: the dry ring write position moves on and the
+    /// effect, while it runs, advances what it runs free (a stopped effect does not).
+    fn idle_advance(&mut self, frames: usize) {
+        self.write = self.write.wrapping_add(frames);
+        self.quiet = self.quiet.saturating_add(frames);
+        if !self.stopped {
+            self.inner.idle_advance(frames);
         }
     }
 

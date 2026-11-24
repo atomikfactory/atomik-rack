@@ -2961,7 +2961,8 @@ Without FFmpeg the video features are off and nothing else changes. This section
   that order.
 - **Per device**, in routing order: zero the device's output scratch (so outputs arrive zeroed and
   unconnected inputs read zeros), gather cabled inputs, merge cable notes with scheduled notes, call
-  `process_stage`, scatter the outputs to slots.
+  `process_stage` (or, for a quiescent device with silent inputs, `idle_advance`: see Fault containment below), scatter
+  the outputs to slots.
 - **No routing.** The engine outputs silence. Notes that arrive while there is nothing to deliver
   them to are counted in `dropped_events()`.
 - **Retiring.** Replaced plans, routings, songs, taps, replaced sample maps and removed devices are
@@ -8215,6 +8216,19 @@ A bug in a device must cost that device, not the session. The rules:
   `ENGINE FAULTED: <device>` and a toast points at Audio > Restart Audio, which rebuilds the engine.
   The callback also wraps the whole render in `catch_unwind` as a last line: a panic outside any
   device (the engine's own code) silences the stream and sets `Telemetry::faulted`.
+- **A quiescent device is skipped** ([plan.rs](../crates/engine/src/plan.rs), `Node::skippable`). After each `process`
+  of a single-stage device the node asks `Device::quiescent`. While the answer stands, a batch is not run when the gather
+  delivered only bitwise `+0.0` on every audio and CV input, no note, no playback batch, and the transport only
+  advanced since the node's last batch (same tempo, playing state, time signature, loop, tune and harmony, the frame one
+  batch on, the position still or one batch of ticks on, no loop wrap); a faulted node and a node on its own preview
+  clock are never skipped. The gather ran, so the outputs are `+0.0` and the node's note outputs are empty; the device
+  only gets `Device::idle_advance(BATCH)` (inside the same `catch_unwind`, so a panic there is a fault like any other).
+  A skipped batch is not timed and does not feed the cost the load rule reads. Any call that can change the device
+  (`set_param`, a hand-off through `Node::contain`) and every routing swap clear the answer; the reads of meters and
+  latency (`Node::ask`) do not. The decision is a pure function of the node and of the gathered inputs, so it is the
+  same on the audio thread, on a worker, live, offline and for any block size. The hand-over of a level counts only the
+  nodes that really run (see `crate::workers`), so a level of skipped devices wakes no worker. `Engine::set_idle_skip`
+  is the test-only switch; [idle_skip.rs](../crates/engine/tests/idle_skip.rs) holds the rule's tests.
 - `catch_unwind` costs nothing while nothing panics, so HI-1 holds. The panic path allocates (the
   payload, the default hook's message); it runs once per faulted device and is a documented
   exception. The panic hook ([§6n](#6n-logs-crash-reports-and-diagnostics)) does no file I/O on the

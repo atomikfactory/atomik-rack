@@ -698,3 +698,206 @@ fn match_never_allocates_and_the_meter_of_a_metered_effect_keeps_its_values() {
     assert_eq!(kb, before);
     assert!(without[..kb].iter().all(|v| v.is_finite()));
 }
+
+// ----- the idle skip: when the wrapper may be left uncalled -----
+
+/// Multiplies its input by a phase it advances per sample (so skipping it wrongly is heard);
+/// silent in, silent out. It says it is quiescent when told to.
+struct Tail {
+    phase: f32,
+    rest: bool,
+    advanced: std::sync::Arc<std::sync::atomic::AtomicU64>,
+}
+
+impl Tail {
+    fn step(&mut self) {
+        self.phase += 0.003;
+        if self.phase >= 1.0 {
+            self.phase -= 1.0;
+        }
+    }
+}
+
+impl Device for Tail {
+    fn descriptor(&self) -> &'static DeviceDescriptor {
+        &FX
+    }
+    fn prepare(&mut self, _: &PrepareInfo) {}
+    fn reset(&mut self) {
+        self.phase = 0.0;
+    }
+    fn set_param(&mut self, _: ParamId, _: f32) {}
+    fn process(&mut self, ctx: &mut ProcessContext<'_>) {
+        for (i, o) in [(0, 2), (1, 3)] {
+            let x = *ctx.input(SocketId(i));
+            let mut p = self.phase;
+            let out = ctx.output(SocketId(o));
+            for (d, s) in out.iter_mut().zip(x) {
+                p += 0.003;
+                if p >= 1.0 {
+                    p -= 1.0;
+                }
+                *d = if s.to_bits() == 0 { 0.0 } else { s * p };
+            }
+        }
+        for _ in 0..BATCH {
+            self.step();
+        }
+    }
+    fn quiescent(&self) -> bool {
+        self.rest
+    }
+    fn idle_advance(&mut self, frames: usize) {
+        self.advanced
+            .fetch_add(frames as u64, std::sync::atomic::Ordering::Relaxed);
+        for _ in 0..frames {
+            self.step();
+        }
+    }
+}
+
+fn tail_harness(rest: bool) -> (DeviceHarness, std::sync::Arc<std::sync::atomic::AtomicU64>) {
+    let advanced = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
+    let device = Bypassable::new(Tail {
+        phase: 0.0,
+        rest,
+        advanced: std::sync::Arc::clone(&advanced),
+    });
+    (DeviceHarness::new(Box::new(device), SR), advanced)
+}
+
+/// The batches of zeros that fill the dry ring after a sound (8192 frames at 48 kHz).
+const RING_BATCHES: usize = 8192 / BATCH;
+
+fn feed(h: &mut DeviceHarness, v: f32) -> [Batch; 2] {
+    *h.input_mut("in_l") = [v; BATCH];
+    *h.input_mut("in_r") = [v; BATCH];
+    h.process();
+    [*h.output("out_l"), *h.output("out_r")]
+}
+
+#[test]
+fn a_wrapper_is_quiescent_only_while_the_effect_is_and_the_dry_ring_holds_zeros() {
+    let (mut h, _) = tail_harness(true);
+    assert!(
+        !h.device().quiescent(),
+        "nothing has run: the first batch snaps"
+    );
+    feed(&mut h, 0.0);
+    assert!(h.device().quiescent(), "a fresh ring is silent");
+    feed(&mut h, 0.25);
+    assert!(!h.device().quiescent(), "sound went into the ring");
+    for k in 0..RING_BATCHES - 1 {
+        feed(&mut h, 0.0);
+        assert!(!h.device().quiescent(), "{k} silent batches are not a ring");
+    }
+    feed(&mut h, 0.0);
+    assert!(h.device().quiescent(), "a whole ring of zeros");
+    feed(&mut h, -0.0);
+    assert!(!h.device().quiescent(), "a negative zero is not a zero");
+    let (mut busy, _) = tail_harness(false);
+    feed(&mut busy, 0.0);
+    assert!(
+        !busy.device().quiescent(),
+        "the effect itself is not at rest"
+    );
+}
+
+#[test]
+fn a_crossfade_a_countdown_and_the_loudness_match_are_not_quiescent() {
+    let (mut h, _) = tail_harness(true);
+    feed(&mut h, 0.0);
+    assert!(h.device().quiescent());
+    h.set_param("bypass", 1.0);
+    feed(&mut h, 0.0);
+    assert!(!h.device().quiescent(), "fading to the dry");
+    for _ in 0..STOP_BATCHES / 2 {
+        feed(&mut h, 0.0);
+    }
+    assert!(
+        !h.device().quiescent(),
+        "engaged, still counting down to the stop"
+    );
+    for _ in 0..STOP_BATCHES {
+        feed(&mut h, 0.0);
+    }
+    assert!(
+        h.device().quiescent(),
+        "stopped behind a settled bypass, ring silent"
+    );
+    h.set_param("bypass", 0.0);
+    feed(&mut h, 0.0);
+    assert!(!h.device().quiescent(), "back on: fading to the effect");
+    let (mut m, _) = tail_harness(true);
+    feed(&mut m, 0.0);
+    m.set_param(MATCH_KEY, 1.0);
+    feed(&mut m, 0.0);
+    assert!(!m.device().quiescent(), "the loudness match measures");
+}
+
+/// Two wrappers hear the same sound, then the same silence; one is processed through it, the
+/// other gets `idle_advance` for every silent batch (what the engine does), and both then hear
+/// the same sound again. Every output sample of the two must be the same bits.
+fn skipping_is_processing(bypass: bool) {
+    let (mut run, _) = tail_harness(true);
+    let (mut skip, advanced) = tail_harness(true);
+    for h in [&mut run, &mut skip] {
+        h.set_param("bypass", if bypass { 1.0 } else { 0.0 });
+    }
+    let mut noise = Noise::new();
+    let mut compare = |run: &mut DeviceHarness, skip: &mut DeviceHarness, amp: f32| {
+        let (_, a) = step(run, &mut noise, amp);
+        // The second wrapper is fed the same values (the noise source is stateful).
+        let (l, r) = (*run.input_mut("in_l"), *run.input_mut("in_r"));
+        *skip.input_mut("in_l") = l;
+        *skip.input_mut("in_r") = r;
+        skip.process();
+        let b = [*skip.output("out_l"), *skip.output("out_r")];
+        assert_eq!(bits(&a[0]), bits(&b[0]));
+        assert_eq!(bits(&a[1]), bits(&b[1]));
+    };
+    for _ in 0..20 {
+        compare(&mut run, &mut skip, 0.5);
+    }
+    let silent = if bypass {
+        STOP_BATCHES + 2 * RING_BATCHES
+    } else {
+        2 * RING_BATCHES
+    };
+    let mut skipped = 0u64;
+    for _ in 0..silent {
+        let quiet = skip.device().quiescent();
+        *run.input_mut("in_l") = [0.0; BATCH];
+        *run.input_mut("in_r") = [0.0; BATCH];
+        run.process();
+        if quiet {
+            // What the engine does: the batch is not processed, the device only advances.
+            assert!(run.output("out_l").iter().all(|s| s.to_bits() == 0));
+            assert!(run.output("out_r").iter().all(|s| s.to_bits() == 0));
+            skip.device_mut().idle_advance(BATCH);
+            skipped += 1;
+        } else {
+            *skip.input_mut("in_l") = [0.0; BATCH];
+            *skip.input_mut("in_r") = [0.0; BATCH];
+            skip.process();
+        }
+    }
+    assert!(skipped > 0, "the scenario skips (bypass {bypass})");
+    assert!(
+        bypass || advanced.load(std::sync::atomic::Ordering::Relaxed) > 0,
+        "a running effect is advanced"
+    );
+    for _ in 0..20 {
+        compare(&mut run, &mut skip, 0.7);
+    }
+}
+
+#[test]
+fn skipping_a_silent_wrapper_leaves_the_state_a_processed_batch_would() {
+    skipping_is_processing(false);
+}
+
+#[test]
+fn skipping_a_stopped_bypassed_wrapper_leaves_the_state_a_processed_batch_would() {
+    skipping_is_processing(true);
+}

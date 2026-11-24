@@ -1339,6 +1339,10 @@ A stereo delay with free or tempo-synced time, feedback, dry/wet mix and ping-po
 - **Ping-pong.** The input is summed to mono, **(L + R) / 2, into the left line**, and the feedback
   crosses L → R → L. The echoes therefore alternate sides and the stereo image of the input is not
   kept. When ping-pong is off, the two lines are independent.
+- **Idle.** Once both lines hold only zeros (4 s of silence after the last repeat), the feedback and mix
+  have arrived, the glide has landed and no CV is connected, the device says it is quiescent and the
+  engine leaves it uncalled while its inputs stay silent; sound, a note, a parameter, tempo or transport
+  change, or a new cabling wakes it. The audio is bit for bit the same either way.
 
 
 ---

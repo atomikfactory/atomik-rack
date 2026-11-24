@@ -8,18 +8,32 @@
 use crate::hermite4;
 
 /// Hermite-interpolated fractional delay line.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub struct ModDelay {
     buf: Vec<f32>,
     write: usize,
+    /// How many of the latest writes stored `+0.0`, in a row, while `tracking`; the ring holds
+    /// only zeros once this reaches its length. Derived from the content, so not part of equality.
+    zero_run: usize,
+    /// [`ModDelay::track_zeros`] was called: `write` keeps `zero_run`.
+    tracking: bool,
+}
+
+impl PartialEq for ModDelay {
+    fn eq(&self, other: &Self) -> bool {
+        self.buf == other.buf && self.write == other.write
+    }
 }
 
 impl ModDelay {
     /// Allocates a line for delays up to `max_delay` samples (at least 4). Non-RT.
     pub fn new(max_delay: usize) -> Self {
+        let len = max_delay.max(4) + 4;
         Self {
-            buf: vec![0.0; max_delay.max(4) + 4],
+            buf: vec![0.0; len],
             write: 0,
+            zero_run: len,
+            tracking: false,
         }
     }
 
@@ -33,6 +47,22 @@ impl ModDelay {
     pub fn clear(&mut self) {
         self.buf.fill(0.0);
         self.write = 0;
+        self.zero_run = self.buf.len();
+    }
+
+    /// Starts keeping the fact [`ModDelay::holds_only_zeros`] answers, from the content as it is
+    /// now (see [`crate::DelayLine::track_zeros`]). Non-RT.
+    pub fn track_zeros(&mut self) {
+        self.tracking = true;
+        let silent = self.buf.iter().all(|x| x.to_bits() == 0);
+        self.zero_run = if silent { self.buf.len() } else { 0 };
+    }
+
+    /// Whether the ring holds only `+0.0`: true once [`ModDelay::track_zeros`] was called and the
+    /// last `len` writes stored zeros (or the line was cleared).
+    #[inline]
+    pub fn holds_only_zeros(&self) -> bool {
+        self.tracking && self.zero_run >= self.buf.len()
     }
 
     /// Reads the input from `delay` samples ago (clamped to `2..=max_delay`).
@@ -55,10 +85,15 @@ impl ModDelay {
     /// Appends one sample.
     #[inline]
     pub fn write(&mut self, x: f32) {
-        self.buf[self.write] = crate::flush_denormal(x);
+        let stored = crate::flush_denormal(x);
+        self.buf[self.write] = stored;
         self.write += 1;
         if self.write == self.buf.len() {
             self.write = 0;
+        }
+        if self.tracking {
+            let zero = usize::from(stored.to_bits() == 0).wrapping_neg();
+            self.zero_run = self.zero_run.wrapping_add(1) & zero;
         }
     }
 }
@@ -168,5 +203,48 @@ mod tests {
                 );
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod zero_run_tests {
+    use super::*;
+
+    fn scan(line: &ModDelay) -> bool {
+        line.buf.iter().all(|x| x.to_bits() == 0)
+    }
+
+    #[test]
+    fn the_fact_always_matches_a_scan_of_the_ring() {
+        let mut d = ModDelay::new(37);
+        assert!(!d.holds_only_zeros(), "nobody asked");
+        d.track_zeros();
+        assert!(d.holds_only_zeros());
+        let mut state = 11u32;
+        for n in 0..20_000u32 {
+            state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            let sounding = (n / 89) % 5 == 0 && state & 3 != 0;
+            let x = match (sounding, state >> 28) {
+                (true, _) => (state >> 8) as f32 / (1u32 << 24) as f32 - 0.5,
+                (false, 0) => -0.0,
+                (false, 1) => 1e-30,
+                (false, _) => 0.0,
+            };
+            d.write(x);
+            assert_eq!(d.holds_only_zeros(), scan(&d), "n {n}");
+        }
+    }
+
+    #[test]
+    fn clear_and_clone_keep_the_fact() {
+        let mut d = ModDelay::new(10);
+        d.track_zeros();
+        d.write(1.0);
+        assert!(!d.holds_only_zeros());
+        let c = d.clone();
+        assert_eq!(c, d);
+        assert!(!c.holds_only_zeros());
+        d.clear();
+        assert!(d.holds_only_zeros());
     }
 }

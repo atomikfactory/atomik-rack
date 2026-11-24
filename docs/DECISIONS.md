@@ -2131,3 +2131,46 @@ modular and the drum machine, none moved beyond the noise, see `perf/BASELINE.md
 
 **Status.** Default (not yet confirmed). Decided by: none yet.
 
+
+## BP. A device that has gone silent is not called: the `quiescent` and `idle_advance` contract
+
+**Question.** Every routed device is called every batch, however silent its input, so an idle rack costs what a busy
+one costs for the devices whose cost does not depend on the signal (the reverbs, the amp and character devices, the
+delays: a few percent of a batch each). The engine cannot tell
+from outside that a device has nothing left to do, and a rule that guesses changes rendered audio.
+
+**Decision.** The `Device` trait gets two methods with defaults, so every existing device behaves as before.
+`quiescent(&self) -> bool` (default `false`) is the device's own statement that, from its present state, a batch whose
+audio and CV inputs are all `+0.0`, with no note, no parameter change and the transport merely advancing, would write
+only `+0.0` to every output, emit no note, and leave it in exactly the state `idle_advance(BATCH)` leaves it in, in
+which it would say so again. `idle_advance(&mut self, frames)` (default: nothing) advances what runs free (an LFO phase,
+a counter) as `process` would have, step by step. A source never says `quiescent`. The engine asks after each `process`
+of a single-stage device, and while the answer was true it does not call `process` for a batch in which: every audio and
+CV input is bitwise `+0.0` (a `-0.0` or a NaN is sound); no note is in a note input; no playback batch is on; the
+transport only advanced (the same tempo, playing state, time signature, loop, tune and harmony, the frame one batch on, the
+position still or one batch of ticks on, no loop wrap); the node is not faulted and not on its own preview clock. It calls
+`idle_advance(BATCH)` instead, on the thread that would have run the node; the gather and scatter run as always, so the
+outputs are `+0.0` and the engine's own meters read zeros. Any call into the device that can change it (`set_param`, a
+sample map or pattern data hand-off) and every routing swap (the device may see other `connected` flags) clears the answer,
+which is asked again after the next `process`; a read of its meters or its latency does not. A multi-stage device is not
+skipped. `Bypassable` is quiescent in the two states that only record the dry input (effect running at the wet end with
+a silent dry ring and a quiescent effect, or stopped behind a settled bypass with a silent ring) and not while it
+crosses, counts down to its stop or matches loudness; `DelayLine` and `ModDelay` know that they hold only zeros.
+For the load rule (`crate::load_gate`): a skipped batch is not timed and feeds nothing to the smoothed cost, so a node keeps
+the cost of its last real run and the gate stands where it would have stood. The hand-over of a level is decided after its
+gather, counting only the nodes that really run: a level of idle devices wakes no worker, and the batch in which they wake
+hands the same nodes over as without the skip. A test-only switch (`Engine::set_idle_skip`, never a setting, never saved)
+turns the skip off; the default is on. The rule is a pure function of the node and of what the gather delivered, so live,
+offline, any block size and any worker count skip the same batches of the same nodes.
+
+**Rendered audio.** None changes: a render with the skip on is byte for byte the render with it off, checked per
+condition, for a free-running device across silence (and a device with a wrong `idle_advance`, which the same check
+catches), and for every worker count.
+
+**Rejected.** Skipping on a measured level instead of exact zeros (a bounce would depend on a threshold); counting a
+skipped node as free in the load rule (the batch in which it wakes would be decided as calm and run late, the trap
+the rule exists to avoid); a skip decided by the engine for devices that never said so (the engine cannot know that a
+device has no free-running state).
+
+**Status.** The two methods: Decided by: the owner. The engine rule and its details: Default (not yet confirmed).
+Decided by: none yet.

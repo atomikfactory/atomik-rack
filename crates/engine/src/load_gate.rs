@@ -53,6 +53,14 @@
 //! take the dense onset inline. Stopped, it leaves as any plan does; the next Play holds and
 //! then stays busy. A plan that never reached those shares while playing plays inline.
 //! Offline renders do not use the gate.
+//!
+//! # Idle devices
+//!
+//! A device that is skipped as quiescent (see [`crate::plan::Node::run`]) is not timed, and a skipped batch does not
+//! feed its cost: the node keeps the cost it had when it last ran, so the gate is where it would have been without the
+//! skip.
+//! Counting it as free would decide the batch in which it wakes as calm and run that batch late. What changes is what
+//! the gate's answer is used for: a level hands over only the nodes that really run (see [`crate::workers`]).
 
 /// Share of the batch budget, in percent, at which a plan becomes busy.
 pub(crate) const ENTER_PERCENT: u64 = 30;
