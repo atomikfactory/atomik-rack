@@ -722,3 +722,20 @@ used a truncating conversion or a rounding add (and no comparison on the range) 
 loop of dependent wraps (about 11 and 7 ns against 5 ns). The disassembly of the bench executables carries no symbols
 (the debug information is in a separate file the tool does not read), so the calls that remain were not counted: of
 the one function compiled on its own for a look, the shift form has no call on the path of a delay in range.
+
+## Values that have settled are not computed again (2026-11-24)
+
+Four small changes of one rule: a value that has arrived is not recomputed, and no output bit changes. Rows are the
+`process` bench (`cargo bench -p atomik-devices --bench process -- 'device/<name>/256'`), the median of 21 samples of
+256 batches, two runs each, before and after taken close together on the same build folder.
+
+**The one-pole smoother on its target.** `OnePoleSmoother::next_value` returns at once when the value holds the target
+bit for bit and the target is finite (the step leaves `+0` added and the snap writes the target back, so state and
+result are unchanged; a `-0` target is kept as it is, an infinite or NaN value takes the full path). With a time
+constant of 10 ms the smoother is within the `1e-7` snap about 8,000 samples (170 ms) after a step of one, so a held
+control sits on its target nearly all the time.
+
+| row | before, runs | after, runs |
+|---|---|---|
+| guitar-amp | 10.971 ms, 10.935 ms | 9.321 ms, 9.298 ms (-15 %) |
+| eq (the other user, steps per block) | 880.0 us, 887.3 us | 872.8 us, 872.9 us (did not move, slowed nothing) |

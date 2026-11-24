@@ -274,6 +274,10 @@ may break APIs and the patch and project formats.
   C runtime, made for every read; the whole part is now cut out of the delay's bits (and `aarch64` still uses its
   instruction), with no output bit changed. The two reverbs are about 10 % cheaper per batch (about 4.1 to 3.7 ms per
   256 batches), a granular synth about 10 % and the rotary speaker about 6 %.
+- **A one-pole smoother that sits on its target is not stepped.** `OnePoleSmoother::next_value` returns at once
+  when the value already is the target (compared by bits, finite), which is exactly what the step would leave. The
+  guitar amp, which steps three of them for every sample, is about 15 % cheaper per batch (about 10.9 to 9.3 ms per
+  256 batches), with no output bit changed.
 
 ### Fixed
 - **Dropping an instrument above its mix channel.** An instrument dragged to the place above its own mix channel

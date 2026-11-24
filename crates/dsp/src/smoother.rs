@@ -124,9 +124,18 @@ impl OnePoleSmoother {
     }
 
     /// Advances one sample towards `target` and returns the new value.
+    ///
+    /// A smoother that already holds the target, bit for bit, and that target is finite, is not
+    /// stepped: the step adds `(target - value) * coeff`, which is `+0` for a finite `coeff` in
+    /// `0..=1` (what `set_time` makes), and the snap then writes `target` back, so the state and
+    /// the result are what they were (a `-0` value ends on the `-0` target, as the snap leaves
+    /// it). An infinite or NaN value takes the full path, which turns it into NaN as before.
     #[inline]
     pub fn next_value(&mut self, target: f32) -> f32 {
         let target = f64::from(target);
+        if self.value.to_bits() == target.to_bits() && target.is_finite() {
+            return self.value as f32;
+        }
         self.value += (target - self.value) * self.coeff;
         if (target - self.value).abs() < 1e-7 {
             self.value = target;
@@ -144,6 +153,106 @@ impl OnePoleSmoother {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `next_value` as it was before the shortcut for a smoother on its target.
+    fn full_step(s: &mut OnePoleSmoother, target: f32) -> f32 {
+        let target = f64::from(target);
+        s.value += (target - s.value) * s.coeff;
+        if (target - s.value).abs() < 1e-7 {
+            s.value = target;
+        }
+        s.value as f32
+    }
+
+    fn same(a: &OnePoleSmoother, b: &OnePoleSmoother) -> bool {
+        a.value.to_bits() == b.value.to_bits() && a.coeff.to_bits() == b.coeff.to_bits()
+    }
+
+    #[test]
+    fn one_pole_shortcut_matches_the_full_step_bit_for_bit() {
+        let specials = [
+            0.0f32,
+            -0.0,
+            1.0,
+            -1.0,
+            0.5,
+            1e-7,
+            -1e-7,
+            1.0 + 1e-7,
+            1e-8,
+            f32::MIN_POSITIVE,
+            f32::from_bits(1),
+            -f32::from_bits(1),
+            f32::MAX,
+            f32::MIN,
+            f32::INFINITY,
+            f32::NEG_INFINITY,
+            f32::NAN,
+        ];
+        // Every coefficient `set_time` can make: no smoothing, usual, a time that rounds to
+        // nothing, an infinite time, a NaN time, a zero rate.
+        let times: [(f32, f32); 6] = [
+            (0.0, 48_000.0),
+            (10.0, 48_000.0),
+            (1e30, 48_000.0),
+            (f32::INFINITY, 48_000.0),
+            (f32::NAN, 48_000.0),
+            (10.0, 0.0),
+        ];
+        for (ms, sr) in times {
+            let mut proto = OnePoleSmoother::new(0.0, ms, sr);
+            proto.set_time(ms, sr);
+            assert!(proto.coeff.is_finite() && (0.0..=1.0).contains(&proto.coeff));
+            for &v in &specials {
+                for &t in &specials {
+                    let mut a = proto;
+                    a.set_immediate(v);
+                    let mut b = a;
+                    for _ in 0..3 {
+                        let ra = a.next_value(t);
+                        let rb = full_step(&mut b, t);
+                        assert_eq!(ra.to_bits(), rb.to_bits(), "{ms} {sr} {v} {t}");
+                        assert!(same(&a, &b), "{ms} {sr} {v} {t}");
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn one_pole_shortcut_matches_over_a_long_seeded_sequence() {
+        let mut seed = 0x9E37_79B9u32;
+        let mut next = || {
+            seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            seed >> 8
+        };
+        let mut a = OnePoleSmoother::new(0.0, 0.5, 48_000.0);
+        let mut b = a;
+        let mut target = 0.0f32;
+        let mut hits = 0u32;
+        for _ in 0..100_000 {
+            // The target holds for long stretches, sometimes a zero of either sign.
+            match next() % 4000 {
+                0 => target = (next() as f32 / (1u32 << 24) as f32) * 4.0 - 2.0,
+                1 => target = 0.0,
+                2 => target = -0.0,
+                3 => target += 5e-8,
+                _ => {}
+            }
+            let before = a;
+            let ra = a.next_value(target);
+            let rb = full_step(&mut b, target);
+            assert_eq!(ra.to_bits(), rb.to_bits());
+            assert!(same(&a, &b));
+            if same(&before, &a) {
+                hits += 1;
+            }
+        }
+        assert!(
+            hits > 50_000,
+            "the sequence rarely sits on its target: {hits}"
+        );
+    }
 
     #[test]
     fn smoother_reaches_target_within_time() {
