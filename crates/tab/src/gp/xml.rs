@@ -99,16 +99,14 @@ impl Xml {
                     }
                 }
                 Event::Text(t) => {
-                    let s = t.decode().map_err(|e| xml_err(&e))?;
-                    add_text(&mut nodes, &stack, &s);
+                    add_text(&mut nodes, &stack, &t);
                 }
                 Event::CData(c) => {
-                    let s = c.decode().map_err(|e| xml_err(&e))?;
-                    add_text(&mut nodes, &stack, &s);
+                    add_text(&mut nodes, &stack, &c);
                 }
                 Event::GeneralRef(r) => {
-                    let name = r.decode().map_err(|e| xml_err(&e))?;
-                    let piece = match name.as_ref() {
+                    let name: &str = &r;
+                    let piece = match name {
                         "amp" => Some('&'),
                         "lt" => Some('<'),
                         "gt" => Some('>'),
@@ -175,7 +173,7 @@ fn open(
         return Err(GpError::Xml("the elements are nested too deeply".into()));
     }
     let bad = |e: &dyn std::fmt::Display| GpError::Xml(e.to_string());
-    let local = String::from_utf8_lossy(e.local_name().as_ref()).into_owned();
+    let local = e.local_name().into_inner().to_owned();
     let name = Xml::intern(names, index, &local)?;
     let mut attrs = Vec::new();
     for a in e.attributes() {
@@ -183,7 +181,7 @@ fn open(
         if attrs.len() >= 32 {
             break;
         }
-        let key = String::from_utf8_lossy(a.key.local_name().as_ref()).into_owned();
+        let key = a.key.local_name().into_inner().to_owned();
         let k = Xml::intern(names, index, &key)?;
         let v = a
             .normalized_value(quick_xml::XmlVersion::Implicit1_0)

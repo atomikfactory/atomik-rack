@@ -86,7 +86,7 @@ zune-jpeg = { version = "0.5", default-features = false, features = ["std"] }
 # layer: the request carries a User-Agent and nothing else.
 ureq = { version = "3", default-features = false, features = ["rustls"] }
 # Guitar Pro readers (crates/tab): the XML of .gpx/.gp scores, and raw deflate for the zip of a .gp file.
-quick-xml = "0.41"
+quick-xml = "0.42"
 flate2 = { version = "1.1.10", default-features = false, features = ["rust_backend"] }
 pdf-writer = "0.15"
 
