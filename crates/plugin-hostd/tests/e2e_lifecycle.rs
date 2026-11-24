@@ -10,7 +10,7 @@ atomik_testkit::install_alloc_guard!();
 mod sandbox_support;
 
 use atomik_device_sdk::{PluginFormat, PluginRef, RunMode};
-use atomik_plugin_host::{DeviceState, LOST, ManagerEvent, PluginHandle};
+use atomik_plugin_host::{DeviceState, LOST, ManagerEvent, PluginHandle, SoftAnswer};
 use atomik_testkit::harness::DeviceHarness;
 use atomik_testkit::no_alloc::assert_no_alloc;
 use sandbox_support::SR;
@@ -460,7 +460,24 @@ fn param_text_of_a_sandboxed_plugin_is_the_plugins_own() {
         .manager
         .instantiate(&request(&plugin, RunMode::Realtime))
         .unwrap();
-    let remote = sb.manager.param_text(h.id, 1, -6.0);
+    let mut remote = sb.manager.param_text(h.id, 1, -6.0);
+    // A child too busy to answer within the frame allowance (a loaded machine) has no text
+    // yet: the text then arrives later with the soft answers, which is where the app takes it.
+    for _ in 0..2_000 {
+        if remote.is_some() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(5));
+        sb.manager.poll();
+        remote = sb
+            .manager
+            .take_soft_answers()
+            .into_iter()
+            .find_map(|(id, answer)| match answer {
+                SoftAnswer::ParamText { param: 1, text, .. } if id == h.id => Some(text),
+                _ => None,
+            });
+    }
     let mut local = sandbox_support::in_process(Format::Clap, &[Format::Clap.main_file()]);
     let l = local
         .instantiate(&request(&plugin, RunMode::Realtime))
