@@ -2705,6 +2705,9 @@ impl<S: EngineSink> AppCore<S> {
         let mut topology = Topology::new(&config);
         topology.set_compensation(doc.console.compensation);
         topology.set_align_inputs(doc.console.align_returns);
+        // A device whose output reaches no interface channel, meter or observer is not run; the
+        // engine pins the devices it knows are observed (`fill_latencies` below).
+        topology.set_prune_dead_ends(self.sink.prunes_dead_ends());
         let mut problems = Vec::new();
         for device in &expanded.devices {
             let (Some(id), Some(f)) = (
@@ -4971,6 +4974,10 @@ mod slicer_tests;
 #[cfg(test)]
 #[path = "app_core_fx_tests.rs"]
 mod fx_tests;
+
+#[cfg(test)]
+#[path = "app_core_prune_tests.rs"]
+mod prune_tests;
 
 #[cfg(test)]
 #[path = "app_core_analyser_tests.rs"]

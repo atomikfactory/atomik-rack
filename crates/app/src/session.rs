@@ -1398,6 +1398,10 @@ impl<B: AudioBackend> EngineSink for LiveSession<B> {
         }
     }
 
+    fn prunes_dead_ends(&self) -> bool {
+        true
+    }
+
     fn read_meter(&self, endpoint: Endpoint) -> Option<MeterReading> {
         self.running.as_ref()?.meters.read(endpoint)
     }

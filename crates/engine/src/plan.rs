@@ -15,6 +15,7 @@ use crate::fault::FaultState;
 use crate::graph::rules::{self, CableMap, Lookup};
 use crate::graph::{DeviceInstanceId, Endpoint, Graph, GraphError};
 use crate::preview_clock::PreviewClock;
+use crate::prune;
 use crate::timing::CostProbe;
 use atomik_core::{
     BATCH, Batch, MAX_EVENTS_PER_BATCH, NoteBuffer, NoteEvent, NoteKind, ParamId, TimeInfo,
@@ -65,6 +66,14 @@ pub(crate) struct Node {
     pub(crate) connected: Vec<bool>,
     /// True while the current routing includes this node (only then it receives notes).
     pub(crate) routed: bool,
+    /// True while the current routing leaves this node out as a dead end: notes sent to it are
+    /// discarded without counting a drop, and the node is brought to a clean state when a later
+    /// routing runs it again.
+    pub(crate) pruned: bool,
+    /// The device has processed a batch since `prepare` or its last reset.
+    pub(crate) has_run: bool,
+    /// The node was routed and has run, then pruned: it is reset before its next batch.
+    pub(crate) needs_reset: bool,
     /// Audio rendered for this device in the current batch (audio-track clips),
     /// valid while `playback_on`; cleared after the device's last stage.
     pub(crate) playback: [Batch; 2],
@@ -140,6 +149,14 @@ pub(crate) struct Routed {
     pub(crate) connected: Vec<bool>,
 }
 
+/// A device a routing leaves out (see [`crate::prune`]) and the arena slot it lives in.
+pub(crate) struct Pruned {
+    pub(crate) id: DeviceInstanceId,
+    /// Arena slot. `RenderPlan`s put these after the routed devices; `EngineHandle::submit_routing`
+    /// rewrites it from the handle's id -> slot map.
+    pub(crate) slot: usize,
+}
+
 /// One (device, stage) node in render order: gather the stage's inputs, run
 /// `process_stage`, scatter the stage's outputs. Single-stage devices have one step.
 pub(crate) struct Step {
@@ -202,6 +219,14 @@ impl RenderPlan {
         self.routing.pdc_report()
     }
 
+    /// The devices the plan leaves out because their output reaches nothing (test hook; not a
+    /// stable API), ascending. They are in the arena with their parameters and run again when a
+    /// later routing lists them.
+    #[doc(hidden)]
+    pub fn pruned_devices(&self) -> Vec<DeviceInstanceId> {
+        self.routing.pruned_devices()
+    }
+
     #[cfg(test)]
     pub(crate) fn assert_no_output_aliases_input(&self) {
         self.routing.assert_no_output_aliases_input();
@@ -232,6 +257,9 @@ impl Node {
                 .collect(),
             connected: vec![false; sockets.len()],
             routed: false,
+            pruned: false,
+            has_run: false,
+            needs_reset: false,
             playback: [[0.0; BATCH]; 2],
             playback_on: false,
             faulted: false,
@@ -306,6 +334,30 @@ impl Node {
         let floor = buf.as_slice().last().map_or(0, |last| last.offset);
         let offset = offset.clamp(floor, BATCH as u16 - 1);
         push_with_headroom(buf, NoteEvent { offset, kind }).is_ok()
+    }
+
+    /// Called when a routing runs this node: if it was left out as a dead end after it had run,
+    /// the device is reset (`Device::reset` is real-time safe: it clears audio state without
+    /// allocating, and parameters stay) so it starts from silence, and its cost is forgotten so
+    /// the first batch is timed again like a new device's. Otherwise nothing happens.
+    fn revive(&mut self) {
+        self.pruned = false;
+        if !self.needs_reset {
+            return;
+        }
+        self.needs_reset = false;
+        self.has_run = false;
+        let _ = self.contain(|device| {
+            let _rt = atomik_core::rt_guard::audio_thread();
+            device.reset();
+        });
+        self.notes.iter_mut().for_each(NoteBuffer::clear);
+        self.playback_on = false;
+        self.idle_time = None;
+        self.cost_ns = 0;
+        self.cost_acc = 0;
+        self.seen_ns = 0;
+        self.cost_known = false;
     }
 
     /// Stage of socket `i` (0 for single-stage devices).
@@ -470,6 +522,7 @@ impl Node {
     }
 
     fn run_device(&mut self, time: TimeInfo, stage: u8, last: bool, idle_skip: bool) {
+        self.has_run = true;
         let playback: &[Batch] = if self.playback_on {
             &self.playback
         } else {
@@ -626,11 +679,23 @@ impl RoutingPlan {
     /// the routing becomes current; touches no device state. A device that was skipped as
     /// quiescent runs once more: the flags it sees may have changed, and a device may act on
     /// that (a CV input it no longer has).
+    ///
+    /// **Dead ends.** A node this routing leaves out as a dead end is marked pruned; if it has
+    /// run, it is flagged to be reset before it runs again. A node that was pruned and is routed
+    /// now is reset here, before its first batch (see [`Node::revive`]): the sound it held when
+    /// it was left out is never played into the mix. Parameters set meanwhile are in force.
     pub(crate) fn install(&self, arena: &mut Arena) {
+        for p in &self.pruned {
+            if let Some(node) = arena.node_mut(p.slot) {
+                node.pruned = true;
+                node.needs_reset |= node.has_run;
+            }
+        }
         for d in &self.devices {
             if let Some(node) = arena.node_mut(d.slot) {
                 node.routed = true;
                 node.idle = false;
+                node.revive();
                 if node.connected.len() == d.connected.len() {
                     node.connected.copy_from_slice(&d.connected);
                 }
@@ -643,6 +708,11 @@ impl RoutingPlan {
         for d in &self.devices {
             if let Some(node) = arena.node_mut(d.slot) {
                 node.routed = false;
+            }
+        }
+        for p in &self.pruned {
+            if let Some(node) = arena.node_mut(p.slot) {
+                node.pruned = false;
             }
         }
     }
@@ -927,6 +997,10 @@ pub(crate) struct CompileOptions<'a> {
     pub(crate) latency: &'a dyn Fn(DeviceInstanceId) -> u32,
     /// Metered output endpoints (validated by the caller).
     pub(crate) meters: &'a BTreeSet<Endpoint>,
+    /// Devices something outside the graph observes (never pruned, see [`crate::prune`]).
+    pub(crate) pinned: &'a BTreeSet<DeviceInstanceId>,
+    /// Leave the dead ends out of the plan (off unless the caller asks, see [`crate::prune`]).
+    pub(crate) prune: bool,
 }
 
 /// PDC outcome of a compile: the report, plus the non-zero delay of each compensated cable,
@@ -1089,6 +1163,49 @@ pub(crate) fn compile_routing(
 ) -> Result<RoutingPlan, GraphError> {
     // 1. Re-validate every cable.
     rules::revalidate(lookup, cables)?;
+    // 1b. Dead ends: the devices no observer can hear are left out of everything below. The
+    //     cycle check still sees the whole graph, so a graph compiles or fails as it always did.
+    let live = (options.prune && prune::enabled()).then(|| {
+        prune::live_set(
+            ids,
+            cables,
+            options
+                .meters
+                .iter()
+                .map(|e| e.device)
+                .chain(options.pinned.iter().copied()),
+        )
+    });
+    let mut pruned_ids: Vec<DeviceInstanceId> = live.as_ref().map_or_else(Vec::new, |live| {
+        ids.iter()
+            .copied()
+            .filter(|id| !live.contains(id))
+            .collect()
+    });
+    pruned_ids.sort_unstable();
+    let kept_ids: Vec<DeviceInstanceId>;
+    let kept_cables: CableMap;
+    // The outputs a cable leaves in the whole graph: a device is told its output is connected
+    // even when the only cable goes to a device that was left out.
+    let sourced: BTreeSet<Endpoint>;
+    let (ids, cables) = match &live {
+        Some(live) if !pruned_ids.is_empty() => {
+            topological_order(ids, lookup, cables)?;
+            sourced = cables.values().map(|c| c.from).collect();
+            kept_ids = ids.iter().copied().filter(|id| live.contains(id)).collect();
+            let kept = |d: DeviceInstanceId| d == Graph::INTERFACE || live.contains(&d);
+            kept_cables = cables
+                .iter()
+                .filter(|(_, c)| kept(c.from.device) && kept(c.to.device))
+                .map(|(k, c)| (*k, *c))
+                .collect();
+            (kept_ids.as_slice(), &kept_cables)
+        }
+        _ => {
+            sourced = BTreeSet::new();
+            (ids, cables)
+        }
+    };
     // 2. Deterministic Kahn toposort over (device, stage) nodes (rejects cycles), then
     //    dependency levels. Single-stage devices: one node each, exactly the device order.
     let (nodes, level_starts) =
@@ -1144,6 +1261,7 @@ pub(crate) fn compile_routing(
         slot_of: &slots.slot_of,
         delay_index: &delay_index,
         meter_slot: &meter_slot,
+        sourced: &sourced,
     };
     // 7. Devices (in order of their first stage) and per-stage routes, in render order.
     let mut devices = Vec::new();
@@ -1205,10 +1323,19 @@ pub(crate) fn compile_routing(
             }
         }
     }
+    let pruned = pruned_ids
+        .into_iter()
+        .enumerate()
+        .map(|(k, id)| Pruned {
+            id,
+            slot: devices.len() + k,
+        })
+        .collect();
     Ok(RoutingPlan {
         order,
         level_starts,
         devices,
+        pruned,
         steps,
         slots: vec![[0.0; BATCH]; slots.signal.count],
         note_slots: (0..slots.notes.count)
@@ -1255,6 +1382,8 @@ impl Graph {
             cables,
             compensation,
             align_inputs,
+            pinned,
+            prune,
             ..
         } = self;
         // prepare once per device (in render order), then re-apply stored params.
@@ -1271,6 +1400,16 @@ impl Graph {
             }
             prepared.insert(*id, device);
         }
+        // A device that publishes something itself is an endpoint (see [`crate::prune`]).
+        let pinned: BTreeSet<DeviceInstanceId> = pinned
+            .into_iter()
+            .chain(
+                prepared
+                    .iter()
+                    .filter(|(_, d)| prune::observed(d.as_ref()))
+                    .map(|(id, _)| *id),
+            )
+            .collect();
         let routing = {
             let lookup = |id: DeviceInstanceId| {
                 if id == Graph::INTERFACE {
@@ -1293,16 +1432,20 @@ impl Graph {
                     sample_rate: config.sample_rate.hz(),
                     latency: &latency,
                     meters: &BTreeSet::new(),
+                    pinned: &pinned,
+                    prune,
                 },
             )?
         };
         let nodes = routing
             .devices
             .iter()
-            .map(|d| {
+            .map(|d| d.id)
+            .chain(routing.pruned.iter().map(|p| p.id))
+            .map(|id| {
                 Node::new(
                     prepared
-                        .remove(&d.id)
+                        .remove(&id)
                         .expect("ordered ids come from the graph"),
                 )
             })
@@ -1431,6 +1574,8 @@ struct RouteTables<'a> {
     /// PDC delay line per (input, source) cable.
     delay_index: &'a BTreeMap<(Endpoint, Endpoint), usize>,
     meter_slot: &'a BTreeMap<Endpoint, usize>,
+    /// The outputs a cable leaves in the whole graph, when devices were left out (else empty).
+    sourced: &'a BTreeSet<Endpoint>,
 }
 
 /// Builds a device's routes, one [`Routes`] per stage, and its `connected` flags.
@@ -1461,6 +1606,7 @@ fn build_routes(
         let mut cabled = false;
         match s.direction {
             Direction::Output => {
+                cabled = t.sourced.contains(&e);
                 if let Some(slot) = t.slot_of.get(&e) {
                     cabled = true;
                     if notes {

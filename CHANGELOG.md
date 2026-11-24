@@ -359,6 +359,15 @@ may break APIs and the patch and project formats.
   loudness and the true-peak maximum cover the time since it was shown and read like right after a reset (-120)
   until the windows have filled. The limiter, its gain reduction and the sound are never affected, and renders,
   bounces, the QA server and the delivery checks measure exactly as before.
+- **A device whose output reaches nothing is not run.** When the interface compiles a routing (the live session and
+  a project bounce), a device that no cable into the audio interface, no meter, no tap and no live device reaches is
+  left out of the plan: it costs nothing, keeps its parameters, and notes sent to it are discarded. Devices that
+  publish values (every effect, a plugin device, an analyser, half of the instruments) and the devices a note tap or
+  a record tap reads are always kept. Rendered audio is byte for byte the same. Twenty held poly synths cabled to
+  nothing cost 11.4 ms for 256 batches before and 0.6 ms after (the example projects have almost none). One visible
+  change: a device that was uncabled and is cabled again starts from silence (its tail is gone, a held note is
+  forgotten, an LFO starts over) instead of having run all along, so unplugging an instrument that rings and
+  plugging it back no longer plays the old sound.
 
 ### Fixed
 - **Dropping an instrument above its mix channel.** An instrument dragged to the place above its own mix channel

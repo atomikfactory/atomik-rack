@@ -18,7 +18,7 @@
 use crate::console::{DelayLine, Latencies, MAX_METER_VALUES, Meters, PdcReport};
 use crate::fault::FaultState;
 use crate::graph::{Cable, DeviceInstanceId, Endpoint, EngineConfig, Graph, GraphError, rules};
-use crate::plan::{CompileOptions, Node, Route, Routed, Step};
+use crate::plan::{CompileOptions, Node, Pruned, Route, Routed, Step};
 use crate::preview_clock::PreviewClock;
 use atomik_core::{Batch, NoteBuffer, NoteKind, ParamId};
 use atomik_device_sdk::{
@@ -42,6 +42,10 @@ pub struct Topology {
     latencies: BTreeMap<DeviceInstanceId, u32>,
     /// Metered output endpoints.
     meters: BTreeSet<Endpoint>,
+    /// Devices something outside the graph observes (see [`crate::prune`]): never pruned.
+    pinned: BTreeSet<DeviceInstanceId>,
+    /// Leave the dead ends out of compiled routings (off by default).
+    prune: bool,
 }
 
 impl std::fmt::Debug for Topology {
@@ -68,6 +72,8 @@ impl Topology {
             align_inputs: false,
             latencies: BTreeMap::new(),
             meters: BTreeSet::new(),
+            pinned: BTreeSet::new(),
+            prune: false,
         }
     }
 
@@ -99,6 +105,7 @@ impl Topology {
         rules::detach(&mut self.cables, id);
         self.latencies.remove(&id);
         self.meters.retain(|e| e.device != id);
+        self.pinned.remove(&id);
         Ok(())
     }
 
@@ -153,6 +160,8 @@ impl Topology {
                 sample_rate: self.config.sample_rate.hz(),
                 latency: &latency,
                 meters: &self.meters,
+                pinned: &self.pinned,
+                prune: self.prune,
             },
         )
     }
@@ -235,6 +244,49 @@ impl Topology {
         self.meters.iter().copied()
     }
 
+    /// Whether compiles leave out the devices whose output reaches nothing (off by default: the
+    /// plan then runs every node, as it always did). When on, a node is left out unless it is
+    /// live: a cable into the interface, a meter or a pin reaches it, directly or through any
+    /// cables. Left-out nodes stay in the arena with their parameters and are reset when a later
+    /// routing runs them again (see the `prune` module).
+    pub fn set_prune_dead_ends(&mut self, on: bool) {
+        self.prune = on;
+    }
+
+    /// Whether compiles leave out dead ends.
+    pub fn prune_dead_ends(&self) -> bool {
+        self.prune
+    }
+
+    /// Declares that something outside the graph observes node `id` (its own meters, a tap, a
+    /// plugin window): compiles keep it, and everything that feeds it, in the plan even when its
+    /// outputs reach nothing. Idempotent.
+    /// [`crate::EngineHandle::fill_latencies`] pins the devices the engine knows to be observed.
+    ///
+    /// # Errors
+    /// [`GraphError::UnknownDevice`] if `id` is not a node (the interface included).
+    pub fn pin(&mut self, id: DeviceInstanceId) -> Result<(), GraphError> {
+        if !self.nodes.contains_key(&id) {
+            return Err(GraphError::UnknownDevice);
+        }
+        self.pinned.insert(id);
+        Ok(())
+    }
+
+    /// Replaces the pinned nodes with `ids` (unknown ids are ignored): what
+    /// [`crate::EngineHandle::fill_latencies`] does, so a tap that stopped no longer pins.
+    pub fn set_pinned(&mut self, ids: impl IntoIterator<Item = DeviceInstanceId>) {
+        self.pinned = ids
+            .into_iter()
+            .filter(|id| self.nodes.contains_key(id))
+            .collect();
+    }
+
+    /// The pinned nodes, ascending.
+    pub fn pinned(&self) -> impl Iterator<Item = DeviceInstanceId> + '_ {
+        self.pinned.iter().copied()
+    }
+
     /// The configuration the topology was created with.
     pub fn config(&self) -> &EngineConfig {
         &self.config
@@ -275,6 +327,9 @@ pub struct RoutingPlan {
     pub(crate) level_starts: Vec<usize>,
     /// One entry per device, in the order of their first stage (`RenderPlan` arena slot `k`).
     pub(crate) devices: Vec<Routed>,
+    /// The devices of the graph this routing leaves out because their output reaches nothing
+    /// (see [`crate::prune`]): in no step, still owned by the arena. Ascending by id.
+    pub(crate) pruned: Vec<Pruned>,
     /// One (device, stage) step per render-graph node, level-major.
     pub(crate) steps: Vec<Step>,
     pub(crate) slots: Vec<Batch>,
@@ -344,6 +399,13 @@ impl RoutingPlan {
     pub fn slot_count(&self) -> usize {
         self.slots.len() + self.note_slots.len()
     }
+
+    /// The devices this routing leaves out because their output reaches nothing (test hook; not
+    /// a stable API), ascending.
+    #[doc(hidden)]
+    pub fn pruned_devices(&self) -> Vec<DeviceInstanceId> {
+        self.pruned.iter().map(|p| p.id).collect()
+    }
 }
 
 /// The engine-side device arena: a fixed number of slots, each holding at most one node, plus
@@ -376,9 +438,14 @@ impl Arena {
     /// An arena of `capacity` slots holding a plan's nodes at slots `0..n`.
     pub(crate) fn from_plan(capacity: usize, routing: &RoutingPlan, nodes: Vec<Node>) -> Self {
         let mut arena = Self::new(capacity);
-        for (k, (node, d)) in nodes.into_iter().zip(&routing.devices).enumerate() {
+        let ids = routing
+            .devices
+            .iter()
+            .map(|d| d.id)
+            .chain(routing.pruned.iter().map(|p| p.id));
+        for (k, (node, id)) in nodes.into_iter().zip(ids).enumerate() {
             arena.nodes[k] = Some(Box::new(node));
-            arena.index.push((d.id, k));
+            arena.index.push((id, k));
         }
         arena.index.sort_unstable();
         arena
@@ -606,7 +673,8 @@ impl Arena {
     }
 
     /// Delivers a note to a routed device. Returns false (the caller counts a drop) for unknown
-    /// or unrouted devices, non-Notes sockets and full buffers.
+    /// or unrouted devices, non-Notes sockets and full buffers. A device the routing leaves out
+    /// as a dead end takes the note and discards it: nothing hears it, so it is not a drop.
     pub(crate) fn deliver_note(
         &mut self,
         id: DeviceInstanceId,
@@ -616,6 +684,7 @@ impl Arena {
     ) -> bool {
         match self.node_by_id(id) {
             Some(node) if node.routed => node.deliver_note(socket, offset, kind),
+            Some(node) if node.pruned => true,
             _ => false,
         }
     }

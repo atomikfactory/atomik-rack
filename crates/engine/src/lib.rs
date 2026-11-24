@@ -24,6 +24,7 @@ mod plan;
 mod player;
 mod preview;
 mod preview_clock;
+mod prune;
 mod record;
 mod reference;
 mod seq;
@@ -69,6 +70,8 @@ pub use player::{HOLD_CAPACITY, lane_value};
 pub use preview::{
     PREVIEW_RING_FRAMES, PreviewFeed, PreviewMonitor, PreviewStream, preview_channel,
 };
+#[doc(hidden)]
+pub use prune::without as without_pruning;
 pub use record::{LIMIT_RELEASE_FRAMES, RecordTap, TapChannel, TapControls};
 pub use reference::{
     REFERENCE_FLOOR_LUFS, ReferenceBand, ReferenceSettings, ReferenceShared, ReferenceSolo,

@@ -2210,3 +2210,43 @@ meters the same way was measured and left alone: the console strips, the track h
 read them and keep a latched peak, clip lamps and a held maximum, so a hidden mixer would lose a clip.
 
 **Status.** Default (not yet confirmed). Decided by: none yet.
+
+
+## BR. A device whose output reaches nothing is left out of the plan, and starts clean when it comes back
+
+**Question.** A device that nothing observes still runs every batch: an instrument playing into an uncabled output, an
+effect whose output is unplugged. Leaving it out of the plan saves its cost, but a device that is left out stands
+still, and when a later routing cables it again it would play what it held when it was left out (an old echo, a held
+note, an envelope in mid-release) into the mix, minutes later.
+
+**Decision.** A compile that is asked to prune (`Topology::set_prune_dead_ends`, `Graph::set_prune_dead_ends`; the
+live session and a project bounce ask, every other compile runs every device as before) leaves out each device that
+is not live. Live means: a cable into the interface from it, a metered output, or a pin, and everything that a live
+device reads through any cable. A pin is declared for a device that publishes something itself (`has_meter_values`,
+`scope_tap`, `midi_tap`, `variable_latency`, `pinned_to_audio_thread`, so every plugin device and, because the bypass
+wrapper publishes its match gain, every built-in effect), for the device a note tap reads and for the device a record
+tap resamples an output of (`EngineHandle::fill_latencies` pins them). The left-out devices stay in the arena with
+their parameters, which keep arriving; notes for them are discarded without counting a drop.
+
+**The return rule.** A device that was routed, ran, was left out and is routed again is reset (`Device::reset`) in
+`RoutingPlan::install`, on the audio thread, before its first batch. `reset` is real-time safe by the trait's contract
+(it clears the audio state without allocating); parameters are not touched, so the values set in the meantime are in
+force. A device that never ran is not reset. Its cost is forgotten, so the first batch is timed again as a new
+device's is, and the load rule treats it as unknown until then. A tap on a device that is left out moves the latency
+epoch, so the app compiles again and the device runs; the tap sees nothing until that routing is applied (a batch or
+two).
+
+**Rendered audio.** None changes for a project as it stands: the output of a bounce is byte for byte the same with the
+pruning on and off (every example project, a patch full of dead ends), because a device that was left out reaches no
+output and no observer. The one visible change is the return: a device that was uncabled and is cabled again starts
+from silence instead of having run all along. The delay compensation report no longer lists a cable into a device
+that was left out.
+
+**Rejected.** Pruning in every compile (the engine's own tests build graphs whose devices are read directly, and a
+caller that reads an uncabled device would lose it without asking); letting a returning device play its stale state
+(an old echo bursting out); a reset on the non-real-time side (the routing is prepared there but the device is owned
+by the audio thread, and a reset at the boundary needs no extra hand-off); pinning only what the interface shows (the
+QA server and the tests read the same values); relying on `Device::quiescent` alone (a device that plays into
+nothing is not quiet, so it is never skipped).
+
+**Status.** Default (not yet confirmed). Decided by: none yet.

@@ -5,7 +5,7 @@ use atomik_core::{ParamId, SampleRate, Tempo};
 #[cfg(test)]
 use atomik_device_sdk::SocketDescriptor;
 use atomik_device_sdk::{Device, DeviceDescriptor, SocketId};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// Identifies a device instance in a graph. `DeviceInstanceId(0)` is the AudioInterface.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -102,6 +102,10 @@ pub struct Graph {
     pub(crate) compensation: bool,
     /// Align plain audio inputs too (off by default).
     pub(crate) align_inputs: bool,
+    /// Devices something outside the graph observes (see [`crate::prune`]).
+    pub(crate) pinned: BTreeSet<DeviceInstanceId>,
+    /// Leave the dead ends out of the compiled plan (off by default).
+    pub(crate) prune: bool,
     next_id: u32,
 }
 
@@ -130,6 +134,8 @@ impl Graph {
             cables: BTreeMap::new(),
             compensation: true,
             align_inputs: false,
+            pinned: BTreeSet::new(),
+            prune: false,
             next_id: 1,
         }
     }
@@ -163,6 +169,7 @@ impl Graph {
         }
         let entry = self.devices.remove(&id).ok_or(GraphError::UnknownDevice)?;
         rules::detach(&mut self.cables, id);
+        self.pinned.remove(&id);
         Ok(entry.device)
     }
 
@@ -319,7 +326,36 @@ impl Graph {
         }
         topology.set_compensation(self.compensation);
         topology.set_align_inputs(self.align_inputs);
+        topology.set_prune_dead_ends(self.prune);
+        for (&id, entry) in &self.devices {
+            if self.pinned.contains(&id) || crate::prune::observed(entry.device.as_ref()) {
+                topology
+                    .pin(id)
+                    .expect("graph ids are nodes of the topology");
+            }
+        }
         topology
+    }
+
+    /// Whether [`Graph::compile`] leaves out the devices whose output reaches nothing (see
+    /// [`Topology::set_prune_dead_ends`](crate::Topology::set_prune_dead_ends)); off by default.
+    pub fn set_prune_dead_ends(&mut self, on: bool) {
+        self.prune = on;
+    }
+
+    /// Declares that something outside the graph observes device `id` (a tap on its notes, a
+    /// reader of its meters): compiles keep it, and everything that feeds it, in the plan even
+    /// when its outputs reach nothing (see [`Topology::pin`](crate::Topology::pin)). The devices
+    /// that publish something themselves are kept without it.
+    ///
+    /// # Errors
+    /// [`GraphError::UnknownDevice`] if `id` is not a device of the graph.
+    pub fn pin(&mut self, id: DeviceInstanceId) -> Result<(), GraphError> {
+        if !self.devices.contains_key(&id) {
+            return Err(GraphError::UnknownDevice);
+        }
+        self.pinned.insert(id);
+        Ok(())
     }
 
     #[cfg(test)]

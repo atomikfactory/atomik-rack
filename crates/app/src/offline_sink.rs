@@ -39,6 +39,10 @@ pub struct OfflineSink {
     pub frames: u64,
     /// The last rendered output, per channel.
     pub last_output: Vec<Vec<f32>>,
+    /// Whether the engine leaves out the devices whose output reaches nothing, as the live
+    /// session does (off by default, so the tests that read a device that is not cabled keep
+    /// working).
+    pub prune: bool,
     /// `set_param` calls since construction (the plugin tests check a value is not echoed back).
     pub param_calls: usize,
 }
@@ -58,6 +62,7 @@ impl Default for OfflineSink {
             threshold: None,
             frames: 0,
             last_output: Vec::new(),
+            prune: false,
             param_calls: 0,
         }
     }
@@ -107,6 +112,13 @@ impl OfflineSink {
         }
         self.last_output = all.clone();
         all
+    }
+
+    /// The devices the routing in force leaves out (see [`Self::prune`]); empty without an engine.
+    pub fn pruned_devices(&self) -> Vec<DeviceInstanceId> {
+        self.engine
+            .as_ref()
+            .map_or_else(Vec::new, Engine::pruned_devices)
     }
 
     /// Renders 64-frame blocks.
@@ -237,6 +249,10 @@ impl EngineSink for OfflineSink {
         if let Some(h) = &self.handle {
             h.fill_latencies(topology);
         }
+    }
+
+    fn prunes_dead_ends(&self) -> bool {
+        self.prune
     }
 
     fn read_meter(&self, endpoint: Endpoint) -> Option<MeterReading> {

@@ -919,3 +919,24 @@ ping-pong) take about 43 passes of 0.3 s to flush below 1e-20, so a patch with t
 last key and one with feedback 0 about 1.4 s after it. LFO 2 is stepped only while it has a destination, exactly as
 the batch does. The default patch is quiescent 217 batches after the last key is released and one batch from the
 start; the mono bass with its defaults 96.
+
+## Dead-end pruning
+
+`cargo bench -p atomik-render --bench render_batch -- dead-end`: 256 batches through the engine, twenty poly synths
+that each hold a note and are cabled to nothing, beside one poly synth that feeds the interface; the routing is
+compiled as the app compiles it, with the dead ends kept in the plan (`prune-off`) and left out of it (`prune-on`).
+One pair, release build, this machine.
+
+| Row | Median | p99 |
+| --- | --- | --- |
+| `dead-end/poly-synth-x20/prune-off` | 11.44 ms | 12.06 ms |
+| `dead-end/poly-synth-x20/prune-on` | 0.615 ms | 0.623 ms |
+
+The pruned plan runs the one live synth, so the row is about the cost of one synth (0.6 ms for 256 batches) and a
+rack of devices that nothing hears costs nothing. That is the best case: the example projects hardly have such
+devices. Counted with the same rule (`crates/render/tests/dead_end_pruning.rs`, `--nocapture`): the eleven example
+projects that build without plugins have 2 dead ends in 88 devices (two note splitters in the container demo); the
+stress projects the benches use have 55 in 458, all in the 100-device rack scenario (poly synths and line mixers)
+and none in the song, console, lanes and large-song scenarios; the 41 projects of the format corpus that build
+have 5 in 248. By type: poly synth 38, line mixer 20, note splitter 3, sampler 1. Every built-in effect and about
+half of the instruments publish values (`has_meter_values`) and are never left out; 26 of the 73 device types can be.

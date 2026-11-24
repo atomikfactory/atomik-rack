@@ -108,6 +108,12 @@ pub struct BuildOptions {
     /// every other device gets the id, and so the prepare seed, it would have had without them;
     /// an omitted device is never processed.
     pub omit: Vec<String>,
+    /// Leave out the devices whose output reaches nothing ([`Graph::set_prune_dead_ends`]; off by
+    /// default, on for a project render, which gives the same samples either way).
+    pub prune_dead_ends: bool,
+    /// Patch device ids something outside the graph observes ([`Graph::pin`]), so the pruning keeps
+    /// them: the devices a note tap reads.
+    pub pinned: Vec<String>,
 }
 
 impl Default for BuildOptions {
@@ -120,6 +126,8 @@ impl Default for BuildOptions {
             samples: Vec::new(),
             player_data: Vec::new(),
             omit: Vec::new(),
+            prune_dead_ends: false,
+            pinned: Vec::new(),
         }
     }
 }
@@ -184,6 +192,7 @@ pub fn build_with_devices(
     } = b;
     graph.set_compensation(options.compensation);
     graph.set_align_inputs(options.align_inputs);
+    graph.set_prune_dead_ends(options.prune_dead_ends);
     let topology = graph.topology();
     let plan = graph
         .compile()
@@ -300,6 +309,13 @@ impl<'p> Builder<'p> {
             let id = self.device(device, &path)?;
             self.graph
                 .set_device_samples(id, Some(std::sync::Arc::clone(map)))
+                .map_err(|e| err(&path, BuildErrorKind::Graph(e), e))?;
+        }
+        for (i, device) in options.pinned.iter().enumerate() {
+            let path = path.field("pinned").index(i);
+            let id = self.device(device, &path)?;
+            self.graph
+                .pin(id)
                 .map_err(|e| err(&path, BuildErrorKind::Graph(e), e))?;
         }
         for (i, (device, data)) in options.player_data.iter().enumerate() {

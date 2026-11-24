@@ -8237,6 +8237,28 @@ A bug in a device must cost that device, not the session. The rules:
   ([idle_stereo_delay.rs](../crates/render/tests/idle_stereo_delay.rs),
   [idle_effects.rs](../crates/render/tests/idle_effects.rs),
   [idle_instruments.rs](../crates/render/tests/idle_instruments.rs)).
+- **A device whose output reaches nothing is not run** ([prune.rs](../crates/engine/src/prune.rs),
+  [plan.rs](../crates/engine/src/plan.rs) `compile_routing`). When a compile is asked to prune
+  (`Topology::set_prune_dead_ends`, `Graph::set_prune_dead_ends`; the live session and a project bounce ask, a plain
+  `Graph::compile` does not), a device is live if a cable reaches the interface from it, if one of its outputs is
+  metered, or if it is pinned (`Topology::pin`, `Graph::pin`): the devices that publish something themselves
+  (`has_meter_values`, `scope_tap`, `midi_tap`, a changing latency, pinned to the audio thread: a plugin device and every
+  built-in effect among them), the device a note tap reads and the device a record tap resamples an output of
+  (`EngineHandle::fill_latencies` pins them from what the handle knows). Everything a live device reads through any
+  cable (audio, CV, notes, sidechain, key) is live too. Every other device is left out: it is in no step and no
+  level, has no cost, and stays in the arena with its parameters (`RoutingPlan::pruned`). A cable from a live device
+  to a device that was left out is dropped from the routes, but the live device is still told its output is
+  connected, so it computes what it computed before. Notes for a device that was left out are taken and discarded
+  (not counted as dropped); parameter changes still reach it. A tap that starts on a device that was left out moves
+  the latency epoch, so the app compiles the routing again and the device runs. **When a device that was left
+  out runs again** (`RoutingPlan::install`, on the audio thread, before its first batch): if it had run before it was
+  left out, its `Device::reset` is called (real-time safe by contract: it clears the audio state and keeps the
+  parameters), and its cost is forgotten so the first batch is timed again like a new device's. A device that never
+  ran is not reset. This is the one visible change: a device that was uncabled and is cabled again starts from
+  silence (a free-running LFO restarts, a tail is gone) instead of having run all along. The rule is a pure function
+  of the devices, cables, meters and pins, so live, offline and any worker count leave out the same devices;
+  `without_pruning` is the test-only switch.
+  [dead_end_pruning.rs](../crates/engine/tests/dead_end_pruning.rs) holds the rule's tests.
 - `catch_unwind` costs nothing while nothing panics, so HI-1 holds. The panic path allocates (the
   payload, the default hook's message); it runs once per faulted device and is a documented
   exception. The panic hook ([§6n](#6n-logs-crash-reports-and-diagnostics)) does no file I/O on the

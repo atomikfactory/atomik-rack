@@ -496,6 +496,12 @@ impl Latencies {
         }
     }
 
+    /// Moves the epoch without a latency change: the routing wants compiling again (a device a tap
+    /// reads was left out of it).
+    pub(crate) fn bump(&self) {
+        self.epoch.fetch_add(1, Ordering::AcqRel);
+    }
+
     /// The latency last published for `slot`.
     pub(crate) fn get(&self, slot: usize) -> u32 {
         self.slots

@@ -117,6 +117,13 @@ pub trait EngineSink {
     /// [`atomik_engine::EngineHandle::fill_latencies`]: copies the engine's
     /// `Device::latency_frames()` into `topology` before a compile.
     fn fill_latencies(&self, _topology: &mut Topology) {}
+    /// Whether the engine leaves out the devices whose output reaches nothing
+    /// ([`atomik_engine::Topology::set_prune_dead_ends`]). The live session does; the fakes and the
+    /// test sinks run every device, so what a test records or reads from a device that is not cabled
+    /// stays as it was. The default is false.
+    fn prunes_dead_ends(&self) -> bool {
+        false
+    }
     /// [`atomik_engine::Meters::read`]: reads (and resets the peak of) a metered
     /// output; `None` when it is not metered or no engine runs. Lock-free.
     fn read_meter(&self, _endpoint: Endpoint) -> Option<MeterReading> {

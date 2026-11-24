@@ -18,6 +18,9 @@
 //! The `idle` rows (`idle/stereo-delay-x20/skip-off` and `skip-on`, and one pair for each other effect or
 //! instrument that can be skipped) render 256 batches of twenty silent devices through the engine with
 //! the idle skip off and on; only the render loop is timed.
+//! The `dead-end` row (`dead-end/poly-synth-x20/prune-off` and `prune-on`) renders 256 batches of twenty
+//! playing synths cabled to nothing beside one synth that feeds the interface, with the dead ends kept in
+//! the plan and left out of it.
 #![allow(
     clippy::disallowed_methods,
     reason = "wall-clock timing is the point of a benchmark"
@@ -122,6 +125,68 @@ fn idle_engine(type_id: &str, skip: bool) -> (atomik_engine::Engine, atomik_engi
     (engine, handle)
 }
 
+/// Synths that play into nothing in the dead-end rows.
+const DEAD_ENDS: usize = 20;
+
+/// The engine of the dead-end rows: one poly synth that feeds the interface and `DEAD_ENDS` more
+/// that are cabled to nothing, every one holding a note, routed as the app routes it (a topology
+/// that leaves the dead ends out when `prune` is on), rendered once so each is past its first batch.
+fn dead_end_engine(prune: bool) -> (atomik_engine::Engine, atomik_engine::EngineHandle) {
+    use atomik_core::{NoteKind, SampleRate, Tempo};
+    use atomik_engine::{DeviceInstanceId, Endpoint, EngineConfig, Graph, ScheduledNote, Topology};
+    let config = EngineConfig {
+        sample_rate: SampleRate::new(48_000.0).expect("rate"),
+        tempo: Tempo::new(120.0).expect("tempo"),
+        input_channels: 0,
+        output_channels: 2,
+        seed: 1,
+    };
+    let registry = default_registry();
+    let (engine, mut handle) = atomik_engine::new_engine(config);
+    let mut topology = Topology::new(&config);
+    topology.set_prune_dead_ends(prune);
+    for n in 1..=DEAD_ENDS as u32 + 1 {
+        let id = DeviceInstanceId(n);
+        let device = registry.create("atomik.poly-synth").expect("registered");
+        let descriptor = device.descriptor();
+        topology.add_node(id, descriptor).expect("a new id");
+        handle.insert_device(id, device, &[]).expect("inserted");
+        let notes_in = descriptor.socket_by_key("notes_in").expect("notes_in").id;
+        handle
+            .send_note(ScheduledNote {
+                frame: 0,
+                device: id,
+                socket: notes_in,
+                kind: NoteKind::On {
+                    key: 48 + (n % 12) as u8,
+                    velocity: 0.8,
+                },
+            })
+            .expect("queued");
+    }
+    let live = DeviceInstanceId(1);
+    let live_out = topology.descriptor(live).expect("node");
+    for (side, out) in [("out_l", "out_1"), ("out_r", "out_2")] {
+        let from = Endpoint {
+            device: live,
+            socket: live_out.socket_by_key(side).expect("output").id,
+        };
+        let interface = topology.descriptor(Graph::INTERFACE).expect("interface");
+        let to = Endpoint {
+            device: Graph::INTERFACE,
+            socket: interface.socket_by_key(out).expect("host output").id,
+        };
+        topology.connect(from, to).expect("cabled");
+    }
+    handle.fill_latencies(&mut topology);
+    handle
+        .submit_routing(topology.compile().expect("compiles"))
+        .expect("queued");
+    let mut engine = engine;
+    render_idle(&mut engine);
+    (engine, handle)
+}
+
 /// One timed run of the idle rows.
 fn render_idle(engine: &mut atomik_engine::Engine) -> usize {
     let (mut left, mut right) = (vec![0.0f32; 64], vec![0.0f32; 64]);
@@ -171,6 +236,11 @@ fn main() {
                 println!("idle {type_id} skip {skip}: once {secs:.3} s");
             }
         }
+        for prune in [false, true] {
+            let (mut engine, _handle) = dead_end_engine(prune);
+            let secs = time_once(|| render_idle(&mut engine));
+            println!("dead-end prune {prune}: once {secs:.3} s");
+        }
         return;
     }
     let full = std::env::var_os("ATOMIK_BENCH_FULL").is_some();
@@ -210,6 +280,18 @@ fn main() {
             });
             rec.report(&id);
         }
+    }
+    for prune in [false, true] {
+        let id = format!(
+            "dead-end/poly-synth-x{DEAD_ENDS}/prune-{}",
+            if prune { "on" } else { "off" }
+        );
+        let (mut engine, _handle) = dead_end_engine(prune);
+        let rec = Recorder::new();
+        c.bench_function(&id, |bench| {
+            bench.iter_custom(rec.runner(|| render_idle(&mut engine)));
+        });
+        rec.report(&id);
     }
     c.final_summary();
 }

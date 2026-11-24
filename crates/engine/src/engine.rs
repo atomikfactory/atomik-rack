@@ -364,8 +364,15 @@ struct Mirror {
     free: BTreeSet<usize>,
     /// Slots `next_unused..capacity` have never been used since the last plan.
     next_unused: usize,
-    /// Devices referenced by the latest queued routing or plan.
+    /// Devices run by the latest queued routing or plan.
     routed: BTreeSet<DeviceInstanceId>,
+    /// Devices the latest queued routing or plan leaves out as dead ends (see [`crate::prune`]).
+    pruned: BTreeSet<DeviceInstanceId>,
+    /// Devices that publish something themselves, read when they were inserted.
+    observed: BTreeSet<DeviceInstanceId>,
+    /// Devices with a note tap, and devices a record tap reads an output of.
+    tapped: BTreeSet<DeviceInstanceId>,
+    sourced: BTreeSet<DeviceInstanceId>,
 }
 
 impl Mirror {
@@ -376,6 +383,10 @@ impl Mirror {
             free: BTreeSet::new(),
             next_unused: 0,
             routed: BTreeSet::new(),
+            pruned: BTreeSet::new(),
+            observed: BTreeSet::new(),
+            tapped: BTreeSet::new(),
+            sourced: BTreeSet::new(),
         }
     }
 
@@ -716,21 +727,38 @@ impl EngineHandle {
                 self.meters.register_midi(routed.id, tap);
             }
         }
-        let devices: BTreeMap<_, _> = routing
+        let mut devices: BTreeMap<_, _> = routing
             .devices
             .iter()
             .map(|d| (d.id, (d.slot, d.descriptor)))
             .collect();
         let routed = devices.keys().copied().collect();
+        let pruned: BTreeSet<DeviceInstanceId> = routing.pruned.iter().map(|p| p.id).collect();
+        let observed = routing
+            .devices
+            .iter()
+            .map(|d| d.id)
+            .chain(routing.pruned.iter().map(|p| p.id))
+            .zip(&nodes)
+            .filter(|(_, node)| crate::prune::observed(node.device.as_ref()))
+            .map(|(id, _)| id)
+            .collect();
+        for p in &routing.pruned {
+            devices.insert(p.id, (p.slot, nodes[p.slot].device.descriptor()));
+        }
         let swap = PlanSwap {
             arena: Arena::from_plan(capacity, &routing, nodes),
             routing: Some(Box::new(routing)),
         };
         self.push(0, ControlOp::Plan(Box::new(swap)))?;
+        let sourced = std::mem::take(&mut self.mirror.sourced);
         self.mirror = Mirror {
             next_unused: devices.len(),
             devices,
             routed,
+            pruned,
+            observed,
+            sourced,
             ..Mirror::new(capacity)
         };
         Ok(())
@@ -1030,6 +1058,7 @@ impl EngineHandle {
     ) -> Result<RecordTap, EngineError> {
         let (rt, tap) = crate::record::new_tap(channels, capacity_frames);
         self.push(0, ControlOp::Tap(Some(rt)))?;
+        self.mirror.sourced.clear();
         Ok(tap)
     }
 
@@ -1048,6 +1077,11 @@ impl EngineHandle {
     ) -> Result<RecordTap, EngineError> {
         let (rt, tap) = crate::record::new_gained_tap(channels, controls, capacity_frames);
         self.push(0, ControlOp::Tap(Some(rt)))?;
+        self.mirror.sourced = channels
+            .iter()
+            .filter_map(|c| c.source.map(|(d, _)| d))
+            .collect();
+        self.repin_if_pruned(self.mirror.sourced.iter().copied());
         Ok(tap)
     }
 
@@ -1070,6 +1104,8 @@ impl EngineHandle {
                 tap: Some(tap.clone()),
             },
         )?;
+        self.mirror.tapped.insert(id);
+        self.repin_if_pruned([id]);
         Ok(tap)
     }
 
@@ -1091,7 +1127,9 @@ impl EngineHandle {
     /// # Errors
     /// [`EngineError::QueueFull`].
     pub fn untap_notes(&mut self, id: DeviceInstanceId) -> Result<(), EngineError> {
-        self.push(0, ControlOp::NoteTap { id, tap: None })
+        self.push(0, ControlOp::NoteTap { id, tap: None })?;
+        self.mirror.tapped.remove(&id);
+        Ok(())
     }
 
     /// Stops the record tap at the next batch boundary (the engine hands it back). Frames
@@ -1100,7 +1138,9 @@ impl EngineHandle {
     /// # Errors
     /// [`EngineError::QueueFull`].
     pub fn stop_record_tap(&mut self) -> Result<(), EngineError> {
-        self.push(0, ControlOp::Tap(None))
+        self.push(0, ControlOp::Tap(None))?;
+        self.mirror.sourced.clear();
+        Ok(())
     }
 
     /// Hands `map` (or, with `None`, no map) to arena device `id` through the control queue:
@@ -1246,7 +1286,9 @@ impl EngineHandle {
     }
 
     /// Copies [`EngineHandle::device_latency`] into every node of `topology` that is in the
-    /// arena; call it before `Topology::compile`.
+    /// arena, and pins the devices something observes (they publish meters, a scope or MIDI tap,
+    /// a changing latency, a tap reads them; see `Topology::set_pinned`: the pins it set
+    /// before are replaced); call it before `Topology::compile`.
     pub fn fill_latencies(&self, topology: &mut crate::Topology) {
         let ids: Vec<_> = topology.node_ids().collect();
         for id in ids {
@@ -1254,6 +1296,14 @@ impl EngineHandle {
                 let _ = topology.set_latency(id, frames);
             }
         }
+        topology.set_pinned(
+            self.mirror
+                .observed
+                .iter()
+                .chain(&self.mirror.tapped)
+                .chain(&self.mirror.sourced)
+                .copied(),
+        );
     }
 
     /// The latest published transport state (lock-free; never blocks the engine). Published
@@ -1333,6 +1383,15 @@ impl EngineHandle {
         self.dropped.load(Ordering::Relaxed)
     }
 
+    /// A tap now reads one of `ids`, which the routing in force left out as a dead end: moves the
+    /// latency epoch, so the caller compiles the routing again (with [`Self::fill_latencies`]) and
+    /// the device runs. The tap sees nothing until that routing is applied.
+    fn repin_if_pruned(&self, ids: impl IntoIterator<Item = DeviceInstanceId>) {
+        if ids.into_iter().any(|id| self.mirror.pruned.contains(&id)) {
+            self.latencies.bump();
+        }
+    }
+
     fn push(&mut self, frame: u64, op: ControlOp) -> Result<(), EngineError> {
         // On failure the message (and anything it owns) is dropped here, on the non-RT thread.
         self.control_tx
@@ -1374,6 +1433,7 @@ impl EngineHandle {
             }
         }
         let latency = device.latency_frames();
+        let observed = crate::prune::observed(device.as_ref());
         if let Some(tap) = device.scope_tap() {
             self.meters.register_scope(id, tap);
         }
@@ -1385,6 +1445,9 @@ impl EngineHandle {
         self.latencies.publish(slot, latency);
         self.mirror.take(slot);
         self.mirror.devices.insert(id, (slot, descriptor));
+        if observed {
+            self.mirror.observed.insert(id);
+        }
         Ok(())
     }
 
@@ -1401,6 +1464,9 @@ impl EngineHandle {
         self.meters.unregister_scope(id);
         self.meters.unregister_midi(id);
         self.mirror.devices.remove(&id);
+        self.mirror.observed.remove(&id);
+        self.mirror.tapped.remove(&id);
+        self.mirror.pruned.remove(&id);
         self.mirror.free.insert(slot);
         Ok(())
     }
@@ -1420,9 +1486,19 @@ impl EngineHandle {
             }
             d.slot = slot;
         }
+        for p in &mut plan.pruned {
+            p.slot = self
+                .mirror
+                .devices
+                .get(&p.id)
+                .ok_or(EngineError::UnknownDevice)?
+                .0;
+        }
         let routed = plan.order.iter().copied().collect();
+        let pruned = plan.pruned.iter().map(|p| p.id).collect();
         self.push(frame, ControlOp::Routing(Box::new(plan)))?;
         self.mirror.routed = routed;
+        self.mirror.pruned = pruned;
         Ok(())
     }
 }
@@ -1559,6 +1635,15 @@ impl Engine {
     pub fn idle_skipped(&self, id: DeviceInstanceId) -> Option<u64> {
         let slot = self.arena.slot_of(id)?;
         self.arena.nodes.get(slot)?.as_deref().map(|n| n.skipped)
+    }
+
+    /// The devices the routing in force leaves out because their output reaches nothing (test
+    /// hook; not a stable API), ascending.
+    #[doc(hidden)]
+    pub fn pruned_devices(&self) -> Vec<DeviceInstanceId> {
+        self.routing
+            .as_ref()
+            .map_or_else(Vec::new, |r| r.pruned_devices())
     }
 
     /// Whether the load rule holds the plan busy now (test hook; not a stable API).

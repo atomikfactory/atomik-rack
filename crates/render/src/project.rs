@@ -830,6 +830,8 @@ pub fn console_options(doc: &RackDoc, registry: &Registry) -> BuildOptions {
         samples: Vec::new(),
         player_data: Vec::new(),
         omit: Vec::new(),
+        prune_dead_ends: false,
+        pinned: Vec::new(),
     }
 }
 
@@ -1145,6 +1147,15 @@ pub(crate) fn render_core(
         .iter()
         .filter(|d| d.frozen)
         .map(|d| patch_id(d.key.0.clone()))
+        .collect();
+    // A device whose output reaches nothing is not run (the samples are the same: nothing hears
+    // it); the devices a note tap reads are kept.
+    build_options.prune_dead_ends = true;
+    build_options.pinned = extra
+        .note_taps
+        .iter()
+        .map(|key| patch_id(key.0.clone()))
+        .filter(|id| !build_options.omit.contains(id))
         .collect();
     let (maps, sampler_warnings) = sampler_maps(&expanded, registry, &assets);
     build_options.samples = maps.into_iter().map(|(k, m)| (patch_id(k), m)).collect();
