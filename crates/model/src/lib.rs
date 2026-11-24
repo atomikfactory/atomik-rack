@@ -2673,6 +2673,16 @@ impl RackDoc {
         })
     }
 
+    /// The asset ids the devices' sampler zones reference, containers included. Zones play from
+    /// RAM, so the app keeps these assets out of its streaming decisions.
+    pub fn zone_assets(&self) -> BTreeSet<String> {
+        let mut zones = BTreeSet::new();
+        for d in &self.devices {
+            container::collect_device_assets(d, &mut zones);
+        }
+        zones
+    }
+
     /// The asset ids the song's audio clips and the devices' zones reference (clips on every
     /// audio lane, muted or not). The app uses it to find orphaned files in the bundle; see also
     /// [`Document::referenced_assets`], which includes the undo history.
