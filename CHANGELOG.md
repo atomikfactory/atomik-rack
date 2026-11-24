@@ -278,6 +278,10 @@ may break APIs and the patch and project formats.
   when the value already is the target (compared by bits, finite), which is exactly what the step would leave. The
   guitar amp, which steps three of them for every sample, is about 15 % cheaper per batch (about 10.9 to 9.3 ms per
   256 batches), with no output bit changed.
+- **The wavetable synth looks up its tables once per control step, not per sample.** The stored cycles of the two
+  oscillators (current and fading-out table) were resolved for every sample of a voice; they only change when a
+  voice takes a new table or starts, so they are now resolved there. The chord row is about 6 % cheaper per batch
+  (about 4.6 to 4.3 ms per 256 batches), with the same slices and so the same bits.
 
 ### Fixed
 - **Dropping an instrument above its mix channel.** An instrument dragged to the place above its own mix channel

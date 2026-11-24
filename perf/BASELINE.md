@@ -739,3 +739,13 @@ control sits on its target nearly all the time.
 |---|---|---|
 | guitar-amp | 10.971 ms, 10.935 ms | 9.321 ms, 9.298 ms (-15 %) |
 | eq (the other user, steps per block) | 880.0 us, 887.3 us | 872.8 us, 872.9 us (did not move, slowed nothing) |
+
+**The wavetable synth resolves its tables once per control step.** `table_data` was called for the current and the old
+table of both oscillators for every sample of a voice. `table` and `old_table` are written only in `control` (every
+control interval, when the selected table changes) and in `start`, so the slices are looked up again after those two
+and held in between. They are the same slices, so the output is the same.
+
+| row | before, runs | after, runs |
+|---|---|---|
+| wavetable-synth, chord | 4.637 ms, 4.540 ms | 4.274 ms, 4.371 ms (-6 %) |
+| wavetable-synth, idle | 1.334 ms, 1.328 ms | 1.395 ms, 1.331 ms (did not move) |
