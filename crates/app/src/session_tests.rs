@@ -1119,6 +1119,82 @@ fn input_overruns_and_stalled_control_pushes_reach_the_overload_counters() {
     );
 }
 
+/// Renders one block of silence through the session's engine (the fake stream owns it).
+fn render_block(s: &mut LiveSession<&Fake>) {
+    let r = s.running.as_mut().expect("a running engine");
+    let (mut left, mut right) = (vec![0.0f32; 256], vec![0.0f32; 256]);
+    r.stream.engine.render(&[], &mut [&mut left, &mut right]);
+}
+
+#[test]
+fn a_value_the_full_queue_refused_is_sent_again_by_the_next_poll() {
+    use atomik_testkit::fakes::{ParamLog, ParamLogEntry};
+    let fake = Fake::default();
+    let mut s = LiveSession::new(&fake, settings(), true);
+    s.reset(&config(48_000.0));
+    let id = DeviceInstanceId(1);
+    let (device, log) = ParamLog::boxed(100_000);
+    s.insert_device(id, device, &[]).unwrap();
+    render_block(&mut s);
+    // Fill the queue with one knob's drag, then one more value of it and a value of another
+    // parameter: both are refused.
+    let mut pushed = 0u32;
+    while s.set_param(id, ParamLog::A, 0.1) == Ok(()) {
+        pushed += 1;
+        assert!(pushed < 1_000_000, "the queue fills up");
+    }
+    assert_eq!(
+        s.set_param(id, ParamLog::A, 0.7),
+        Err(EngineError::QueueFull)
+    );
+    assert_eq!(
+        s.set_param(id, ParamLog::A, 0.9),
+        Err(EngineError::QueueFull)
+    );
+    assert_eq!(
+        s.set_param(id, ParamLog::B, -3.0),
+        Err(EngineError::QueueFull)
+    );
+    // The engine takes the queue empty; the next poll sends what was refused: the newest value
+    // of each parameter, not the one in between.
+    render_block(&mut s);
+    s.poll();
+    render_block(&mut s);
+    let sets: Vec<_> = log
+        .entries()
+        .into_iter()
+        .filter_map(|e| match e {
+            ParamLogEntry::Set(p, v) => Some((p, v)),
+            ParamLogEntry::Process(_) => None,
+        })
+        .collect();
+    assert_eq!(
+        sets.last(),
+        Some(&(ParamLog::B, -3.0)),
+        "{:?}",
+        &sets[sets.len() - 3..]
+    );
+    let last_a = sets.iter().rev().find(|(p, _)| *p == ParamLog::A).unwrap();
+    assert_eq!(last_a.1.to_bits(), 0.9f32.to_bits());
+    assert!(
+        !sets
+            .iter()
+            .any(|&(p, v)| p == ParamLog::A && v.to_bits() == 0.7f32.to_bits()),
+        "a value that a newer one replaced is not sent"
+    );
+    // Nothing is left waiting: another poll sends nothing more.
+    let before = log.entries().len();
+    s.poll();
+    render_block(&mut s);
+    let after = log.entries();
+    assert!(
+        after[before..]
+            .iter()
+            .all(|e| matches!(e, ParamLogEntry::Process(_))),
+        "nothing is sent twice"
+    );
+}
+
 #[test]
 fn a_configuration_that_does_not_open_falls_back_to_the_last_working_one() {
     let fake = Fake::default();

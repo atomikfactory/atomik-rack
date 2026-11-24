@@ -1951,7 +1951,9 @@ impl Engine {
     /// Applies every queued param message to the arena devices.
     fn apply_params(&mut self) {
         while let Ok(msg) = self.param_rx.pop() {
-            self.player.invalidate_lanes();
+            // Only a lane on this very parameter can be out of date now: the others keep what
+            // they applied.
+            self.player.invalidate_param(msg.device, msg.param);
             self.arena.set_param(msg.device, msg.param, msg.plain);
         }
     }

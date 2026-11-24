@@ -3190,7 +3190,11 @@ They share only wait-free single-producer/single-consumer ring buffers (`rtrb`),
 | preview ring | decoder → engine | interleaved stereo `f32` frames of the file being previewed (one ring per preview) | `PREVIEW_RING_FRAMES` = 65 536 frames |
 | atomics | engine → everyone | dropped events, stream underruns, meters, latencies, the transport state (a seqlock cell) | – |
 
-A full queue makes the handle method return `EngineError::QueueFull`; the engine never waits. Live
+A full queue makes the handle method return `EngineError::QueueFull`; the engine never waits. The live
+session keeps the newest value of each parameter that was refused and sends it again on its next poll,
+so the end of a drag is not lost. A parameter message makes the song player apply again only the
+automation lanes of that device and parameter; any other control message or transport command still
+makes it apply every lane. Live
 audio adds `atomik-audio-io`: the callback publishes `(engine host frame, instant)` through a
 `FrameClock` (so MIDI can be mapped to an exact frame) and counts xruns and DSP load. cpal has no
 duplex stream, so captured samples reach the render callback through a wait-free ring.

@@ -828,9 +828,23 @@ impl Player {
     }
 
     /// Makes the next playing batch apply every automation lane, even where the value did not
-    /// change (the engine calls it whenever it applied a parameter or any control message).
+    /// change (the engine calls it for any control message and transport command).
     pub(crate) fn invalidate_lanes(&mut self) {
         self.lanes_dirty = true;
+    }
+
+    /// Makes the next playing batch apply the lanes that automate `(device, param)` (the engine
+    /// calls it for each parameter message, which changes that one parameter and nothing else);
+    /// the other lanes keep the value they last applied.
+    pub(crate) fn invalidate_param(&mut self, device: DeviceInstanceId, param: ParamId) {
+        let Some(song) = self.song.as_deref_mut() else {
+            return;
+        };
+        for (lane, last) in song.lanes.iter().zip(song.lane_last.iter_mut()) {
+            if lane.device == device && lane.param == param {
+                *last = None;
+            }
+        }
     }
 
     /// Whether devices see `TimeInfo::playing` (always true without a song, as before).

@@ -357,6 +357,10 @@ pub struct LiveSession<B: AudioBackend> {
     input_trims_logged: u64,
     /// A tap stop the full control queue refused; retried on the next poll.
     stop_tap_pending: bool,
+    /// The newest value of each parameter the full control queue refused, sent again by the
+    /// next poll (a drag whose last value found the queue full still ends on it). Lives on the
+    /// UI thread: nothing of it is on the audio path.
+    held_params: BTreeMap<(DeviceInstanceId, ParamId), f32>,
     /// A message for the user that the next [`Self::take_notice`] hands out.
     notice: Option<String>,
     /// The port each MIDI Out device chose (by engine device id); a device that has none uses
@@ -421,6 +425,7 @@ impl<B: AudioBackend> LiveSession<B> {
             stalled_batches: 0,
             input_trims_logged: 0,
             stop_tap_pending: false,
+            held_params: BTreeMap::new(),
             notice: None,
             out_ports: BTreeMap::new(),
             clock_error: None,
@@ -602,6 +607,7 @@ impl<B: AudioBackend> LiveSession<B> {
                 self.stop_tap_pending = false;
             }
         }
+        self.resend_held_params();
         self.poll_sync(at);
         self.watch_preferred(at);
         // Pushes that found the engine's queue full, and control messages (MIDI to
@@ -613,8 +619,26 @@ impl<B: AudioBackend> LiveSession<B> {
         &self.status
     }
 
+    /// Sends again the parameter values the full control queue refused, newest per parameter,
+    /// until the queue is full once more. The retry is not a new stall: the push that failed
+    /// was counted when it failed.
+    fn resend_held_params(&mut self) {
+        let Some(r) = &mut self.running else {
+            self.held_params.clear();
+            return;
+        };
+        while let Some((&(id, param), &plain)) = self.held_params.first_key_value() {
+            if r.handle.set_param(id, param, plain).is_err() {
+                break;
+            }
+            self.held_params.remove(&(id, param));
+        }
+    }
+
     /// Stops MIDI and the stream and drops the engine on this thread.
     pub fn shutdown(&mut self) {
+        // The values were meant for the engine that is going away.
+        self.held_params.clear();
         // The next engine starts with no preview clock on any device.
         self.previewing.clear();
         if let Some(r) = self.running.take() {
@@ -1241,10 +1265,24 @@ impl<B: AudioBackend> EngineSink for LiveSession<B> {
         plain: f32,
     ) -> Result<(), EngineError> {
         match &mut self.running {
-            Some(r) => counted(
-                &mut self.control_stalled,
-                r.handle.set_param(id, param, plain),
-            ),
+            Some(r) => {
+                let result = counted(
+                    &mut self.control_stalled,
+                    r.handle.set_param(id, param, plain),
+                );
+                match result {
+                    // A refused value waits for the next poll (the newest one per parameter);
+                    // one that went through makes an older waiting value of its own stale.
+                    Err(EngineError::QueueFull) => {
+                        self.held_params.insert((id, param), plain);
+                    }
+                    Ok(()) => {
+                        self.held_params.remove(&(id, param));
+                    }
+                    Err(_) => {}
+                }
+                result
+            }
             None => Ok(()),
         }
     }

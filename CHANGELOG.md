@@ -52,6 +52,9 @@ may break APIs and the patch and project formats.
 - **Scratch folders left by crashed runs are swept.** At start, a background thread removes the
   `atomik-rack-session-*` folders in the temp folder whose session is gone, that nothing has touched for 14 days and
   that no recovery copy points at; a folder it cannot be sure about is kept. One log line says how many and how much.
+- **A knob turned while a song plays re-applies only the automation of that knob.** Any control message used to make
+  every automation lane write its value again at the next batch; now only the lanes of that device and parameter do.
+  Rendered audio does not change.
 
 ### Fixed
 - **Exporting a patch, a MIDI file or MIDI mappings, a tab or chord sheet, the device list or the diagnostics report
@@ -60,6 +63,8 @@ may break APIs and the patch and project formats.
 - **A contained panic on an unnamed audio thread no longer writes a file on that thread.** Some audio backends run the
   callback on a thread with no name, which the crash hook could not recognise; every stream callback now marks its
   thread.
+- **The last value of a drag is no longer dropped when the engine's parameter queue is full.** The newest refused
+  value of each parameter is sent again on the next poll.
 
 ## [0.5.0-rc.2] - 2026-11-24
 
