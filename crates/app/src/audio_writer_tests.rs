@@ -1,7 +1,7 @@
 //! Writer thread tests with a real engine tap (offline engine, scripted input; no devices).
 
 use super::*;
-use crate::audio_record::{TrackInput, plan_tap};
+use crate::audio_record::{PlannedTrack, TrackInput, plan_tap};
 use atomik_core::{SampleRate, Tempo, Ticks};
 use atomik_engine::{EngineConfig, new_engine};
 use std::sync::mpsc::Receiver;
@@ -542,4 +542,246 @@ fn another_write_error_gives_its_own_text() {
     assert!(write_reason(&e).contains("the device went away"));
     let full = hound::Error::IoError(std::io::ErrorKind::StorageFull.into());
     assert_eq!(write_reason(&full), "the disk is full");
+}
+
+// The memory tests below measure the heap the writer thread's work holds at once.
+atomik_testkit::install_alloc_guard!();
+
+/// The signal of a long in-progress file: finite, with a negative zero in it.
+fn long_sample(c: usize, f: u64) -> f32 {
+    match f % 997 {
+        0 => -0.0,
+        n => (n as f32 + c as f32 * 3.0) / 500.0 - 1.0,
+    }
+}
+
+/// Writes an in-progress file of `channels` x `frames` of [`long_sample`].
+fn write_partial(path: &std::path::Path, channels: usize, frames: u64) {
+    let spec = hound::WavSpec {
+        channels: channels as u16,
+        sample_rate: 48_000,
+        bits_per_sample: 32,
+        sample_format: hound::SampleFormat::Float,
+    };
+    let mut w = hound::WavWriter::create(path, spec).unwrap();
+    for f in 0..frames {
+        for c in 0..channels {
+            w.write_sample(long_sample(c, f)).unwrap();
+        }
+    }
+    w.finalize().unwrap();
+}
+
+/// A config of two tracks, one stereo and one of six channels, with the in-progress files
+/// written into the bundle.
+fn long_config(bundle: &Bundle, frames: u64, threshold: u64) -> WriterConfig {
+    let shapes = [("stereo", 2usize), ("six", 6)];
+    let tracks = shapes
+        .iter()
+        .enumerate()
+        .map(|(n, (name, channels))| {
+            let path = bundle.audio_dir().join(format!("rec-4242-30-{n}.wav"));
+            write_partial(&path, *channels, frames);
+            WriterTrack {
+                planned: PlannedTrack {
+                    device: key(name),
+                    input: TrackInput::Mono(0),
+                    tap_index: (0..*channels).collect(),
+                },
+                name: (*name).to_owned(),
+                path,
+            }
+        })
+        .collect();
+    WriterConfig {
+        tracks,
+        bundle: bundle.clone(),
+        sample_rate: 48_000,
+        stream: threshold.into(),
+        generation: 7,
+        take: 30,
+    }
+}
+
+fn long_finish(position: Box<dyn Fn(u64) -> SongPosition + Send>) -> FinishInfo {
+    FinishInfo {
+        end_engine_frame: u64::MAX,
+        compensation: 0,
+        valid_from: 0,
+        position,
+    }
+}
+
+fn names_in(dir: &std::path::Path) -> Vec<String> {
+    let mut names: Vec<String> = std::fs::read_dir(dir)
+        .unwrap()
+        .flatten()
+        .filter(|e| e.path().is_file())
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .collect();
+    names.sort();
+    names
+}
+
+#[test]
+fn a_streamed_long_take_stores_the_same_assets_in_bounded_memory() {
+    const FRAMES: u64 = 1_000_000;
+    const LAP: u64 = 300_000;
+    // Both takes are the same files; one is kept in memory (the reference: every lap is read back
+    // whole and stored from memory), the other streams (block by block).
+    let mut results = Vec::new();
+    for (name, threshold) in [("long-memory", u64::MAX), ("long-stream", 0)] {
+        let bundle = temp_bundle(name);
+        let config = long_config(&bundle, FRAMES, threshold);
+        let finish = long_finish(looping(0, LAP));
+        let (laps, peak) = atomik_testkit::no_alloc::peak_heap_of(|| {
+            store_laps(&config, 0, FRAMES, &finish, Faults::default())
+                .ok()
+                .unwrap()
+        });
+        results.push((bundle, laps, peak));
+    }
+    let (memory_bundle, memory_laps, memory_peak) = &results[0];
+    let (stream_bundle, stream_laps, stream_peak) = &results[1];
+    // 2 tracks x 4 laps (three of 300 000 frames, one of 100 000).
+    assert_eq!(memory_laps.len(), 8);
+    assert_eq!(stream_laps.len(), 8);
+    for (m, s) in memory_laps.iter().zip(stream_laps) {
+        assert_eq!(
+            (&m.device, m.lap, m.song_frame),
+            (&s.device, s.lap, s.song_frame)
+        );
+        assert_eq!(m.info, s.info, "same hash, frames and name");
+        assert_eq!(*m.peaks, *s.peaks, "same peaks");
+        assert_eq!(
+            std::fs::read(memory_bundle.asset_path(&m.info.hash)).unwrap(),
+            std::fs::read(stream_bundle.asset_path(&s.info.hash)).unwrap(),
+            "same file bytes"
+        );
+        assert_eq!(
+            std::fs::read(memory_bundle.peaks_path(&m.info.hash)).unwrap(),
+            std::fs::read(stream_bundle.peaks_path(&s.info.hash)).unwrap(),
+            "same peak file"
+        );
+        assert!(!m.asset.is_stream() && s.asset.is_stream());
+    }
+    // And the lap holds what the file held: the second lap of the stereo track starts at
+    // frame 300 000 of the file.
+    let second = &stream_laps[1];
+    assert_eq!((second.info.channels, second.lap), (2, 1));
+    let stored = stream_bundle.load(&second.info.hash).unwrap();
+    assert_eq!(stored.frames() as u64, LAP);
+    assert_eq!(
+        stored.channels[1][5].to_bits(),
+        long_sample(1, LAP + 5).to_bits()
+    );
+    // No temporary file anywhere in the project's audio folder; the in-progress files stay until
+    // the caller deletes them after every lap is stored.
+    for bundle in [memory_bundle, stream_bundle] {
+        let names = names_in(&bundle.audio_dir());
+        assert!(names.iter().all(|n| !n.ends_with("tmp~")), "{names:?}");
+        assert!(names.contains(&"rec-4242-30-0.wav".to_owned()), "{names:?}");
+    }
+    // The memory the streamed take held at once is a few blocks; the reference read back a
+    // whole 300 000-frame lap of six channels (7.2 MB).
+    let largest_lap = (LAP * 6 * 4) as usize;
+    assert!(*memory_peak >= largest_lap, "{memory_peak}");
+    assert!(
+        *stream_peak < 1_500_000,
+        "streamed: {stream_peak} bytes at once (the reference needed {memory_peak})"
+    );
+    for (bundle, ..) in results {
+        let _ = std::fs::remove_dir_all(bundle.root());
+    }
+}
+
+#[test]
+fn a_streamed_take_ends_with_its_assets_and_no_in_progress_or_temporary_file() {
+    let mut rig = Rig::new("stream-end");
+    let tap = rig.handle.record_tap(&[0, 1, 1], 32_768).unwrap();
+    let cfgw = rig.config(
+        &[("a", TrackInput::Stereo(0, 1)), ("b", TrackInput::Mono(1))],
+        31,
+        0,
+    );
+    let partials: Vec<_> = cfgw.tracks.iter().map(|t| t.path.clone()).collect();
+    let (ctl, _) = spawn(tap, cfgw, rig.tx.clone()).unwrap();
+    render(&mut rig.engine, 0, 20_000, 333);
+    ctl.send(finish(19_968, 0, looping(0, 8_000))).unwrap();
+    let result = rig.result().unwrap();
+    assert_eq!(result.laps.len(), 6, "three laps of two tracks");
+    assert!(result.laps.iter().all(|l| l.asset.is_stream()));
+    let first = &result.laps[0];
+    let stored = rig.bundle.load(&first.info.hash).unwrap();
+    assert_eq!(bits(&stored.channels[1]), expect(1, 0, 8_000));
+    for p in partials {
+        assert!(!p.exists(), "{} was removed", p.display());
+    }
+    let names = names_in(&rig.bundle.audio_dir());
+    assert!(
+        names
+            .iter()
+            .all(|n| n.ends_with(".wav") && !n.starts_with("rec-")),
+        "{names:?}"
+    );
+}
+
+#[test]
+fn a_cancel_of_a_streaming_take_leaves_nothing_in_the_audio_folder() {
+    let mut rig = Rig::new("stream-cancel");
+    let tap = rig.handle.record_tap(&[0], 8_192).unwrap();
+    let cfgw = rig.config(&[("a", TrackInput::Mono(0))], 32, 0);
+    let (ctl, handle) = spawn(tap, cfgw, rig.tx.clone()).unwrap();
+    render(&mut rig.engine, 0, 2_048, 64);
+    ctl.send(Ctl::Cancel).unwrap();
+    handle.join().unwrap();
+    assert_eq!(names_in(&rig.bundle.audio_dir()), Vec::<String>::new());
+}
+
+#[test]
+fn an_in_progress_file_that_ends_early_fails_the_store_and_leaves_no_temporary_file() {
+    let bundle = temp_bundle("stream-short");
+    let mut config = long_config(&bundle, 100_000, 0);
+    config.tracks.truncate(1);
+    let finish = long_finish(looping(0, 60_000));
+    // The take claims 130 000 frames; the file holds 100 000: the first lap is stored, the
+    // second cannot be read.
+    let Err(e) = store_laps(&config, 0, 130_000, &finish, Faults::default()) else {
+        panic!("a short file must fail the store");
+    };
+    let message = store_failure(&config, e);
+    assert!(message.contains("shorter than expected"), "{message}");
+    assert!(message.contains("rec-4242-30-0.wav"), "{message}");
+    assert!(config.tracks[0].path.exists(), "the in-progress file stays");
+    let names = names_in(&bundle.audio_dir());
+    assert!(names.iter().all(|n| !n.ends_with("tmp~")), "{names:?}");
+    let _ = std::fs::remove_dir_all(bundle.root());
+}
+
+/// The figures of `perf/BASELINE.md`: a ten minute stereo take stored from memory and streamed.
+/// `cargo test -p atomik-app --lib -- --ignored ten_minute --nocapture`
+#[test]
+#[ignore = "writes a 230 MB file and prints figures"]
+fn ten_minute_stereo_take_figures() {
+    const FRAMES: u64 = 48_000 * 600;
+    for (name, threshold) in [("ten-memory", u64::MAX), ("ten-stream", 0)] {
+        let bundle = temp_bundle(name);
+        let mut config = long_config(&bundle, 1, threshold);
+        config.tracks.truncate(1);
+        write_partial(&config.tracks[0].path, 2, FRAMES);
+        let finish = long_finish(linear(0));
+        let started = test_now();
+        let (laps, peak) = atomik_testkit::no_alloc::peak_heap_of(|| {
+            store_laps(&config, 0, FRAMES, &finish, Faults::default())
+                .ok()
+                .unwrap()
+        });
+        println!(
+            "{name}: peak {} KiB, {:?}, {} lap(s)",
+            peak / 1024,
+            started.elapsed(),
+            laps.len()
+        );
+        let _ = std::fs::remove_dir_all(bundle.root());
+    }
 }

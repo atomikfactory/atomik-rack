@@ -631,14 +631,23 @@ recordings and pastes decide one asset at a time; an asset already handed to the
  writer thread "atomik-record": drain (contiguous runs only) ─► Audio/rec-<pid>-<take>-<n>.wav, header
         refreshed about every half second (crash safety); a gap is written as silence
  stop or locate ─► Ctl::Finish { end frame, compensation, position function }
-        ▼  split into laps (one per loop pass) ─► Bundle::add_recording per lap (hash, peaks) ─► delete the
-        in-progress file ─► Msg::Recorded
+        ▼  split into laps (one per loop pass) ─► per lap: Bundle::add_recording_from when the engine streams
+        it (hash, peaks and asset from the file a block at a time), Bundle::add_recording when it stays in
+        memory ─► delete the in-progress file ─► Msg::Recorded
         ▼
  UI thread: RegisterAsset per lap; per track one AddAudioClip (one lap) or one NewTakeGroup (several laps:
  a loop recording, see 2.13), one undo step each
 ```
 
 `compensation = input_latency + output_latency + 64 + user_offset`; positive means the take is placed earlier.
+
+**Storing a lap without holding it.** The content hash runs over the samples channel by channel while the
+file is interleaved, so a lap is read from the in-progress file once per channel (hash and peak scan) and once
+more for the asset file when the bundle does not hold it yet. Memory is one block of every channel (8192 frames)
+plus the finished peaks (about 1 % of the audio), whatever the length of the take. The asset is written under
+`<hash>.wav.tmp~` and renamed, as every file of the bundle is; a temporary file a killed process leaves is not a
+`rec-*.wav` file, so the recovery scan ignores it, and `Bundle::remove_orphans` deletes it. A lap that stays in
+memory is read whole, as the engine keeps it anyway.
 
 **Pre-count.** `AudioSettings::pre_count_bars` (0 to 4, saved in `settings.json`, default 0;
 Settings > Audio, Options > Pre-count and `Ctrl+P`, `transport.pre_count`) counts a recording in.

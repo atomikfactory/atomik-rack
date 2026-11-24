@@ -125,6 +125,37 @@ fn the_scan_finds_only_recordings_of_dead_sessions() {
 }
 
 #[test]
+fn a_temporary_file_of_a_killed_store_is_not_a_recording() {
+    let root = dir("tmp-store");
+    let audio = root.join("Audio");
+    std::fs::create_dir_all(&audio).unwrap();
+    // What a process killed between writing an asset and renaming it leaves: the asset's name
+    // plus the temporary suffix. The scan reads `rec-<pid>-<take>-<n>.wav` only, so it is never
+    // offered as a take, however many times the scan runs.
+    for name in [
+        format!("{}.wav.tmp~", "ab".repeat(32)),
+        "rec-7-0-0.wav.tmp~".to_owned(),
+        "rec-7-0-1.wav".to_owned(),
+    ] {
+        std::fs::write(audio.join(name), b"x").unwrap();
+    }
+    for _ in 0..2 {
+        let found = scan_orphans(std::slice::from_ref(&root), None, &|_| false);
+        let names: Vec<_> = found
+            .iter()
+            .map(|o| o.path.file_name().unwrap().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(names, ["rec-7-0-1.wav"]);
+    }
+    // The bundle's orphan clean-up removes the leftovers and keeps the recording.
+    let mut bundle = atomik_audio_file::Bundle::open(&root).unwrap();
+    bundle.remove_orphans(&Default::default()).unwrap();
+    assert!(audio.join("rec-7-0-1.wav").exists());
+    assert!(!audio.join("rec-7-0-0.wav.tmp~").exists());
+    assert!(!audio.join(format!("{}.wav.tmp~", "ab".repeat(32))).exists());
+}
+
+#[test]
 fn the_scratch_scan_skips_live_sessions_and_young_files() {
     let temp = dir("scratch");
     let audio = |pid: u32| {

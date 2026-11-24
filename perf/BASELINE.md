@@ -981,3 +981,20 @@ none     none     40               2.15 GiB         0
 At 4 GiB the resident audio is under 1 GiB (the rings add 16.5 MiB); the working set of the
 process adds its own baseline to it. A project opens by reading the header of every file first (40 small reads) and
 then decoding only the files that stay: the tests check that a streamed file is never decoded.
+
+## Storing a long take (2026-11-25)
+
+A ten minute stereo take at 48 kHz (28.8 million frames, a 220 MiB in-progress file) stored by the writer thread,
+`audio_writer_tests::ten_minute_stereo_take_figures` (release profile, warm file cache, heap held at once on the
+writer's thread, counting allocator):
+
+```text
+path                          peak heap held   time
+whole lap read back (before)  226 MiB          0.76 s
+block by block (now)          6.7 MiB          0.93 s
+```
+
+The block path reads the file once per channel for the hash and the peak scan and once more to write the asset, so it
+is about 23 % slower on a warm cache; a cold disk pays for the extra reads. Its memory is one block of every channel
+plus the peaks, which is about 1 % of the audio held a few times over while it is written and loaded back (the
+pyramid, its bytes, the loaded copy); a 60 minute stereo take needs about 40 MiB instead of 1.38 GB.
