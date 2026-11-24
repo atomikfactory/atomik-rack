@@ -238,6 +238,8 @@ pub fn run(cli: Cli) -> Result<(), String> {
     // Creating a plugin blocks this thread: show LOADING one frame before it starts.
     shell.core_mut().set_plugin_load_paints_first(true);
     // A save writes beside the window instead of freezing it.
+    // Panels nobody looks at are not analysed.
+    shell.core_mut().set_analyse_only_shown(true);
     shell.core_mut().set_background_save(true);
     if let Some(path) = cli.keymap.clone() {
         shell.use_keymap_file(path);
@@ -384,6 +386,7 @@ pub fn run(cli: Cli) -> Result<(), String> {
             ));
             song.set_factory_folder(factory_folder.clone());
             song.core_mut().set_plugin_load_paints_first(true);
+            song.core_mut().set_analyse_only_shown(true);
             song.core_mut().set_background_save(true);
             song.start_with_default_song();
             song
@@ -1547,6 +1550,19 @@ impl App {
                 .song(id)
                 .is_some_and(|s| !s.windows_to_paint().is_empty())
         })
+    }
+
+    /// Tells every song which of its windows are minimized (no area, or the system says so): the
+    /// analysis for the panels in a minimized window stops.
+    fn report_minimized(&mut self) {
+        for (key, w) in &self.windows {
+            let size = w.window.inner_size();
+            let minimized = window_logic::is_minimized((size.width, size.height))
+                || w.window.is_minimized() == Some(true);
+            if let Some(song) = self.shell.song_mut(key.0) {
+                song.set_window_minimized(key.1, minimized);
+            }
+        }
     }
 
     /// Whether every window of the app has no area (or the system says it is minimized) and
@@ -2857,6 +2873,7 @@ impl App {
         // Every one of them is painted here, in turn. Leaving it to the OS's redraw requests
         // would let the one the OS serves first (the focused one, on Windows) take all the
         // time and starve the others while it animates.
+        self.report_minimized();
         let minimized = self.all_minimized();
         // What the frame cap holds back is found again below (a window it did not paint stays
         // marked), so the deadline starts empty.

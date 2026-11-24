@@ -982,3 +982,93 @@ fn a_project_saved_before_the_new_params_loads_their_defaults() {
         atomik_dsp::spectrum::ChannelMode::Sum
     );
 }
+
+// ------------------------------------------------------------ panels nobody looks at
+
+fn fold<S: EngineSink>(c: &mut AppCore<S>, k: &str, folded: bool) {
+    c.apply_command(Command::SetFolded {
+        key: key(k),
+        folded,
+    })
+    .unwrap_or_else(|e| panic!("fold {k}: {e}"));
+}
+
+/// One spectrum device with a tap carrying `hz`, and the id of the device.
+fn shown_spectrum(only_shown: bool) -> (AppCore<RecordingSink>, DeviceInstanceId) {
+    let mut c = AppCore::new(RecordingSink::new());
+    c.set_analyse_only_shown(only_shown);
+    add(&mut c, SPECTRUM, "spec");
+    let id = c.device_id(&key("spec")).unwrap();
+    (c, id)
+}
+
+#[test]
+fn a_panel_that_is_not_shown_is_not_analysed_and_carries_on_when_it_is() {
+    let (mut c, id) = shown_spectrum(true);
+    c.sink_mut()
+        .device_scopes
+        .insert(id, tone(1000.0, 8192, 8192, 1.0));
+    c.frame();
+    assert!((data(&c, "spec").peak_hz - 1000.0).abs() < 12.0, "shown");
+    // Folded: the tap moves on and nothing is read.
+    fold(&mut c, "spec", true);
+    c.sink_mut()
+        .device_scopes
+        .insert(id, tone(3000.0, 8192, 8192 + 48_000, 1.0));
+    c.frame();
+    assert!(
+        (data(&c, "spec").peak_hz - 1000.0).abs() < 12.0,
+        "a folded panel keeps what it showed"
+    );
+    // Unfolded: it continues from the state it kept.
+    fold(&mut c, "spec", false);
+    c.frame();
+    assert!(
+        (data(&c, "spec").peak_hz - 3000.0).abs() < 12.0,
+        "{}",
+        data(&c, "spec").peak_hz
+    );
+}
+
+#[test]
+fn without_the_flag_every_device_is_analysed_whatever_its_panel_shows() {
+    let (mut c, id) = shown_spectrum(false);
+    fold(&mut c, "spec", true);
+    c.sink_mut()
+        .device_scopes
+        .insert(id, tone(1000.0, 8192, 8192, 1.0));
+    c.frame();
+    assert!((data(&c, "spec").peak_hz - 1000.0).abs() < 12.0, "default");
+}
+
+#[test]
+fn a_minimized_window_stops_the_analysis_and_restoring_it_resumes() {
+    let (mut c, id) = shown_spectrum(true);
+    c.set_rack_window_shown(false);
+    c.sink_mut()
+        .device_scopes
+        .insert(id, tone(1000.0, 8192, 8192, 1.0));
+    c.frame();
+    assert!(data(&c, "spec").trace.is_empty(), "minimized");
+    c.set_rack_window_shown(true);
+    c.frame();
+    assert!((data(&c, "spec").peak_hz - 1000.0).abs() < 12.0, "restored");
+}
+
+#[test]
+fn the_other_readers_do_not_depend_on_the_panel() {
+    // The headless probe (the QA server's reading) is not the live feed: a project whose panels
+    // are all hidden still reads every value.
+    let mut c = AppCore::new(RecordingSink::new());
+    c.set_analyse_only_shown(true);
+    c.set_rack_window_shown(false);
+    tone_rack_for_probe(&mut c);
+    let readouts = c.probe_meters(48_000, None).expect("a probe");
+    assert_eq!(readouts.len(), 2);
+    let spec = readouts.iter().find(|r| r.key == key("spec")).unwrap();
+    assert!(
+        spec.values
+            .iter()
+            .any(|(k, v)| *k == "peak_hz" && *v > 100.0)
+    );
+}

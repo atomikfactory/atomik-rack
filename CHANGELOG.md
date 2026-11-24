@@ -345,6 +345,13 @@ may break APIs and the patch and project formats.
   controller or parameter message reaches it; only its LFOs and the chorus sweep are moved on, LFO 2 only while it
   has a destination as before, so the next note finds them where they would have been, and the audio is byte for
   byte the same. Twenty idle poly synths cost 9.0 us a batch before and 3.9 us after.
+- **Analyser panels that are not on screen do no work.** The spectrum, phase meter, loudness meter and tuner
+  panels are analysed (FFT, spectrogram rows, loudness history, pitch) only while they are shown: a folded panel,
+  one scrolled out of the rack, one in a closed container, the rack behind the launcher or on its back face, or a
+  rack window that is minimized costs the interface nothing, and a spectrum panel that shows another strip no
+  longer keeps that strip's tap running. Each panel carries on from the state it kept when it is shown again;
+  the spectrogram has no rows for the time it was hidden, and the phase meter's loudness graph and range cover
+  the time it was shown. The headless reading of the QA server, offline renders and the tests are unchanged.
 
 ### Fixed
 - **Dropping an instrument above its mix channel.** An instrument dragged to the place above its own mix channel

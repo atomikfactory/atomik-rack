@@ -2676,6 +2676,9 @@ defaults (no overlay, a clip level of 0 dBFS).
   of audio and 80 rows (6 seconds), brighter for louder, over the dB `range`. It scrolls with the
   audio, not with the display, so a paused engine stops it. The image is 120 columns by 80 rows of
   8-bit levels (`atomik_dsp::spectrogram`) and is drawn as runs of equal colour.
+  A panel that is not on screen (folded, scrolled out of the rack, in a closed container, or in a window
+  that is minimized) is not analysed, so the image has no rows for that time and carries on when the
+  panel is shown again.
 - **Reference curve.** A rising edge of `reference.capture` stores the 31 one-third-octave band
   levels on screen (with the weighting in force, without the tilt) as the reference curve. It is
   kept in `spectrum-reference.json` beside the library file, not in the project, so every spectrum
@@ -2896,6 +2899,8 @@ and were put before `bypass`, which moved from id 6 to id 8.
   the audio's own clock, skips the first three seconds after a start or a reset while the meter's
   windows fill, and starts over when the integrated loudness falls back to silence (a reset). The
   last ten minutes are kept; the range covers everything.
+  While the panel is not on screen the history is not fed, so the graph and the range cover the time
+  it was shown.
 - **Scope.** The panel draws the goniometer from the newest 2048 frames of the tap, every second
   one: mid up and side across (`M/S`: mono is a vertical line, the left channel alone a line up and
   to the left), or the plain Lissajous figure (`L/R`: left across, right up), `scope_gain` dB larger

@@ -648,6 +648,9 @@ pub struct RackView {
     output_channels: u16,
     synced: bool,
     flip: Flip,
+    /// The window that holds the rack is on screen (not minimized, the rack pane is shown): the
+    /// host says so, see [`RackView::set_window_shown`].
+    window_shown: bool,
     cable_visibility: CableVisibility,
     size: Size,
     scale: f64,
@@ -1042,6 +1045,7 @@ impl RackView {
             output_channels: 0,
             synced: false,
             flip: Flip::Front,
+            window_shown: true,
             cable_visibility: CableVisibility::Show,
             size: Size::new(800.0, 600.0),
             scale: 1.0,
