@@ -149,7 +149,7 @@ fn a_relink_to_another_plugin_rebuilds_the_engine_and_the_instance_follows() {
     let relink = Command::Plugin(PluginCommand::Relink {
         device: key("lead"),
         plugin: plugin.clone(),
-        layout: entry.layout.clone(),
+        layout: (*entry.layout).clone(),
         path_hint: None,
     });
     apply(&mut core, relink);

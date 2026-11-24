@@ -391,6 +391,11 @@ may break APIs and the patch and project formats.
   a bounce, export, stem export and freeze never stream, so what they write does not change. A machine with 16 GB or
   more only notices a project holding over 4 GB of audio; one that does not tell its memory is not affected. On a slow
   disk a locate or a loop jump in a streamed file can drop out (the underrun counter shows it).
+- **A large plugin catalogue takes less memory.** The registry's table of known plugin layouts, and the rows of the
+  plugin browser, each kept their own copy of every plugin's parameter table; they now share the catalog's one copy.
+  With 132 plugin files of 500 parameters each this is 16.5 MiB less (of about 42 MiB the catalogue held), the same
+  at every size: about 260 bytes a parameter. Which plugins are listed, their parameters and their order do not
+  change.
 
 ### Fixed
 - **Dropping an instrument above its mix channel.** An instrument dragged to the place above its own mix channel

@@ -276,7 +276,7 @@ impl RackView {
                 .push(UiAction::Command(Command::Plugin(PluginCommand::Relink {
                     device,
                     plugin: entry.plugin.clone(),
-                    layout: entry.layout.clone(),
+                    layout: (*entry.layout).clone(),
                     path_hint: entry.path.clone(),
                 })));
         }

@@ -355,7 +355,13 @@ fn macro_project(synth: &str, effect: &str, step_beat: i64, value: f32) -> AppCo
     );
     for (type_id, local, auto_split) in [(synth, "syn", true), (effect, "fx", false)] {
         let plugin = atomik_device_sdk::PluginRef::from_type_id(type_id).unwrap();
-        let layout = core.plugin_catalog().entry(&plugin).unwrap().layout.clone();
+        let layout = core
+            .plugin_catalog()
+            .entry(&plugin)
+            .unwrap()
+            .layout
+            .as_ref()
+            .clone();
         apply(
             &mut core,
             Command::Plugin(PluginCommand::Add {

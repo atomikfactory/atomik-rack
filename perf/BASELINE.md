@@ -999,3 +999,54 @@ The block path reads the file once per channel for the hash and the peak scan an
 is about 23 % slower on a warm cache; a cold disk pays for the extra reads. Its memory is one block of every channel
 plus the peaks, which is about 1 % of the audio held a few times over while it is written and loaded back (the
 pyramid, its bytes, the loaded copy); a 60 minute stereo take needs about 40 MiB instead of 1.38 GB.
+
+## Memory a plugin catalogue and a hosted plugin hold (2026-11-25)
+
+Heap bytes held on one thread, counting allocator, synthetic plugins (names and module paths as a real plugin has them),
+in `crates/plugin-host/tests/memory_figures.rs` and `crates/plugin-vst3/tests/memory_figures.rs` (debug test
+profile; byte counts do not depend on it). 132 plugin files, one plugin each; "scan entries" is the scan cache the app
+holds anyway, "catalog entries" the `PluginCatalog` built from it, "registered" what `register_pinned_into` adds (the
+leaked descriptors and the table of interned layouts).
+
+```text
+params   scan entries   catalog entries   registered, before   registered, after   B per param (all three, after)
+50       1.1 MiB        0.9 MiB           1.9 MiB              1.0 MiB             475
+500      10.3 MiB       8.3 MiB           15.6 MiB             7.3 MiB             411
+2000     40.8 MiB       33.2 MiB          61.5 MiB             28.4 MiB            407
+0        0.06 MiB       0.09 MiB          0.36 MiB             0.31 MiB            -
+```
+
+One layout is 6.4 KiB at 50 params, 63.9 KiB at 500 and 256.9 KiB at 2000 (about 130 bytes a param). The browser's
+rows (`PluginEntryInfo`, built by the app, not in the table) held one more deep copy of every layout before, 8.3 MiB at
+500 params and 33.2 MiB at 2000; they now share the entry's `Arc`. At 500 params the catalogue held about 34 MiB in the
+table plus 8 MiB in the rows (42 MiB) before, and about 26 MiB after.
+
+One more hosted instance, in process, over the null backend (device, the instance's layout, the manager's listed
+layout, the layout the handle returns), and the device alone (the parameter arrays, the event lists, the dry ring):
+
+```text
+params   one instance   device alone   of which event lists (reserved, never written)   one layout
+50       227 KiB        194 KiB        127 KiB                                           6.4 KiB
+500      432 KiB        226 KiB        138 KiB                                           63.9 KiB
+2000     1120 KiB       335 KiB        173 KiB                                           256.9 KiB
+```
+
+The format layers, test plugins in process, 4 and 2 000 parameters (device included):
+
+```text
+format   4 params    2000 params   per param   fixed
+CLAP     11 096 KiB  11 669 KiB    294 B       11 095 KiB
+VST3     596 KiB     1 717 KiB     575 B       594 KiB
+```
+
+The CLAP fixed part is almost all one event buffer of the host library. It is created with a capacity of 6 656 events and
+reserves 6 656 x about 104 bytes (the largest CLAP event) x 16, about 11 MiB, because the library multiplies the event
+count by an event's size in bytes and then counts that in 16 byte headers. Nothing writes it beyond the events of a
+block, so by the code it is committed address space and not working set (a working set was not measured). The VST3
+fixed part is written when made: the input event list is 4 608 events of the VST3 event record, plus 150 and 256
+parameter queues of about 240 bytes each (a queue holds 16 points).
+
+None of the instance figures was changed. Sharing the manager's and the handle's copy of the layout saves two layouts
+(128 KiB at 500 params), under the 200 KiB bar; the parameter queues are all needed when a batch touches every
+parameter and the first touch arrives on the audio thread; the event lists could only be made smaller by proving a
+bound under the device's `4 * MAX_EVENTS_PER_BATCH + 256` events.

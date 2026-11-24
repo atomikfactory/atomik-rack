@@ -421,7 +421,7 @@ impl RackView {
                     index,
                     container: Some(container.clone()),
                     plugin: e.plugin.clone(),
-                    layout: e.layout.clone(),
+                    layout: (*e.layout).clone(),
                     path_hint: e.path.clone(),
                     key: None,
                     auto_split: e.kind == PluginKindHint::Instrument,
@@ -470,7 +470,7 @@ impl RackView {
                     Some(kind) => self.create_action_at(
                         CreateSource::Plugin {
                             plugin: e.plugin.clone(),
-                            layout: e.layout.clone(),
+                            layout: (*e.layout).clone(),
                             path_hint: e.path.clone(),
                         },
                         kind,
@@ -481,7 +481,7 @@ impl RackView {
                     None => UiAction::Command(Command::Plugin(PluginCommand::AddAt {
                         slot,
                         plugin: e.plugin.clone(),
-                        layout: e.layout.clone(),
+                        layout: (*e.layout).clone(),
                         path_hint: e.path.clone(),
                         key: None,
                     })),
@@ -592,7 +592,7 @@ impl RackView {
                 let e = self.plugin_catalog.get(*n)?;
                 Some(CreateSource::Plugin {
                     plugin: e.plugin.clone(),
-                    layout: e.layout.clone(),
+                    layout: (*e.layout).clone(),
                     path_hint: e.path.clone(),
                 })
             }

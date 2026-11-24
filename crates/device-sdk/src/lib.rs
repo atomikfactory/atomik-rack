@@ -38,7 +38,8 @@ pub use plugin::{
     AUX_OUT_KEYS, CLAP_PREFIX, CV_AMOUNT_KEYS, CV_DEST_KEYS, CV_IN_KEYS, Channels, LayoutChange,
     MAX_AUX_OUTPUTS, MAX_INTERNED_DESCRIPTORS, MAX_PLUGIN_PARAMS, MPE_SEND_KEY, PLUGIN_CV_INPUTS,
     PluginFormat, PluginKindHint, PluginLayout, PluginParamInfo, PluginRef, PluginStandIn,
-    PluginStateBlob, RunMode, VST3_PREFIX, descriptor_for, is_plugin_type_id,
+    PluginStateBlob, RunMode, VST3_PREFIX, descriptor_for, descriptor_for_shared,
+    is_plugin_type_id,
 };
 pub use plugin_category::{EffectKind, PluginCategory, PluginClass};
 pub use registry::{DeviceEntry, DeviceFactory, Registry, RegistryError};

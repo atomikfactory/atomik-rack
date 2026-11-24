@@ -954,7 +954,7 @@ fn every_usable_catalog_entry_can_be_added_with_the_fixture_registry() {
         .filter(|e| matches!(e.status, atomik_ui::plugin_data::PluginEntryStatus::Ok))
     {
         let mut d = plugin_rack();
-        let cmd = plugin_add(0, &e.plugin, e.layout.clone(), "added");
+        let cmd = plugin_add(0, &e.plugin, (*e.layout).clone(), "added");
         d.apply(cmd, &reg)
             .unwrap_or_else(|err| panic!("{}: {err}", e.name));
         assert!(d.doc().device(&key("added")).is_some(), "{}", e.name);

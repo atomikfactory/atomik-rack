@@ -889,7 +889,7 @@ fn entry_infos(catalog: &PluginCatalog, user: &PluginsUser) -> Vec<PluginEntryIn
                 category: e.category,
                 status,
                 path: Some(e.path.to_string_lossy().into_owned()),
-                layout: e.layout.clone(),
+                layout: std::sync::Arc::clone(&e.layout),
                 marks: PluginMarks {
                     favourite: user.is_favourite(&id),
                     tags: user.tags_of(&id).to_vec(),
@@ -3243,8 +3243,8 @@ impl<S: EngineSink> AppCore<S> {
             let Some(entry) = catalog.entry(plugin) else {
                 return;
             };
-            if &entry.layout != layout {
-                *layout = entry.layout.clone();
+            if *entry.layout != *layout {
+                *layout = (*entry.layout).clone();
             }
             let want = atomik_device_sdk::descriptor_for(plugin, &entry.layout).ok();
             let have = registry.get(&plugin.type_id()).map(|f| f.descriptor);

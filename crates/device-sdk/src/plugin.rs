@@ -7,7 +7,9 @@
 //! table and every string in them are leaked on purpose so the result is a `&'static`. The leak
 //! is bounded: at most [`MAX_INTERNED_DESCRIPTORS`] distinct layouts per process, each with at
 //! most [`MAX_PLUGIN_PARAMS`] params, and the same layout always gives the same pointer (a test
-//! pins it), so rescanning, reopening a project or restarting the engine does not grow it.
+//! pins it), so rescanning, reopening a project or restarting the engine does not grow it. The
+//! table keeps each layout it interned behind an `Arc` (to tell a known layout from a new one),
+//! which [`descriptor_for_shared`] lets a caller that holds the layout that way share.
 //!
 //! This module has no plugin-format code and no `unsafe`; the formats live in the backends.
 
@@ -18,7 +20,7 @@ use crate::{
 };
 use atomik_core::{ParamDescriptor, ParamId, Taper, Unit};
 use std::collections::{BTreeMap, BTreeSet};
-use std::sync::{Mutex, PoisonError};
+use std::sync::{Arc, Mutex, PoisonError};
 
 /// Upper bound of the plugin params a descriptor carries. A longer table is cut by the
 /// scanner (and recorded there); [`descriptor_for`] refuses one.
@@ -671,7 +673,7 @@ type InternKey = (PluginFormat, String, u64);
 
 #[derive(Default)]
 struct InternState {
-    entries: BTreeMap<InternKey, Vec<(PluginLayout, &'static DeviceDescriptor)>>,
+    entries: BTreeMap<InternKey, Vec<(Arc<PluginLayout>, &'static DeviceDescriptor)>>,
     count: usize,
 }
 
@@ -708,6 +710,25 @@ impl Interner {
         plugin: &PluginRef,
         layout: &PluginLayout,
     ) -> Result<&'static DeviceDescriptor, DescriptorError> {
+        self.intern(plugin, layout, None)
+    }
+
+    /// [`Self::descriptor_for`] for a layout the caller already holds behind an `Arc`: the table
+    /// keeps that `Arc` instead of a copy of the layout.
+    pub(crate) fn descriptor_for_shared(
+        &self,
+        plugin: &PluginRef,
+        layout: &Arc<PluginLayout>,
+    ) -> Result<&'static DeviceDescriptor, DescriptorError> {
+        self.intern(plugin, layout, Some(layout))
+    }
+
+    fn intern(
+        &self,
+        plugin: &PluginRef,
+        layout: &PluginLayout,
+        shared: Option<&Arc<PluginLayout>>,
+    ) -> Result<&'static DeviceDescriptor, DescriptorError> {
         let key = (plugin.format, plugin.id.clone(), layout.layout_hash());
         // One lock for lookup and insert, so two threads never intern one layout twice.
         let mut state = self.lock();
@@ -715,7 +736,7 @@ impl Interner {
         if let Some(found) = state
             .entries
             .get(&key)
-            .and_then(|v| v.iter().find(|(l, _)| l == layout))
+            .and_then(|v| v.iter().find(|(l, _)| **l == *layout))
         {
             return Ok(found.1);
         }
@@ -724,16 +745,30 @@ impl Interner {
         }
         let descriptor = build_descriptor(plugin, layout)?;
         state.count += 1;
+        let kept = shared.map_or_else(|| Arc::new(layout.clone()), Arc::clone);
         state
             .entries
             .entry(key)
             .or_default()
-            .push((layout.clone(), descriptor));
+            .push((kept, descriptor));
         Ok(descriptor)
     }
 }
 
 static INTERNER: Interner = Interner::with_limit(MAX_INTERNED_DESCRIPTORS);
+
+/// [`descriptor_for`] for a layout held behind an `Arc` (the catalog's entries): the interned table
+/// shares that `Arc` instead of keeping a second copy of the layout, which for a plugin with
+/// hundreds of params is tens of kilobytes. The result is the same descriptor. Non-RT.
+///
+/// # Errors
+/// As [`descriptor_for`].
+pub fn descriptor_for_shared(
+    plugin: &PluginRef,
+    layout: &Arc<PluginLayout>,
+) -> Result<&'static DeviceDescriptor, DescriptorError> {
+    INTERNER.descriptor_for_shared(plugin, layout)
+}
 
 /// Builds (once per distinct plugin and layout) and interns the descriptor of a plugin device. Non-RT.
 ///

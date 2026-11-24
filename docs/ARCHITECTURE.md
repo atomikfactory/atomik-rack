@@ -5178,6 +5178,11 @@ take the app down; Settings > Plugins can switch back to running plugins inside 
   to one writer thread ([plugin_cache_writer.rs](../crates/app/src/plugin_cache_writer.rs)), which
   serialises and writes it; only the newest copy handed over is written, a failure is reported by the
   next frame, and the exit waits for it at most five seconds.
+  The parameter table of a plugin is held once per catalogue: the catalog entry owns the layout behind an `Arc`, and
+  the table of interned descriptors (`descriptor_for_shared`) and the browser's rows share it instead of keeping their
+  own copies; what remains per parameter is the leaked descriptor (about 116 bytes) and the scan cache's own copy.
+  A hosted instance holds the plugin's layout in the format instance, in the manager and in the handle it returns
+  (about 130 bytes a parameter each); the figures are in [perf/BASELINE.md](../perf/BASELINE.md).
 - **Plugin manager.** What the user decides about a plugin (a star, tags, hidden by Disable, the quarantine after
   three failures in a row) is kept by plugin id in `plugins_user.json` beside the settings, apart from the scan cache
   and the catalog, which it never touches: the browser and the menus hide a disabled or quarantined plugin, while a
