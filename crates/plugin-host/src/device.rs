@@ -503,7 +503,7 @@ impl PluginDevice {
             events_out: EventList::with_capacity(MAX_EVENTS_PER_BATCH),
             in_peak: 0.0,
             out_peak: 0.0,
-            scope: Arc::new(ScopeTap::new()),
+            scope: Arc::new(ScopeTap::on_demand()),
             dropped: 0,
             late: 0,
             refused: 0,

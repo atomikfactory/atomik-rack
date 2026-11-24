@@ -282,3 +282,30 @@ fn taken(c: &mut AppCore<RecordingSink>) -> Vec<(DeviceInstanceId, f32)> {
     let calls = c.sink_mut().take();
     tap_calls(c, &calls)
 }
+
+#[test]
+fn the_shown_strip_gets_its_scope_ring_once_when_its_tap_switch_goes_on() {
+    let mut c = two_channels();
+    let (a, b) = (channel_of(&c, "a"), channel_of(&c, "b"));
+    let (ia, ib) = (c.device_id(&a).unwrap(), c.device_id(&b).unwrap());
+    c.frame();
+    assert!(
+        c.sink().scopes_reserved.is_empty(),
+        "a closed window asks for no ring"
+    );
+    c.console_mut()
+        .set_selected_strips(std::slice::from_ref(&a));
+    c.set_spectrum_eq_shown(true);
+    assert_eq!(c.sink().scopes_reserved.get(&ia), Some(&1));
+    assert!(
+        !c.sink().scopes_reserved.contains_key(&ib),
+        "only the shown strip"
+    );
+    // A frame with nothing new asks for nothing again; the next strip gets its own.
+    c.frame();
+    assert_eq!(c.sink().scopes_reserved.get(&ia), Some(&1));
+    c.console_mut()
+        .set_selected_strips(std::slice::from_ref(&b));
+    c.frame();
+    assert_eq!(c.sink().scopes_reserved.get(&ib), Some(&1));
+}

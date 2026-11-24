@@ -1455,6 +1455,14 @@ impl<B: AudioBackend> EngineSink for LiveSession<B> {
         true
     }
 
+    fn reserve_device_scope(&mut self, id: DeviceInstanceId) -> bool {
+        let Some(tap) = self.running.as_ref().and_then(|r| r.meters.scope_tap(id)) else {
+            return false;
+        };
+        tap.reserve();
+        true
+    }
+
     fn reserve_device_scope_large(&mut self, id: DeviceInstanceId) -> bool {
         let Some(tap) = self.running.as_ref().and_then(|r| r.meters.scope_tap(id)) else {
             return false;

@@ -173,6 +173,13 @@ pub trait EngineSink {
     fn set_device_scope_point(&mut self, _id: DeviceInstanceId, _pre: bool) -> bool {
         false
     }
+    /// [`atomik_device_sdk::ScopeTap::reserve`] of the scope tap of a device: makes the ring of a
+    /// console strip, the master, an EQ or a plugin device (256 KiB, on the calling thread, which
+    /// is never the audio thread) before something that is not the live flag makes the device
+    /// write (the Spectrum EQ window's `internal.tap_live`). Returns whether the device has a tap.
+    fn reserve_device_scope(&mut self, _id: DeviceInstanceId) -> bool {
+        false
+    }
     /// [`atomik_device_sdk::ScopeTap::reserve_large`] of the scope tap of a device: allocates the
     /// large ring (1 MiB, on the calling thread, which is never the audio thread) so that
     /// analysis windows of 32768 and 65536 points work. Returns whether the device has a tap.
@@ -444,6 +451,8 @@ pub struct RecordingSink {
     pub observed_calls: usize,
     /// The devices [`EngineSink::set_device_scope_point`] last asked for the pre-fader point.
     pub scopes_pre: std::collections::BTreeSet<DeviceInstanceId>,
+    /// The devices [`EngineSink::reserve_device_scope`] was called for, with the number of calls.
+    pub scopes_reserved: BTreeMap<DeviceInstanceId, u32>,
     /// The devices [`EngineSink::reserve_device_scope_large`] was called for, with the number of
     /// calls.
     pub scopes_large: BTreeMap<DeviceInstanceId, u32>,
@@ -712,6 +721,11 @@ impl EngineSink for RecordingSink {
         } else {
             self.scopes_pre.remove(&id);
         }
+        true
+    }
+
+    fn reserve_device_scope(&mut self, id: DeviceInstanceId) -> bool {
+        *self.scopes_reserved.entry(id).or_default() += 1;
         true
     }
 

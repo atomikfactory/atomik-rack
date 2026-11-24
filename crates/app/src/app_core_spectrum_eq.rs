@@ -171,6 +171,9 @@ impl<S: EngineSink> AppCore<S> {
         if let Some((key, id)) = want_id
             && let Some(pid) = self.tap_param(&key)
         {
+            // The strip writes without its live flag while the switch is on: its ring first,
+            // here on the interface thread, never on the audio thread.
+            self.sink.reserve_device_scope(id);
             let result = self.sink.set_param(id, pid, 1.0);
             self.engine_result(result);
             self.speq.sent = Some((key, id));
