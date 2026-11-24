@@ -21,6 +21,10 @@
 //!   the song uses) with `save_text_atomic`, then deletes the files of assets that neither
 //!   the saved song nor the undo/redo history ([`atomik_model::Document::referenced_assets`])
 //!   reference. Assets only the history references stay on disk (and in the live pool).
+//! * **Dropped history** frees audio earlier than a save: when an old undo step is trimmed away
+//!   or a new edit replaces the redo steps, the assets only those steps held (and that the song,
+//!   the rest of the history and the clipboard do not hold) leave the pool and the memory at
+//!   once (`AppCore::release_dropped_assets`); their files go at the next save.
 //! * **Save As** (a relocation) copies only the audio the project uses, from the session
 //!   bundle and, for what that lacks, from the folders near the old project file that hold an
 //!   `Audio/` directory; the old files stay where they were. Links are content hashes, so the
@@ -471,6 +475,18 @@ impl<S: EngineSink> AppCore<S> {
         self.audio
             .peaks
             .insert(loaded.hash.clone(), Arc::clone(&loaded.peaks));
+    }
+
+    /// Lets go of the audio of assets that the undo history has just dropped the last step for
+    /// (the oldest steps trimmed away, or the redo steps a new edit replaced), instead of at the
+    /// next save. The rule is the save's ([`atomik_model::Document::referenced_assets`]: the
+    /// song and every step still in the history), plus the copied clips and zones on the
+    /// clipboard, which a paste needs again. Undo and redo find everything they need.
+    pub(super) fn release_dropped_assets(&mut self) {
+        let keep = self.clipboard.asset_hashes();
+        for hash in self.document.release_dropped_assets(&keep) {
+            self.forget_asset(&hash);
+        }
     }
 
     fn forget_asset(&mut self, hash: &str) {

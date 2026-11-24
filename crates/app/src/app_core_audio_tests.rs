@@ -473,6 +473,87 @@ fn save_removes_orphans_but_keeps_assets_the_undo_history_references() {
     assert_eq!(fresh.doc().assets.len(), 1);
 }
 
+/// A core with one imported file whose only clip was then deleted: its hash. The history still
+/// holds the clip, so undo brings it back.
+fn deleted_import(c: &mut AppCore<RecordingSink>, t: &Tmp) -> String {
+    let hash = import_one(c, t, "a.wav", 4_800, 1.0);
+    let id = c.doc().song.tracks[0].lanes[0].clips[0].id;
+    c.apply_command(Command::Song(SongCommand::RemoveClip { id }))
+        .unwrap();
+    hash
+}
+
+/// Edits that push the oldest steps out of a history of two.
+fn push_history_out(c: &mut AppCore<RecordingSink>) {
+    c.document.set_undo_limits(2, usize::MAX);
+    c.apply_command(Command::SetMasterTune(3.0)).unwrap();
+    c.apply_command(Command::SetMasterTune(4.0)).unwrap();
+}
+
+fn held(c: &AppCore<RecordingSink>, hash: &str) -> [bool; 3] {
+    [
+        c.doc().assets.contains_key(hash),
+        c.song_assets().contains_key(hash),
+        c.peaks().contains_key(hash),
+    ]
+}
+
+#[test]
+fn a_deleted_clips_audio_is_released_when_the_history_lets_go_of_the_last_step_that_needs_it() {
+    let t = Tmp::new("release");
+    let mut c = core();
+    let hash = deleted_import(&mut c, &t);
+    assert_eq!(
+        held(&c, &hash),
+        [true; 3],
+        "the clip is deleted, the audio stays"
+    );
+    // While the steps exist, undo and redo bring the clip back with its audio.
+    assert!(c.undo());
+    assert_eq!(audio_clips(&c).len(), 1);
+    assert_eq!(held(&c, &hash), [true; 3]);
+    assert!(c.redo());
+    assert_eq!(held(&c, &hash), [true; 3]);
+
+    push_history_out(&mut c);
+    assert_eq!(
+        held(&c, &hash),
+        [false; 3],
+        "nothing can bring it back: no save needed"
+    );
+    // What is left of the history still undoes.
+    assert!(c.undo() && c.undo());
+}
+
+#[test]
+fn audio_that_a_redo_step_or_the_clipboard_needs_is_not_released() {
+    let t = Tmp::new("release-keep");
+    let mut c = core();
+    let hash = import_one(&mut c, &t, "a.wav", 4_800, 1.0);
+    // Undone: only the redo step holds the clip. A new edit drops the redo history, and the
+    // audio goes with it.
+    assert!(c.undo() && c.undo());
+    assert_eq!(held(&c, &hash), [true; 3], "redo can bring it back");
+    c.document.set_undo_limits(2, usize::MAX);
+    c.apply_command(Command::SetMasterTune(3.0)).unwrap();
+    assert_eq!(held(&c, &hash), [false; 3], "the redo steps are gone");
+
+    // A copied clip keeps its audio for the paste, even after the history let go of the clip.
+    let mut c = core();
+    let hash = import_one(&mut c, &t, "b.wav", 9_600, 0.5);
+    let clip = c.doc().song.tracks[0].lanes[0].clips[0].id;
+    c.arrangement_mut().set_selected_clips(&[clip]);
+    c.pane_command(Pane::Arrangement, "edit.copy", None);
+    c.apply_command(Command::Song(SongCommand::RemoveClip { id: clip }))
+        .unwrap();
+    push_history_out(&mut c);
+    assert_eq!(
+        held(&c, &hash),
+        [true; 3],
+        "the clipboard holds a copy of the clip"
+    );
+}
+
 #[test]
 fn removing_the_last_clip_and_saving_in_a_fresh_session_deletes_the_asset() {
     let t = Tmp::new("lastclip");

@@ -274,6 +274,9 @@ may break APIs and the patch and project formats.
   C runtime, made for every read; the whole part is now cut out of the delay's bits (and `aarch64` still uses its
   instruction), with no output bit changed. The two reverbs are about 10 % cheaper per batch (about 4.1 to 3.7 ms per
   256 batches), a granular synth about 10 % and the rotary speaker about 6 %.
+- **The audio of a deleted clip is freed when nothing can bring it back.** It used to stay in memory until the next
+  save. Now it goes as soon as the undo history drops the last step that held it (an old step trimmed away, or the redo
+  steps a new edit replaces), unless a copied clip on the clipboard still needs it. Undo and redo are unchanged.
 - **The interface keeps the tempo map, not a copy of the compiled song.** It only needs the tempos and time signatures
   to convert between time and position, so a project with many notes no longer holds its notes twice; every position
   shown is the same number as before.

@@ -210,7 +210,8 @@ All entries below were recorded on 2026-10-30 and decided (or deferred, or defau
 
 **Decision.** Working assumption: both caps, whichever is hit first. 1,000 steps and an estimated
 512 MiB (`MAX_UNDO_STEPS`, `MAX_UNDO_BYTES`); the oldest steps go first, the latest step always
-stays, and the assets only dropped steps held leave the pool at the next prune. There is no
+stays, and the assets only dropped steps held leave the pool (and their audio memory) when the history lets
+go of the step, unless the clipboard still holds a copy, and at the latest at the next prune. There is no
 "history trimmed" note yet.
 
 **Status.** Default (not yet confirmed). Recorded 2026-10-30; implemented with these numbers on 2026-10-31; awaiting the maintainer's review.

@@ -1160,6 +1160,7 @@ impl<S: EngineSink> AppCore<S> {
                 }
                 self.colour_new_tracks(tracks_before);
                 self.note_history_times();
+                self.release_dropped_assets();
                 if let Some(dragging) = frozen_edit {
                     self.after_edit_for_frozen(dragging);
                 }
