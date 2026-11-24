@@ -146,6 +146,89 @@ impl Peaks {
     }
 }
 
+/// [`PeakPyramid::build`] fed block by block: the samples of channel 0 in order, then those of
+/// channel 1, and so on, in pieces of any size. Gives the pyramid `build` gives for the same
+/// audio, bit for bit, and holds one open bucket besides the finished levels.
+pub(crate) struct PeakBuilder {
+    sample_rate: u32,
+    channels: Vec<Vec<(f32, f32)>>,
+    current: usize,
+    lo: f32,
+    hi: f32,
+    open: u32,
+}
+
+impl PeakBuilder {
+    /// A builder for `channels` channels at `sample_rate`.
+    pub(crate) fn new(sample_rate: u32, channels: usize) -> Self {
+        Self {
+            sample_rate,
+            channels: vec![Vec::new(); channels],
+            current: 0,
+            lo: f32::INFINITY,
+            hi: f32::NEG_INFINITY,
+            open: 0,
+        }
+    }
+
+    fn close_bucket(&mut self) {
+        if self.open > 0 {
+            let peak = if self.lo > self.hi {
+                (0.0, 0.0)
+            } else {
+                (self.lo, self.hi)
+            };
+            if let Some(ch) = self.channels.get_mut(self.current) {
+                ch.push(peak);
+            }
+        }
+        self.lo = f32::INFINITY;
+        self.hi = f32::NEG_INFINITY;
+        self.open = 0;
+    }
+
+    /// Adds the next samples of `channel`. A channel is fed whole before the next one starts.
+    pub(crate) fn push(&mut self, channel: usize, mut samples: &[f32]) {
+        if channel != self.current {
+            self.close_bucket();
+            self.current = channel;
+        }
+        let bucket = PEAK_LEVELS[0];
+        while !samples.is_empty() {
+            let room = (bucket - self.open) as usize;
+            let (now, rest) = samples.split_at(room.min(samples.len()));
+            let (lo, hi) = now
+                .iter()
+                .filter(|v| !v.is_nan())
+                .fold((self.lo, self.hi), |(lo, hi), v| (lo.min(*v), hi.max(*v)));
+            self.lo = lo;
+            self.hi = hi;
+            self.open += now.len() as u32;
+            if self.open == bucket {
+                self.close_bucket();
+            }
+            samples = rest;
+        }
+    }
+
+    /// The pyramid of `frames` frames; every channel must have been fed all of them.
+    pub(crate) fn finish(mut self, frames: u64) -> Result<PeakPyramid> {
+        self.close_bucket();
+        let want = frames.div_ceil(u64::from(PEAK_LEVELS[0]));
+        if self.channels.iter().any(|c| c.len() as u64 != want) {
+            return Err(invalid("a channel was not fed every frame"));
+        }
+        PeakPyramid::from_finest(
+            Peaks {
+                frames_per_bucket: PEAK_LEVELS[0],
+                channels: self.channels,
+            },
+            self.sample_rate,
+            frames,
+        )
+    }
+}
+
 /// Several peak resolutions of one clip, finest first.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PeakPyramid {
@@ -157,18 +240,28 @@ pub struct PeakPyramid {
 impl PeakPyramid {
     /// Builds the [`PEAK_LEVELS`] pyramid: the finest level from the samples, the rest by merging.
     pub fn build(data: &AudioData) -> Result<Self> {
-        let mut levels = vec![compute_peaks(data, PEAK_LEVELS[0])?];
+        Self::from_finest(
+            compute_peaks(data, PEAK_LEVELS[0])?,
+            data.sample_rate,
+            data.frames() as u64,
+        )
+    }
+
+    /// The pyramid whose finest level is `finest` (the [`PEAK_LEVELS`] finest bucket size).
+    fn from_finest(finest: Peaks, sample_rate: u32, frames: u64) -> Result<Self> {
+        let mut levels = vec![finest];
         for pair in PEAK_LEVELS.windows(2) {
             let finer = levels.last().ok_or_else(|| invalid("no finest level"))?;
             let next = finer.coarsen(pair[1] / pair[0])?;
             levels.push(next);
         }
         Ok(Self {
-            sample_rate: data.sample_rate,
-            frames: data.frames() as u64,
+            sample_rate,
+            frames,
             levels,
         })
     }
+
     /// Sample rate of the source audio.
     pub fn sample_rate(&self) -> u32 {
         self.sample_rate
