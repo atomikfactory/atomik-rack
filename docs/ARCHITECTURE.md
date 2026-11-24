@@ -8231,7 +8231,8 @@ A bug in a device must cost that device, not the session. The rules:
   is the test-only switch; [idle_skip.rs](../crates/engine/tests/idle_skip.rs) holds the rule's tests. The built-in
   devices that answer `quiescent` are the stereo delay, the echo, the reverb, the space reverb and the modulation
   effect (the bypass wrapper forwards for every effect it wraps), and the instruments: the organ, the sampler, the
-  granular synth, the FM synth and the wavetable synth; each one has a unit test that skipping equals processing
+  granular synth, the FM synth, the wavetable synth and the poly synth (so the mono bass, which is the same engine;
+  the dual layer is not skipped); each one has a unit test that skipping equals processing
   and an engine-level render test
   ([idle_stereo_delay.rs](../crates/render/tests/idle_stereo_delay.rs),
   [idle_effects.rs](../crates/render/tests/idle_effects.rs),

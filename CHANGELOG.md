@@ -339,6 +339,12 @@ may break APIs and the patch and project formats.
   parameter message reaches it; only its LFO is moved on, so the position sweep, the vibrato and the filter sweep of
   the next note start where they would have, and the audio is byte for byte the same. Twenty idle wavetable synths
   cost 9.0 us a batch before and 4.4 us after.
+- **An idle poly synth and mono bass are no longer processed.** A poly synth (and the mono bass, which is the same
+  engine) with no voice active or waiting to start, nothing on its LFO output, its gains settled and its chorus and
+  echo emptied (the echo needs its 1.4 s ring and its repeats flushed) is left uncalled by the engine while no note,
+  controller or parameter message reaches it; only its LFOs and the chorus sweep are moved on, LFO 2 only while it
+  has a destination as before, so the next note finds them where they would have been, and the audio is byte for
+  byte the same. Twenty idle poly synths cost 9.0 us a batch before and 3.9 us after.
 
 ### Fixed
 - **Dropping an instrument above its mix channel.** An instrument dragged to the place above its own mix channel

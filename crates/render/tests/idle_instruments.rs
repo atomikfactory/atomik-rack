@@ -149,6 +149,54 @@ const CASES: &[Case] = &[
         // second after each chord (13,060 of 15,000).
         min_skipped: [10_000, 10_000],
     },
+    Case {
+        name: "poly-synth",
+        type_id: "atomik.poly-synth",
+        outs: ["out_l", "out_r"],
+        params: &[
+            ("lfo.wave", 4.0),
+            ("lfo.rate", 7.3),
+            ("lfo.to_pitch", 2.0),
+            ("lfo.to_cutoff", 0.5),
+            ("lfo2.wave", 4.0),
+            ("lfo2.rate", 5.1),
+            ("lfo2.to_pitch", 1.0),
+            ("noise.level", 0.1),
+            ("drift", 0.5),
+            ("spread", 0.4),
+            ("chorus.mix", 0.4),
+            ("chorus.rate", 1.3),
+            ("delay.mix", 0.3),
+            ("delay.time", 40.0),
+            ("delay.feedback", 0.01),
+        ],
+        keys: &[48, 55, 64],
+        change: ("master.level", -3.0),
+        samples: false,
+        // The echo ring (65,536 samples, 1.4 s) is spent a second and a half after each chord
+        // (10,550 of 15,000).
+        min_skipped: [9_000, 9_000],
+    },
+    Case {
+        name: "mono-bass",
+        type_id: "atomik.mono-bass",
+        outs: ["out_l", "out_r"],
+        params: &[
+            ("lfo.wave", 4.0),
+            ("lfo.rate", 7.3),
+            ("lfo.to_pitch", 2.0),
+            ("lfo2.to_level", 0.3),
+            ("delay.mix", 0.2),
+            ("delay.time", 40.0),
+            ("delay.feedback", 0.01),
+        ],
+        keys: &[36, 43, 48],
+        change: ("master.level", -3.0),
+        samples: false,
+        // The default chorus and the echo ring are spent about a second and a half after each
+        // chord.
+        min_skipped: [9_000, 9_000],
+    },
 ];
 
 /// One mono zone over every key: 8,192 frames of a wave built from two parabolas (no libm call),
@@ -407,4 +455,11 @@ fn the_fm_synth_renders_the_same_bytes_skipped_or_not() {
 #[test]
 fn the_wavetable_synth_renders_the_same_bytes_skipped_or_not() {
     scenarios(case("wavetable-synth"));
+}
+
+#[test]
+fn the_poly_synth_and_the_mono_bass_render_the_same_bytes_skipped_or_not() {
+    for name in ["poly-synth", "mono-bass"] {
+        scenarios(case(name));
+    }
 }

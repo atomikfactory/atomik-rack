@@ -872,6 +872,7 @@ three-note chord), before (the tree without the change) and after; the limit is 
 | granular | 2.274 ms | 1.259 ms | 4.656 ms | 4.713, 4.667 ms (+1.2 %, +0.2 %) |
 | fm synth | 2.418 ms | 0.931 ms | 7.076, 7.181, 7.320 ms | 7.259, 7.027, 7.077, 7.068 ms (-1.2 % on the means, noise) |
 | wavetable synth | 2.315 ms | 1.115 ms | 3.980 ms | 4.042, 3.955 ms (+1.6 %, -0.6 %) |
+| poly synth | 2.306 ms | 1.002 ms | 2.338 ms | 2.330, 2.327 ms (-0.3 %, noise) |
 
 Organ: the answer is computed once at the end of a batch and only when no key sounds (a chord ends the check at the
 first voice). What it reads then is a handful of flags and settled-smoother tests, the scan-line zero counter the
@@ -908,3 +909,13 @@ smoother tests; nothing in the sample loop. The published position of the newest
 batch already and reads -1 when no voice runs, which is the value a skipped batch leaves. The skip-on row is the LFO
 stepped sample by sample. The default patch is quiescent 217 batches after the last key is released and one batch
 from the start.
+
+Poly synth (and the mono bass, which is the same engine under another descriptor): the same pass over the voices, the
+smoother tests, and for each effect that is on the check of its lines: the chorus's two rings (a vectorised OR of about
+1,450 floats each) and the echo's two zero counters (`track_zeros` on the lines, set when the lines are made at
+`prepare`, so a write counts the zeros it stores: a compare and an add a sample, paid only while the echo is on; the
+default patch has it off). The echo is the long wait: its ring is 65,536 samples and the repeats (feedback 0.35,
+ping-pong) take about 43 passes of 0.3 s to flush below 1e-20, so a patch with the echo on rests about 13 s after the
+last key and one with feedback 0 about 1.4 s after it. LFO 2 is stepped only while it has a destination, exactly as
+the batch does. The default patch is quiescent 217 batches after the last key is released and one batch from the
+start; the mono bass with its defaults 96.

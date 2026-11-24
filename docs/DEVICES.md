@@ -180,6 +180,19 @@ level; there is glide, legato, a stereo spread, drift and an in-device chorus an
     sides at the centre, the far side falls as cos(|pan|·π/2), the near side stays at 1.
 - **Randomness.** The noise and the sample & hold LFO are seeded from the patch seed and the device
   instance, so renders are reproducible.
+- **Idle.** With no voice active or waiting to start (a releasing voice and a steal fade count as active), no cable
+  on `lfo_cv_out`, the master gain and the volume and expression gain on their targets and, for each effect that
+  is on, its lines holding only zeros (the chorus: 30 ms of silence; the echo: its whole ring of 65,536 samples,
+  1.4 s at 48 kHz, and the repeats flushed to zero, which takes about 43 repeats at the default feedback), the
+  synth says it is quiescent and the engine leaves it uncalled while it gets no note, controller or parameter
+  message. It only moves the LFOs on, with the same additions and wraps as a processed silent batch: LFO 1 (its
+  shape is not evaluated, as `process` does when nothing reads it), LFO 2 only while it has a destination (its
+  phase waits otherwise, so a stretch skipped before a destination is set leaves it where it was) and the chorus
+  LFO. The noise, the drift and the start angles belong to the voices and are drawn only while one runs or starts.
+  A cable on the level, pan or resonance CV does not keep it awake. The default patch rests 217 batches (its
+  release) after the last key is released. The Mono Bass is this engine and rests the same way (96 batches with
+  its defaults). The Dual Layer is not skipped: it asks for none of this and is processed every batch. The audio is
+  bit for bit the same.
 
 ### Expansion (appended params)
 
