@@ -274,6 +274,18 @@ may break APIs and the patch and project formats.
   C runtime, made for every read; the whole part is now cut out of the delay's bits (and `aarch64` still uses its
   instruction), with no output bit changed. The two reverbs are about 10 % cheaper per batch (about 4.1 to 3.7 ms per
   256 batches), a granular synth about 10 % and the rotary speaker about 6 %.
+- **A one-pole smoother that sits on its target is not stepped.** `OnePoleSmoother::next_value` returns at once
+  when the value already is the target (compared by bits, finite), which is exactly what the step would leave. The
+  guitar amp, which steps three of them for every sample, is about 15 % cheaper per batch (about 10.9 to 9.3 ms per
+  256 batches), with no output bit changed.
+- **The wavetable synth looks up its tables once per control step, not per sample.** The stored cycles of the two
+  oscillators (current and fading-out table) were resolved for every sample of a voice; they only change when a
+  voice takes a new table or starts, so they are now resolved there. The chord row is about 6 % cheaper per batch
+  (about 4.6 to 4.3 ms per 256 batches), with the same slices and so the same bits.
+- **Creating a Character device no longer parses its voicing again.** Every instance parsed the embedded voicing
+  tables and built all sixteen preset chains once more to check them, on the thread that inserts the device. The
+  tables are now parsed and checked once per process and shared: creating a device takes about 40 % less time
+  (1.5 to 0.9 ms) and makes a fifth of the allocations (2,961 to 601), and its output is unchanged.
 - **An idle stereo delay is no longer processed.** A stereo delay (alone or inside its bypass) whose repeats have died
   away and whose input is silent is left uncalled by the engine until sound, a note, a parameter or tempo change, a
   new cabling or a transport change reaches it; the rendered audio is byte for byte the same. Twenty idle stereo
