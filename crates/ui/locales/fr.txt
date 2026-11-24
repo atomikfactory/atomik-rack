@@ -2381,6 +2381,7 @@ Learn from the plugin window needs a loaded plugin device => L'apprentissage dep
 Select a plugin device first => Sélectionnez d'abord un appareil plugin
 A VCA level cannot be assigned to a macro => Un niveau de VCA ne peut pas être assigné à une macro
 A VCA level has no lane in the arrangement => Un niveau de VCA n'a pas de voie dans l'arrangement
+Safe mode: temporary settings, no audio device, no plugins, no project reopened. Nothing is saved to your settings. => Mode sans échec : réglages temporaires, aucun périphérique audio, aucun plugin, aucun projet rouvert. Rien n'est enregistré dans vos réglages.
 A project archive is already being made => Une archive de projet est déjà en cours de création
 Add a reference track first => Ajoutez d'abord une piste de référence
 Add a reference track to measure the mix against => Ajoutez une piste de référence pour comparer le mix

@@ -2563,3 +2563,12 @@ with files that the tests make themselves, in `crates/tab/tests/gp_fixtures`:
   and what read is written and read again. The run was repeated with overflow checks on.
 - The fuzz targets tab_gp, tab_musicxml, tab_ascii and chord_sheet are seeded by `scripts/fuzz-seed.sh`; the file
   seeds are written by the ignored tests `write_fuzz_seeds` (nothing is downloaded).
+
+## Safe mode
+
+`atomik --safe` starts with temporary default settings in `%TEMP%tomik-rack-safe-<pid>` (removed at exit), no audio
+device, no plugins and no reopened project; the title bar ends in `[Safe mode]`. The decision is a pure function
+(`Cli::start_plan`, tested in `cli.rs`: the settings path is temporary, audio and plugins are off, the saved file is not
+read). Hand check: with a settings file in place, run `atomik --safe`, change a setting, quit, and confirm the real
+`settings.json`, `recent.json` and `recovery` folder are untouched and the temporary folder is gone. Never combine it
+with `--play`.

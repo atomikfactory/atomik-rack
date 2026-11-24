@@ -5335,6 +5335,12 @@ take the app down; Settings > Plugins can switch back to running plugins inside 
   about (an unreadable marker, note or folder) is kept, a run with its own `--settings` file or in
   safe mode does not sweep (it cannot see the notes of the usual folder), and one log line gives the
   count and the bytes freed.
+- **Safe mode.** `atomik --safe` (`Cli::start_plan`) keeps the settings, the keymap, the recent songs,
+  the window state and the recovery folder in a temporary folder `atomik-rack-safe-<pid>` that is
+  removed at exit; the saved settings are neither read nor written. No audio stream is opened, plugins
+  are off (nothing scanned or loaded; their devices show as stand-ins), the last project is not
+  reopened, and neither the first-run setup nor the update check start. The window title ends in
+  `[Safe mode]` and a message says so. Logs and crash reports still go to the usual folder.
 - **The sandbox** ([plugin-sandbox](../crates/plugin-sandbox/src),
   [plugin-ipc](../crates/plugin-ipc/src), [plugin-hostd](../crates/plugin-hostd/src)).
   `SandboxBackend` is a `PluginBackend` like the format backends: `instantiate` starts one

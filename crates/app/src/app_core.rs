@@ -319,6 +319,8 @@ pub struct AppCore<S: EngineSink> {
     open_stages: Stages,
     target: Arc<NoteTarget>,
     rejection: Option<String>,
+    /// A safe-mode run (`--safe`): only the window title reads it.
+    safe_mode: bool,
     arrangement: ArrangementView,
     piano_roll: PianoRollView,
     tab_editor: TabEditorView,
@@ -694,6 +696,7 @@ impl<S: EngineSink> AppCore<S> {
             recent_path: None,
             target,
             rejection: None,
+            safe_mode: false,
             arrangement: ArrangementView::new(theme.clone()),
             piano_roll: PianoRollView::new(theme.clone()),
             tab_editor: TabEditorView::new(theme.clone()),
@@ -1036,6 +1039,11 @@ impl<S: EngineSink> AppCore<S> {
         self.saved_gen += 1;
     }
 
+    /// Marks this run as a safe-mode run: the window title says so.
+    pub fn set_safe_mode(&mut self, on: bool) {
+        self.safe_mode = on;
+    }
+
     /// The window title: `Atomik Rack — <file name>` (`Untitled` without a file), with ` *`
     /// when there are unsaved changes (rack or song). A song with a title in its information
     /// shows it instead, with the file name after it in brackets.
@@ -1053,7 +1061,8 @@ impl<S: EngineSink> AppCore<S> {
             (false, None) => song.to_string(),
         };
         let dirty = if self.is_dirty() { " *" } else { "" };
-        format!("Atomik Rack \u{2014} {name}{dirty}")
+        let safe = if self.safe_mode { " [Safe mode]" } else { "" };
+        format!("Atomik Rack \u{2014} {name}{dirty}{safe}")
     }
 
     /// The latest rejected command or engine error (also shown by the view until the next

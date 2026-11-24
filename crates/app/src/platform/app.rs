@@ -67,6 +67,9 @@ mod clock {
     }
 }
 
+/// What a safe-mode start tells the user (the window title says it too).
+const SAFE_MODE_NOTE: &str = "Safe mode: temporary settings, no audio device, no plugins, no project reopened. Nothing is saved to your settings.";
+
 /// Starts the sweep of old scratch folders of dead sessions on a background thread and logs what
 /// it freed (see [`crate::recovery::sweep_scratch`]).
 fn start_scratch_sweep(config_dir: &std::path::Path) {
@@ -95,13 +98,21 @@ pub fn run(cli: Cli) -> Result<(), String> {
     // The one place the language of the machine is read: the System choice of the language
     // setting follows it.
     atomik_ui::i18n::set_system_locale(sys_locale::get_locale());
-    let settings_path = cli.settings.clone().or_else(default_settings_path);
+    let plan = cli.start_plan(
+        default_settings_path(),
+        &std::env::temp_dir(),
+        std::process::id(),
+    );
+    let settings_path = plan.settings_path.clone();
     let (saved, settings_error) = match &settings_path {
-        Some(path) => settings::load(path),
-        None => (AudioSettings::default(), None),
+        Some(path) if plan.load_settings => settings::load(path),
+        _ => (AudioSettings::default(), None),
     };
     let config = settings::config_folder(settings_path.as_deref());
     let mut settings = cli.apply(saved);
+    if !plan.plugins {
+        settings.plugins.enabled = false;
+    }
     if cli.stress_audio && settings.stream_threshold_bytes.is_none() {
         settings.stream_threshold_bytes = Some(STRESS_AUDIO_THRESHOLD_BYTES);
     }
@@ -147,7 +158,7 @@ pub fn run(cli: Cli) -> Result<(), String> {
             open_error = Some(format!("stress plugins: {e}"));
         }
     }
-    let mut session = LiveSession::new(SystemBackend, settings, !cli.no_audio);
+    let mut session = LiveSession::new(SystemBackend, settings, plan.audio);
     // The graphics driver's first look at the machine runs beside the rest of the start. It begins
     // once the audio stream runs: both open devices of the system, and the stream starts sooner
     // when it does not wait for the driver.
@@ -163,9 +174,10 @@ pub fn run(cli: Cli) -> Result<(), String> {
         core.set_recent_path(path);
     }
     core.configure_plugins(plugin_config);
-    // Only the usual configuration folder: a run with its own settings file cannot see the
-    // recovery notes of the usual one.
-    if cli.settings.is_none() && !config.fallback {
+    if cli.safe {
+        core.set_safe_mode(true);
+    }
+    if plan.sweep_scratch {
         start_scratch_sweep(&config.dir);
     }
     if let Some(warning) = isolation_warning.filter(|_| plugins_on) {
@@ -284,11 +296,12 @@ pub fn run(cli: Cli) -> Result<(), String> {
     // and the start screen offers the new song, the templates and the recent songs.
     // The very first start (no settings file yet) opens the audio and MIDI setup before the
     // start screen; the update question waits behind it. A screenshot or stress run skips it.
-    if cli.screenshot.is_none() && !cli.stress && !cli.stress_song_loads() {
+    if cli.screenshot.is_none() && !cli.stress && !cli.stress_song_loads() && plan.first_run_prompts
+    {
         shell.first_run_setup();
     }
     if cli.starts_empty() {
-        shell.start_without_project();
+        shell.start_without_project_with(plan.reopen_last);
     }
     // The program's only network client, installed here and nowhere else (a shell without one
     // cannot reach the network). It is used for the optional update check: with no answer to the
@@ -299,15 +312,22 @@ pub fn run(cli: Cli) -> Result<(), String> {
     shell
         .core_mut()
         .set_vision(Arc::new(crate::vision_link::SystemVision::new(&config.dir)));
-    if cli.screenshot.is_none() && !cli.stress && !cli.stress_song_loads() {
+    if cli.screenshot.is_none() && !cli.stress && !cli.stress_song_loads() && plan.first_run_prompts
+    {
         shell.start_update_check();
     }
     let no_config = config
         .fallback
         .then(|| settings::NO_CONFIG_NOTE.to_string());
-    for message in [settings_error.map(|e| e.to_string()), open_error, no_config]
-        .into_iter()
-        .flatten()
+    let safe_note = cli.safe.then(|| SAFE_MODE_NOTE.to_string());
+    for message in [
+        settings_error.map(|e| e.to_string()),
+        open_error,
+        no_config,
+        safe_note,
+    ]
+    .into_iter()
+    .flatten()
     {
         log::warn!("{message}");
         shell.notify(message);

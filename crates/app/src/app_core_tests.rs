@@ -83,6 +83,14 @@ fn temp_path(name: &str) -> std::path::PathBuf {
 // ------------------------------------------------------------------ start-up
 
 #[test]
+fn the_title_says_safe_mode_only_in_a_safe_mode_run() {
+    let mut c = core();
+    assert_eq!(c.title(), "Atomik Rack \u{2014} Untitled");
+    c.set_safe_mode(true);
+    assert_eq!(c.title(), "Atomik Rack \u{2014} Untitled [Safe mode]");
+}
+
+#[test]
 fn new_core_resets_the_engine_for_the_empty_document_and_routes_once() {
     let mut c = rack_only_core();
     let mut calls = c.sink_mut().take();

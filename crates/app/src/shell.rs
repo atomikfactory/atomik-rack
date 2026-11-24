@@ -2877,7 +2877,13 @@ impl<B: AudioBackend> Shell<B> {
     /// the preference says not to). Only the app's window calls it; the headless and MCP
     /// sessions never do, so they never show the screen.
     pub fn start_without_project(&mut self) {
-        if self.restore_last_project() {
+        self.start_without_project_with(true);
+    }
+
+    /// [`Self::start_without_project`], with `reopen_last` false to skip the last-project
+    /// preference (safe mode).
+    pub fn start_without_project_with(&mut self, reopen_last: bool) {
+        if reopen_last && self.restore_last_project() {
             return;
         }
         self.start_with_default_song();

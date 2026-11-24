@@ -15,6 +15,10 @@ may break APIs and the patch and project formats.
   changed). Auto, the default, picks Low power on a machine with 4 or fewer logical CPUs and Full otherwise, once at
   start, and the button says which. The frame rate and the render size apply at once; the worker count from the next
   engine start. Rendered audio does not change.
+- **Safe mode: `atomik --safe`.** Starts with temporary default settings (your saved settings, keymap, recent songs and
+  recovery copies are neither read nor written), no audio device, no plugins loaded or scanned and no project
+  reopened, so a setting, a device or a plugin that stops a normal start cannot. The window title ends in
+  `[Safe mode]` and a message says so. It cannot be combined with `--settings`.
 
 ### Changed
 - **The rack builds the automation values it shows once, not on every paint.** While an automation lane has points,
