@@ -12,7 +12,9 @@
 //! status line and **Cancel Freeze**; the song keeps playing meanwhile. When it is done the audio
 //! is registered in the project's pool (the project bundle, or the session's scratch bundle before
 //! the first save) and one `FreezeTrack` step freezes the track: the instrument and the frozen
-//! effects leave the engine, a player plays the render, and the engine restarts (playback stops).
+//! effects leave the engine, a player plays the render, and all of it happens **live** (see
+//! [`AppCore::sync_frozen_in`]): no engine restart, no stop of playback, no reopening of the audio
+//! stream.
 //!
 //! A render that was asked for is thrown away if the track, its chain, the tempo or the meter
 //! changed while it ran (the audio would not match the track any more); the message says so.
@@ -296,6 +298,90 @@ impl<S: EngineSink> AppCore<S> {
     /// True while a render runs or waits.
     pub fn freeze_busy(&self) -> bool {
         self.audio.freeze.running.is_some() || !self.audio.freeze.queue.is_empty()
+    }
+
+    // ------------------------------------------------------------------ live engine swap
+
+    /// The first half of a freeze, an unfreeze or a re-render applied live: the engine gets the
+    /// devices the expansion has and it lacks (the player of a frozen track, the instrument and
+    /// the effects of an unfrozen one, in the order the expansion lists them) and the new routing,
+    /// which no longer names the devices a frozen track leaves, and the players that stay get
+    /// their new delay. The devices that leave are removed by [`Self::sync_frozen_out`], after the
+    /// song that plays the render was submitted: removal is the engine's own hot path (the device
+    /// is dropped off the audio thread) and it refuses a device the routing still names.
+    ///
+    /// Nothing stops: the stream, the transport and the other tracks run on. All the messages
+    /// wait in the engine's one ordered queue and apply at the same block boundary, so the frozen
+    /// track switches from its live chain to its render between two blocks. The tail of the live
+    /// chain (a reverb or delay still ringing) is cut, as when a device is removed while the song
+    /// plays; there is no crossfade.
+    pub(super) fn sync_frozen_in(
+        &mut self,
+        expanded: &ExpandedRack,
+        inserted: &mut Vec<DeviceKey>,
+    ) {
+        let mut added = false;
+        for device in expanded.devices.iter().filter(|d| !d.frozen) {
+            if self.ids.contains_key(&device.key) {
+                self.update_freeze_player(device);
+                continue;
+            }
+            self.fx_meter_seq.remove(&device.key);
+            self.audio.monitor_sent.remove(&device.key);
+            self.vca_sent.remove(&device.key);
+            self.insert_flat(device);
+            inserted.push(device.key.clone());
+            added = true;
+        }
+        self.submit_routing_with(expanded);
+        if added {
+            // A strip that came back (a freeze with the strip baked in, undone) starts from the
+            // default feeds.
+            self.push_solo_silence();
+            self.push_vca_feeds();
+        }
+    }
+
+    /// The second half (see [`Self::sync_frozen_in`]): removes the engine devices the expansion
+    /// no longer builds (the frozen instrument and effects, the player of an unfrozen track).
+    pub(super) fn sync_frozen_out(&mut self, expanded: &ExpandedRack) {
+        let gone: Vec<DeviceKey> = self
+            .ids
+            .keys()
+            .filter(|k| !expanded.devices.iter().any(|d| !d.frozen && d.key == **k))
+            .cloned()
+            .collect();
+        for key in gone {
+            self.remove_flat(&key);
+            self.vca_sent.remove(&key);
+        }
+    }
+
+    /// Gives a frozen track's player that is already in the engine the delay of its (new) render.
+    fn update_freeze_player(&mut self, device: &atomik_model::ExpandedDevice) {
+        if !device
+            .key
+            .0
+            .ends_with(&format!("/{}", atomik_model::FREEZE_SUFFIX))
+        {
+            return;
+        }
+        let (Some(id), Some(latency)) = (
+            self.ids.get(&device.key).copied(),
+            device.params.get("internal.latency").copied(),
+        ) else {
+            return;
+        };
+        let Some(pid) = self
+            .registry
+            .get(&device.type_id)
+            .and_then(|f| f.descriptor.param_by_key("internal.latency"))
+            .map(|p| p.id)
+        else {
+            return;
+        };
+        let result = self.sink.set_param(id, pid, latency);
+        self.engine_result(result);
     }
 
     /// The status-bar text of a running render: "Freezing Lead 37%" (and how many wait).
@@ -1221,16 +1307,7 @@ impl<S: EngineSink> AppCore<S> {
                     },
                 }));
                 if applied.is_ok() {
-                    let later = if self.restart_deferred {
-                        ": it plays when playback stops"
-                    } else {
-                        ""
-                    };
-                    self.reject(format!(
-                        "Froze {}{}{later}",
-                        job.name,
-                        tail.unwrap_or_default()
-                    ));
+                    self.reject(format!("Froze {}{}", job.name, tail.unwrap_or_default()));
                 }
             }
             Kind::Refreeze => {
@@ -1258,13 +1335,8 @@ impl<S: EngineSink> AppCore<S> {
                         (fold && applied.is_ok()).then(|| self.document.revision());
                 }
                 if applied.is_ok() {
-                    let later = if self.restart_deferred {
-                        ": it plays when playback stops"
-                    } else {
-                        ""
-                    };
                     self.reject(format!(
-                        "Rendered {} again{}{later}",
+                        "Rendered {} again{}",
                         job.name,
                         tail.unwrap_or_default()
                     ));

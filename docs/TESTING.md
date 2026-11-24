@@ -1075,8 +1075,10 @@ channel, saves and loads the ignorable `strip` field, and survives Re-render Fro
 `crates/ui/tests/freeze.rs` covers the header mark and the labelled render, nothing to grab where a
 frozen track's clips are, the tracks a command works on and the registry.
 `crates/app/src/app_core_freeze_tests.rs` runs the worker end to end on a recording sink (the
-progress and the queue, the engine restart without the frozen devices and with the player, the song
-the engine plays, bit-identical bounce of the frozen document, unfreeze, undo and redo, keep audio,
+progress and the queue, the live swap (no engine reset, also while playing: the player inserted, the
+routing, then the removal of the frozen devices), the song the engine plays, bit-identical bounce
+of the frozen document, unfreeze, undo and redo, keep audio, a real offline engine whose output
+after a freeze while playing equals the track frozen beforehand from the swap block on,
 freezing up to the selected device, a render of a track that changed meanwhile thrown away, cancel,
 what cannot be frozen, edits refused with the message, the tail option, bounce in place with and
 without muting, several tracks, the menu state, a new project dropping the render) and

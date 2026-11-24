@@ -31,6 +31,12 @@ may break APIs and the patch and project formats.
   read when the dialog opens and when you press the new Rescan chip beside the audio hosts, which also looks for
   MIDI inputs that appeared; the MIDI ports still refresh once a second. A device plugged in while the dialog is open
   shows after Rescan or when the dialog is opened again.
+- **Freezing and unfreezing a track no longer stops playback or reopens the audio device.** Freeze Track,
+  Unfreeze Track, Re-render Frozen Track and their undo and redo now apply while the song plays: the engine takes the
+  frozen track's player, routing and song and drops the devices that leave through its usual live edit paths, with
+  no engine restart and no stop and start of the audio stream, so freezing a heavy track relieves an overloaded
+  session at once. The track switches between two audio blocks (no crossfade; the tail of its old effects is cut,
+  as when a device is removed during playback). Rendered audio and bounces do not change.
 
 ## [0.5.0-rc.2] - 2026-11-24
 

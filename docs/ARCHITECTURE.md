@@ -2553,8 +2553,19 @@ the project bounce (2.7) with one tap on the rack; neither changes the engine or
   render), the track keeps playing the old render, and `RefreezeTrack` swaps the new one in as one
   undo step (the render is thrown away if the track or its chain changed meanwhile, as for a
   freeze).
-  `SyncOp::FrozenChanged` makes the app restart its engine: `rebuild_engine` skips the frozen
-  devices but spends their ids, so freezing or unfreezing stops playback. With plugins, the worker
+  `SyncOp::FrozenChanged` is applied live, without a restart and while the transport runs
+  (`AppCore::sync_frozen_in` and `sync_frozen_out`, called around the loop of `sync_ops`): the
+  engine gets the devices it lacks (the player of a frozen track, the devices an unfrozen one
+  takes back) through `insert_device`, then one `submit_routing` from the new expansion (the
+  frozen devices' cables are gone), then the song that plays the render, and last `remove_device`
+  for what leaves, which the engine drops off the audio thread. All of it is one run of the
+  engine's ordered control queue, applied at one block boundary: the track switches between two
+  blocks, its old chain's tail (a reverb still ringing) is cut as when a device is removed
+  during playback, and there is no crossfade. Undo and redo of a freeze and of a re-render take
+  the same path (a re-render also gives the player its new delay). The audio stream is not
+  reopened; a sample-rate or channel-count edit still rebuilds the engine. `rebuild_engine`
+  (a new project, an audio restart) still skips the frozen devices and spends their ids. With
+  plugins, the worker
   makes its own `PluginHost` from the app's scan cache and settings with the sandbox of the app in
   bounce mode (an instance may only live on the thread that made the host); without the sandbox
   the worker loads a second instance of each plugin in the app process, on its own thread, from
