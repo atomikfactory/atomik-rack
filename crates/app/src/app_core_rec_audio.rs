@@ -479,8 +479,7 @@ impl<S: EngineSink> AppCore<S> {
             self.stop_tap_when_idle();
             return;
         }
-        let (Some(origin), Some(last), Some(snapshot)) =
-            (rec.origin, rec.last, self.snapshot.clone())
+        let (Some(origin), Some(last), Some(timing)) = (rec.origin, rec.last, self.timing.clone())
         else {
             // The transport never played: nothing to place.
             let _ = rec.ctl.send(Ctl::Cancel);
@@ -510,7 +509,7 @@ impl<S: EngineSink> AppCore<S> {
             end_engine_frame: end,
             compensation,
             valid_from,
-            position: Box::new(move |frame| snapshot.position_at(&last, frame, rate)),
+            position: Box::new(move |frame| timing.position_at(&last, frame, rate)),
         };
         if rec.ctl.send(Ctl::Finish(Box::new(finish))).is_err() {
             self.audio.rec_pending = self.audio.rec_pending.saturating_sub(1);

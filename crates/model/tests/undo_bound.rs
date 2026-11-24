@@ -168,6 +168,106 @@ fn the_assets_of_forgotten_steps_leave_the_pool_at_the_next_prune() {
     );
 }
 
+fn touch(d: &mut Document, reg: &atomik_device_sdk::Registry, value: f32) {
+    d.apply(
+        Command::SetParam {
+            key: key("audio-track"),
+            param: "monitor".into(),
+            value,
+            merge: None,
+        },
+        reg,
+    )
+    .unwrap();
+}
+
+/// A document in which asset 1's only clip was deleted: the history still holds the clip.
+fn deleted_clip(reg: &atomik_device_sdk::Registry) -> Document {
+    let mut d = with_audio_track(reg);
+    d.apply(add_audio_clip("audio-track", 0, BAR, 1), reg)
+        .unwrap();
+    let id = last(&d);
+    d.apply(sc(SongCommand::RemoveClip { id }), reg).unwrap();
+    d
+}
+
+#[test]
+fn a_deleted_asset_is_kept_while_a_step_can_bring_it_back_and_let_go_when_none_can() {
+    let reg = audio_registry();
+    let none = std::collections::BTreeSet::new();
+    let mut d = deleted_clip(&reg);
+    assert!(
+        d.release_dropped_assets(&none).is_empty(),
+        "no step was dropped"
+    );
+    // The step that deleted the clip is still there: undo brings the clip back with its asset.
+    assert!(d.undo().is_some());
+    assert!(d.doc().assets.contains_key(&hash(1)));
+    assert!(!clip_ids(d.doc()).is_empty());
+    // Redo deletes it again, undo again: the steps are only moved, never dropped.
+    assert!(d.redo().is_some() && d.undo().is_some() && d.redo().is_some());
+    assert!(d.release_dropped_assets(&none).is_empty());
+    assert!(d.doc().assets.contains_key(&hash(1)));
+
+    // The history is trimmed past the step that added the clip: now nothing can bring it back.
+    d.set_undo_limits(2, MAX_UNDO_BYTES);
+    touch(&mut d, &reg, 2.0);
+    touch(&mut d, &reg, 0.0);
+    assert_eq!(d.release_dropped_assets(&none), vec![hash(1)]);
+    assert!(!d.doc().assets.contains_key(&hash(1)));
+    assert!(
+        d.doc().assets.contains_key(&hash(2)),
+        "an unused asset is not a candidate"
+    );
+    assert!(
+        d.release_dropped_assets(&none).is_empty(),
+        "each asset is let go once"
+    );
+    // The history that is left still works.
+    assert!(d.undo().is_some() && d.undo().is_some() && d.redo().is_some());
+}
+
+#[test]
+fn an_asset_a_redo_step_holds_is_let_go_when_a_new_edit_drops_the_redo_history() {
+    let reg = audio_registry();
+    let none = std::collections::BTreeSet::new();
+    let mut d = with_audio_track(&reg);
+    d.apply(add_audio_clip("audio-track", 0, BAR, 1), &reg)
+        .unwrap();
+    // Undone: the clip is gone, only the redo step holds asset 1.
+    assert!(d.undo().is_some());
+    assert!(d.release_dropped_assets(&none).is_empty());
+    assert!(d.doc().assets.contains_key(&hash(1)));
+    d.set_undo_limits(1, MAX_UNDO_BYTES);
+    touch(&mut d, &reg, 2.0);
+    assert!(!d.can_redo());
+    assert_eq!(d.release_dropped_assets(&none), vec![hash(1)]);
+    assert!(!d.doc().assets.contains_key(&hash(1)));
+}
+
+#[test]
+fn a_holder_outside_the_history_and_a_new_registration_keep_a_dropped_asset() {
+    let reg = audio_registry();
+    let mut d = deleted_clip(&reg);
+    d.set_undo_limits(1, MAX_UNDO_BYTES);
+    touch(&mut d, &reg, 2.0);
+    // A clipboard that holds a copy of the clip names its asset in `keep`.
+    let keep: std::collections::BTreeSet<String> = [hash(1)].into();
+    assert!(d.release_dropped_assets(&keep).is_empty());
+    assert!(d.doc().assets.contains_key(&hash(1)));
+
+    // A recording that arrives as the same content registers the asset again before its clip
+    // is placed: the pool entry stays for it.
+    let mut d = deleted_clip(&reg);
+    d.set_undo_limits(1, MAX_UNDO_BYTES);
+    touch(&mut d, &reg, 2.0);
+    d.apply(register(1, 480_000), &reg).unwrap();
+    assert!(d.release_dropped_assets(&Default::default()).is_empty());
+    d.apply(add_audio_clip("audio-track", 0, BAR, 1), &reg)
+        .unwrap();
+    assert!(d.doc().assets.contains_key(&hash(1)));
+}
+
 #[test]
 fn a_copy_of_a_document_shares_the_notes_until_one_copy_changes_them() {
     let reg = registry();

@@ -612,6 +612,7 @@ impl<S: EngineSink> AppCore<S> {
             return;
         };
         self.document.commit_trial();
+        self.release_dropped_assets();
         self.end_patch_target();
         if let Some(dir) = self.patches.last.get(&b.device).and_then(|p| p.parent()) {
             self.patches.folders.insert(b.type_id, dir.to_path_buf());

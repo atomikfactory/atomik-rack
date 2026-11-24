@@ -124,7 +124,7 @@ impl<S: EngineSink> AppCore<S> {
             return None;
         }
         let rate = f64::from(self.doc().sample_rate);
-        self.snapshot
+        self.timing
             .as_ref()?
             .pre_roll(Ticks(self.position.max(0)), bars, rate)
     }
