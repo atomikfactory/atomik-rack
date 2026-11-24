@@ -7285,8 +7285,10 @@ stderr is their output).
 - **The panic hook.** [crash.rs](../crates/app/src/crash.rs) installs a hook once. A panic writes
   `crash-<timestamp>.txt` next to the log: message, place, thread, a forced backtrace, the version,
   the OS and the audio and MIDI devices the session had open; then the previous hook runs. A panic
-  on an audio or render thread (`is_realtime_thread`) does no file I/O: it raises a flag and the UI
-  thread writes the report on its next status poll. The engine's fault containment is unchanged; the
+  on an audio or render thread does no file I/O: it raises a flag and the UI thread writes the report
+  on its next status poll. The hook knows such a thread by its name (`is_realtime_thread`) or by a
+  thread-local mark that every stream callback sets first thing (`atomik_audio_io::on_callback_thread`),
+  because the callback threads of some audio backends have no name. The engine's fault containment is unchanged; the
   report says it happened.
 - **Overload counters.** `status::OverloadStats` gathers what the real-time side dropped or could
   not do in time: note events dropped (`EngineHandle::dropped_events`), input overruns, frames the

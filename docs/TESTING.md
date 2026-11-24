@@ -1854,7 +1854,8 @@ is `session_open`, edit, kill the server process, `session_open` again.
 reopened log appends, a folder that cannot be made is an error and the logger still works),
 `crash.rs` the hook tests (a panic on a thread writes a report with the message, the thread, a
 backtrace, the version and the devices, the guard puts the previous hook back, a panic on a render
-thread writes nothing and the UI thread's flush does), `diagnostics.rs` the report tests (home
+thread writes nothing and the UI thread's flush does, an unnamed thread that ran a stream callback counts as an
+audio thread), `diagnostics.rs` the report tests (home
 folders hidden in every spelling, the log, the crash report and the counters present, a report with
 no files) and `status.rs` the status-bar string with every counter.
 `crates/app/tests/no_eprintln.rs` fails when production code of any crate but the command-line

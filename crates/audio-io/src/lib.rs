@@ -81,6 +81,7 @@ pub use histogram::{
     time_bucket_max_ns,
 };
 pub use liveness::{Liveness, STALL_MIN, STALL_PERIODS, START_GRACE, StreamState, stall_after};
+pub use rt::{mark_callback_thread, on_callback_thread};
 pub use stream::{RunningStream, StreamInfo, list, start, start_with_input};
 pub use telemetry::{LoadMeter, XrunDetector, is_late, is_overrun};
 

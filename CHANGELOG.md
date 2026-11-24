@@ -57,6 +57,9 @@ may break APIs and the patch and project formats.
 - **Exporting a patch, a MIDI file or MIDI mappings, a tab or chord sheet, the device list or the diagnostics report
   can no longer leave half a file.** They write a temporary file and rename it, as a project save does, so a failed
   export keeps the file that was there.
+- **A contained panic on an unnamed audio thread no longer writes a file on that thread.** Some audio backends run the
+  callback on a thread with no name, which the crash hook could not recognise; every stream callback now marks its
+  thread.
 
 ## [0.5.0-rc.2] - 2026-11-24
 
