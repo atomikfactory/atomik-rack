@@ -1767,7 +1767,13 @@ mod tests {
             let mut host = PluginHost::new();
             host.set_catalog(&cache, &crate::plugins::bounce_settings(), &mut registry);
             let plugin = PluginRef::from_type_id("clap.atomik.test.synth").unwrap();
-            let layout = host.catalog().entry(&plugin).unwrap().layout.clone();
+            let layout = host
+                .catalog()
+                .entry(&plugin)
+                .unwrap()
+                .layout
+                .as_ref()
+                .clone();
             let mut d = Document::new(empty_doc());
             d.apply(
                 Command::Plugin(PluginCommand::Add {
@@ -1824,7 +1830,7 @@ mod tests {
                 index: usize::MAX,
                 container: None,
                 plugin: entry.plugin,
-                layout: entry.layout,
+                layout: (*entry.layout).clone(),
                 path_hint: None,
                 key: Some(key("px")),
                 auto_split: false,

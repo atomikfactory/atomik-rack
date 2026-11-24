@@ -112,8 +112,9 @@ pub struct PluginEntryInfo {
     pub status: PluginEntryStatus,
     /// The file that holds it (shown, never used by the UI).
     pub path: Option<String>,
-    /// The scanned layout: what `PluginCommand::Add` and `Relink` carry.
-    pub layout: PluginLayout,
+    /// The scanned layout: what `PluginCommand::Add` and `Relink` carry. Shared with the
+    /// catalog entry it comes from, so the rows of a large catalog hold no copy of the tables.
+    pub layout: std::sync::Arc<PluginLayout>,
     /// The user's star and tags.
     pub marks: PluginMarks,
 }

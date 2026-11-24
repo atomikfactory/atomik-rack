@@ -1249,7 +1249,7 @@ mod tests {
             category: atomik_device_sdk::PluginCategory::from_kind(kind),
             status: PluginEntryStatus::Ok,
             path: None,
-            layout: PluginLayout {
+            layout: std::sync::Arc::new(PluginLayout {
                 name: name.into(),
                 vendor: vendor.into(),
                 version: "1".into(),
@@ -1261,7 +1261,7 @@ mod tests {
                 notes_out: false,
                 aux_out: 0,
                 params: Vec::new(),
-            },
+            }),
             marks: crate::plugin_data::PluginMarks::default(),
         }
     }

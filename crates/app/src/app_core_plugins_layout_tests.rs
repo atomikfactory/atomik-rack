@@ -17,7 +17,7 @@ fn source_of(core: &AppCore<OfflineSink>, type_id: &str) -> CreateSource {
         .expect("in the catalog");
     CreateSource::Plugin {
         plugin,
-        layout: entry.layout.clone(),
+        layout: (*entry.layout).clone(),
         path_hint: Some(entry.path.to_string_lossy().into_owned()),
     }
 }

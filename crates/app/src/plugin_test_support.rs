@@ -91,7 +91,7 @@ pub fn add_command<S: EngineSink>(core: &AppCore<S>, type_id: &str, k: &str) -> 
         index: usize::MAX,
         container: None,
         plugin,
-        layout: entry.layout.clone(),
+        layout: (*entry.layout).clone(),
         path_hint: None,
         key: Some(key(k)),
         auto_split: false,

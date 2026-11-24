@@ -627,7 +627,13 @@ fn a_vst3_instrument_can_be_added_inside_a_container() {
     );
     let id = vst3_id(&core, VST3_SYNTH);
     let plugin = atomik_device_sdk::PluginRef::from_type_id(&id).unwrap();
-    let layout = core.plugin_catalog().entry(&plugin).unwrap().layout.clone();
+    let layout = core
+        .plugin_catalog()
+        .entry(&plugin)
+        .unwrap()
+        .layout
+        .as_ref()
+        .clone();
     apply(
         &mut core,
         Command::Plugin(PluginCommand::Add {

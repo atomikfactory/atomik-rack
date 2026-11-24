@@ -418,6 +418,44 @@ fn the_same_layout_gives_the_same_pointer_and_another_layout_another_one() {
 }
 
 #[test]
+fn a_shared_layout_is_held_once_and_gives_the_descriptor_of_the_plain_path() {
+    let interner = Interner::with_limit(8);
+    let shared = Arc::new(layout(PluginKindHint::Effect));
+    assert_eq!(Arc::strong_count(&shared), 1);
+    let a = interner
+        .descriptor_for_shared(&clap("x.shared"), &shared)
+        .unwrap();
+    assert_eq!(
+        Arc::strong_count(&shared),
+        2,
+        "the table keeps the caller's Arc, not a copy of the layout"
+    );
+    // A known layout is served from the table, shared or plain, with nothing more kept.
+    let b = interner
+        .descriptor_for_shared(&clap("x.shared"), &Arc::new((*shared).clone()))
+        .unwrap();
+    let c = interner
+        .descriptor_for(&clap("x.shared"), &layout(PluginKindHint::Effect))
+        .unwrap();
+    assert!(std::ptr::eq(a, b) && std::ptr::eq(a, c));
+    assert_eq!(interner.len(), 1);
+    assert_eq!(Arc::strong_count(&shared), 2);
+    // The plain path interns the same descriptor as the shared one would have built.
+    let plain = Interner::with_limit(8)
+        .descriptor_for(&clap("x.shared"), &shared)
+        .unwrap();
+    assert_eq!(plain.params.len(), a.params.len());
+    assert_eq!(
+        plain
+            .params
+            .iter()
+            .map(|p| (p.key, p.name))
+            .collect::<Vec<_>>(),
+        a.params.iter().map(|p| (p.key, p.name)).collect::<Vec<_>>()
+    );
+}
+
+#[test]
 fn the_intern_cap_refuses_new_layouts_but_keeps_serving_known_ones() {
     let interner = Interner::with_limit(3);
     let l = layout(PluginKindHint::Effect);

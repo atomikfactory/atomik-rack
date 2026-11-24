@@ -12,10 +12,11 @@ use crate::layout::merge_pinned;
 use crate::settings::PluginSettings;
 use atomik_device_sdk::{
     PluginCategory, PluginFormat, PluginKindHint, PluginLayout, PluginParamInfo, PluginRef,
-    Registry, descriptor_for,
+    Registry, descriptor_for_shared,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 /// Whether a plugin can be used.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -55,8 +56,9 @@ pub struct PluginEntry {
     pub status: PluginStatus,
     /// The param table was cut at 2 048.
     pub params_truncated: bool,
-    /// The scanned layout (for descriptors).
-    pub layout: PluginLayout,
+    /// The scanned layout (for descriptors). Shared: the registry's table of interned
+    /// descriptors and the browser's rows hold this one copy instead of their own.
+    pub layout: Arc<PluginLayout>,
 }
 
 /// A file that failed to scan (the blacklist, as the settings list shows it).
@@ -144,7 +146,7 @@ impl PluginCatalog {
                     path: file.path.clone(),
                     status,
                     params_truncated: p.params_truncated,
-                    layout: p.layout.clone(),
+                    layout: Arc::new(p.layout.clone()),
                 });
             }
         }
@@ -219,23 +221,20 @@ impl PluginCatalog {
                 continue;
             }
             let type_id = entry.plugin.type_id();
-            let merged;
-            let layout = match pins.get(&entry.plugin) {
+            let result = match pins.get(&entry.plugin) {
                 Some(rows) => {
-                    let mut layout = entry.layout.clone();
+                    let mut layout = (*entry.layout).clone();
                     merge_pinned(&mut layout, rows);
-                    merged = layout;
-                    &merged
+                    descriptor_for_shared(&entry.plugin, &Arc::new(layout))
                 }
-                None => &entry.layout,
-            };
-            let result = descriptor_for(&entry.plugin, layout)
-                .map_err(|e| e.to_string())
-                .and_then(|d| {
-                    registry
-                        .register_plugin(type_id.clone(), d)
-                        .map_err(|e| e.to_string())
-                });
+                None => descriptor_for_shared(&entry.plugin, &entry.layout),
+            }
+            .map_err(|e| e.to_string())
+            .and_then(|d| {
+                registry
+                    .register_plugin(type_id.clone(), d)
+                    .map_err(|e| e.to_string())
+            });
             match result {
                 Ok(()) => {
                     files(&entry.plugin, &entry.path);

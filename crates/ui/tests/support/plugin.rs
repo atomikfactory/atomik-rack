@@ -199,7 +199,7 @@ pub fn entry(p: PluginRef, layout: PluginLayout, status: PluginEntryStatus) -> P
         category: atomik_device_sdk::PluginCategory::from_kind(layout.kind_hint),
         status,
         path: Some("C:/Plugins/test.clap".into()),
-        layout,
+        layout: layout.into(),
         marks: Default::default(),
     }
 }

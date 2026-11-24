@@ -156,6 +156,21 @@ pub fn peak_heap_of<R>(f: impl FnOnce() -> R) -> (R, usize) {
     (result, usize::try_from(peak).unwrap_or(0))
 }
 
+/// Runs `f` and returns its result with the heap bytes it still holds when it returns (what it
+/// allocated on this thread and did not free: the result itself and anything leaked), where
+/// [`peak_heap_of`] gives the highest point. Panics if [`install_alloc_guard!`] was not used in
+/// this test binary.
+pub fn held_heap_of<R>(f: impl FnOnce() -> R) -> (R, isize) {
+    drop(std::hint::black_box(Box::new(0u8))); // marks the guard as installed if it is
+    assert!(
+        INSTALLED.load(Ordering::Relaxed),
+        "atomik_testkit::install_alloc_guard!() is missing from this test binary"
+    );
+    let base = LIVE_BYTES.with(Cell::get);
+    let result = f();
+    (result, LIVE_BYTES.with(Cell::get) - base)
+}
+
 /// Runs `f` and returns its result with the number of heap allocations and reallocations it
 /// made on this thread. Panics if [`install_alloc_guard!`] was not used in this test binary.
 pub fn allocations_of<R>(f: impl FnOnce() -> R) -> (R, u64) {

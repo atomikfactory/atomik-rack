@@ -1362,7 +1362,7 @@ fn add_plugin<S: EngineSink>(
         })?;
     let (plugin, layout, path_hint) = (
         entry.plugin.clone(),
-        entry.layout.clone(),
+        (*entry.layout).clone(),
         entry.path.to_string_lossy().into_owned(),
     );
     apply(

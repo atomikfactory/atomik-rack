@@ -4980,7 +4980,7 @@ impl RackView {
                     return Some(self.create_action(
                         CreateSource::Plugin {
                             plugin: e.plugin.clone(),
-                            layout: e.layout.clone(),
+                            layout: (*e.layout).clone(),
                             path_hint: e.path.clone(),
                         },
                         kind,
@@ -4993,7 +4993,7 @@ impl RackView {
                         index,
                         container: None,
                         plugin: e.plugin.clone(),
-                        layout: e.layout.clone(),
+                        layout: (*e.layout).clone(),
                         path_hint: e.path.clone(),
                         key: None,
                         auto_split: false,
