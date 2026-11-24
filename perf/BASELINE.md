@@ -722,3 +722,35 @@ used a truncating conversion or a rounding add (and no comparison on the range) 
 loop of dependent wraps (about 11 and 7 ns against 5 ns). The disassembly of the bench executables carries no symbols
 (the debug information is in a separate file the tool does not read), so the calls that remain were not counted: of
 the one function compiled on its own for a look, the shift form has no call on the path of a delay in range.
+
+## A device that has gone silent is not called (2026-11-24)
+
+The rows are about the engine, not a device: the `idle` rows of the device bench call `process` directly and cannot see
+what the engine leaves out. `cargo bench -p atomik-render --bench render_batch -- idle` renders 256 batches (a third
+of a second at 48 kHz) of an engine holding twenty stereo delays with nothing cabled, so every one reads silence,
+with the skip switched off and on (`Engine::set_idle_skip`); only the render loop is timed, the engine was built and
+had rendered once before. The machine is the one above, release profile with debug information, median of 21 samples,
+three runs each. The stereo delay is quiescent from its first batch (its lines are empty), so the rows are what an
+idle rack of such devices costs. **skip off** is the engine as it was.
+
+| row | skip off, runs | skip on, runs |
+|---|---|---|
+| 20 idle stereo delays, 256 batches | 7.004 ms, 6.808 ms, 6.758 ms | 859.9 us, 802.5 us, 801.0 us |
+
+That is 27 us a batch for the twenty devices before and 3.2 us after (about 0.16 us a node: the gather that fills the
+node's buffers, the test of its inputs and its outputs' copy to the slots, which a skipped node still takes). The
+delay of 4 s needs 4 s of silence after its last repeat before it says it is quiescent: an idle rack saves nothing
+while a tail rings, and a stereo delay left with a long feedback takes minutes to run dry (the repeats fall below
+the flush threshold of the line, 1e-20, only after about 900 passes at a feedback of 0.95).
+
+Does counting the zeros cost a busy line? `cargo bench -p atomik-devices --bench process -- reverb`, three runs each,
+before is the tree without the counter, after the tree with it (the line counts only if asked, see the commit):
+
+| row | before, runs | after, runs |
+|---|---|---|
+| reverb | 3.634 ms, 3.586 ms, 3.619 ms | 3.616 ms, 3.614 ms, 3.610 ms (did not move) |
+| space reverb | 3.650 ms, 3.633 ms, 3.664 ms | 3.792 ms, 3.629 ms, 3.708 ms (noise, one slow run) |
+
+A first form of the counter, kept for every line and branch free, cost the reverb 1.5 % and the space reverb 3.5 %
+(3.667 and 3.778 ms means), which is why a line now counts only after `track_zeros`: a line nobody asked about pays one
+predictable branch a write.

@@ -18,6 +18,10 @@
 //!   through the same 5 ms smoothers. Unconnected, the device is bit-identical to before.
 //! * Buffers hold 4 s at the prepared sample rate (allocated in `prepare`).
 //! * Denormals: the delay lines flush values below 1e-20 on write.
+//! * Idle: once both lines hold only zeros (they track it; the ring is 4 s, so that is 4 s of silence after the last
+//!   repeat), the smoothers and the glide have arrived and no CV is connected, a silent batch changes nothing and the
+//!   device says it is quiescent: the engine then leaves it uncalled while its inputs stay silent (nothing runs free,
+//!   so it needs no `idle_advance`).
 
 use crate::bypass::{Bypassable, bypass_param};
 use crate::channel::finite;
@@ -264,6 +268,8 @@ pub struct StereoDelay {
     fresh: bool,
     line_l: DelayLine,
     line_r: DelayLine,
+    /// The state the last batch left is a fixed point of a silent batch (see `quiescent`).
+    rest: bool,
 }
 
 impl Default for StereoDelay {
@@ -294,6 +300,7 @@ impl StereoDelay {
             fresh: true,
             line_l: DelayLine::new(1),
             line_r: DelayLine::new(1),
+            rest: false,
         }
     }
 }
@@ -323,6 +330,8 @@ impl Device for StereoDelay {
         let max = (f64::from(MAX_DELAY_MS) * 0.001 * info.sample_rate.hz()).ceil() as usize + 1;
         self.line_l.resize(max);
         self.line_r.resize(max);
+        self.line_l.track_zeros();
+        self.line_r.track_zeros();
         self.feedback.set_time(SMOOTH_MS, self.sample_rate);
         self.mix.set_time(SMOOTH_MS, self.sample_rate);
         self.reset();
@@ -332,9 +341,11 @@ impl Device for StereoDelay {
         self.line_l.clear();
         self.line_r.clear();
         self.fresh = true;
+        self.rest = false;
     }
 
     fn set_param(&mut self, id: ParamId, plain: f32) {
+        self.rest = false;
         match id.0 {
             P_MODE => self.sync = plain >= 0.5,
             P_MS => self.time_ms = plain,
@@ -437,6 +448,24 @@ impl Device for StereoDelay {
         }
         *ctx.output(OUT_L) = out_l;
         *ctx.output(OUT_R) = out_r;
+        self.rest = !(cv_connected || mix_conn || fb_conn)
+            && self.feedback.is_settled()
+            && self.mix.is_settled()
+            && self.delay.to_bits() == fixed_target.to_bits()
+            && self.glide_target.to_bits() == fixed_target.to_bits()
+            && self.line_l.holds_only_zeros()
+            && self.line_r.holds_only_zeros();
+    }
+
+    /// At rest when a silent batch would change nothing: both lines hold only zeros (so the
+    /// reads, the feedback and the writes are all `+0.0`), both smoothers have arrived, the
+    /// glide has landed on the time a batch with these params and this tempo asks for, and no CV
+    /// is connected (a connected CV is read each sample and may move a target). A param change
+    /// clears it at once, and the engine runs the batch of a tempo change, a transport change and
+    /// a new cabling. Nothing runs free, so `idle_advance` has nothing to do; the write position
+    /// of a ring of zeros cannot be told from any other.
+    fn quiescent(&self) -> bool {
+        self.rest
     }
 }
 
@@ -750,5 +779,134 @@ mod tests {
         let (l, _) = impulse_response(&mut h, &["in_l"], 384_000 / BATCH + 10);
         let at = argmax_abs(&l);
         assert!(at.abs_diff(384_000) <= 1, "{at}");
+    }
+}
+
+#[cfg(test)]
+mod idle_tests {
+    use super::*;
+    use crate::test_support::harness;
+    use atomik_testkit::harness::DeviceHarness;
+
+    fn noise(state: &mut u32) -> [f32; BATCH] {
+        let mut b = [0.0; BATCH];
+        for x in &mut b {
+            *state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            *x = (*state >> 8) as f32 / (1u32 << 24) as f32 - 0.5;
+        }
+        b
+    }
+
+    fn feed(h: &mut DeviceHarness, l: [f32; BATCH], r: [f32; BATCH]) -> [[f32; BATCH]; 2] {
+        *h.input_mut("in_l") = l;
+        *h.input_mut("in_r") = r;
+        h.process();
+        [*h.output("out_l"), *h.output("out_r")]
+    }
+
+    fn quiet(h: &DeviceHarness) -> bool {
+        h.device().quiescent()
+    }
+
+    fn configured(h: &mut DeviceHarness) {
+        h.set_param("time.mode", 0.0);
+        h.set_param("time.ms", 20.0);
+        h.set_param("feedback", 0.3);
+        h.set_param("mix", 0.5);
+    }
+
+    #[test]
+    fn it_is_quiescent_only_after_the_whole_ring_ran_dry() {
+        let mut h = harness(Box::new(StereoDelay::new()));
+        configured(&mut h);
+        assert!(!quiet(&h), "nothing has run");
+        let silence = [0.0; BATCH];
+        feed(&mut h, silence, silence);
+        assert!(
+            quiet(&h),
+            "a fresh line holds only zeros and its smoothers sit on their targets"
+        );
+        let mut s = 1;
+        for _ in 0..20 {
+            feed(&mut h, noise(&mut s), noise(&mut s));
+            assert!(!quiet(&h));
+        }
+        let mut batches = 0;
+        while !quiet(&h) {
+            feed(&mut h, silence, silence);
+            batches += 1;
+            assert!(batches < 6_000, "it never settled");
+        }
+        // The ring holds 4 s: 4,096 batches of zeros after the last non-zero write (the repeats
+        // die away after a few batches of it).
+        assert!(batches >= 4_000, "{batches} batches");
+        h.set_param("mix", 0.4);
+        assert!(!quiet(&h), "a param change is heard first");
+        feed(&mut h, silence, silence);
+        assert!(!quiet(&h), "the mix smoother has not arrived");
+        for _ in 0..8 {
+            feed(&mut h, silence, silence);
+        }
+        assert!(quiet(&h));
+        h.set_connected("mix_cv_in", true);
+        feed(&mut h, silence, silence);
+        assert!(!quiet(&h), "a connected CV is read every sample");
+    }
+
+    /// One delay processed through the silence, one that is skipped through it the way the
+    /// engine does (the answer is true, nothing was touched, the inputs are silent), with a
+    /// param change and a tempo change in the middle, and sound again after it.
+    #[test]
+    fn skipping_it_in_silence_leaves_what_processing_the_silence_would() {
+        let mut run = harness(Box::new(StereoDelay::new()));
+        let mut skip = harness(Box::new(StereoDelay::new()));
+        for h in [&mut run, &mut skip] {
+            h.set_param("time.mode", 1.0); // synced: the tempo matters
+            h.set_param("time.sync", 0.0); // 1/32
+            h.set_param("feedback", 0.3);
+            h.set_param("mix", 0.5);
+        }
+        let mut s = 3;
+        let mut skipped = 0;
+        for n in 0..20_000 {
+            let sound = n < 30 || (12_000..12_040).contains(&n);
+            let (l, r) = if sound {
+                (noise(&mut s), noise(&mut s))
+            } else {
+                ([0.0; BATCH], [0.0; BATCH])
+            };
+            // The script of the middle of the silence.
+            let changed = match n {
+                8_000 => {
+                    run.set_param("feedback", 0.2);
+                    skip.set_param("feedback", 0.2);
+                    true
+                }
+                9_000 => {
+                    run.time_mut().tempo = atomik_core::Tempo::new(133.0).unwrap();
+                    skip.time_mut().tempo = atomik_core::Tempo::new(133.0).unwrap();
+                    true
+                }
+                _ => false,
+            };
+            let a = feed(&mut run, l, r);
+            if quiet(&skip) && !changed && !sound {
+                // What the engine does: no `process`, the outputs are zeros.
+                skip.device_mut().idle_advance(BATCH);
+                skipped += 1;
+                assert!(a.iter().flatten().all(|x| x.to_bits() == 0), "batch {n}");
+            } else {
+                let b = feed(&mut skip, l, r);
+                assert_eq!(
+                    a.map(|c| c.map(f32::to_bits)),
+                    b.map(|c| c.map(f32::to_bits)),
+                    "batch {n}"
+                );
+            }
+        }
+        assert!(
+            skipped > 6_000,
+            "the scenario skips a lot of batches: {skipped}"
+        );
     }
 }

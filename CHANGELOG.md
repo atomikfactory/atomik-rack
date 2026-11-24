@@ -274,6 +274,11 @@ may break APIs and the patch and project formats.
   C runtime, made for every read; the whole part is now cut out of the delay's bits (and `aarch64` still uses its
   instruction), with no output bit changed. The two reverbs are about 10 % cheaper per batch (about 4.1 to 3.7 ms per
   256 batches), a granular synth about 10 % and the rotary speaker about 6 %.
+- **An idle stereo delay is no longer processed.** A stereo delay (alone or inside its bypass) whose repeats have died
+  away and whose input is silent is left uncalled by the engine until sound, a note, a parameter or tempo change, a
+  new cabling or a transport change reaches it; the rendered audio is byte for byte the same. Twenty idle stereo
+  delays cost 27 us a batch before and 3.2 us after. The device contract has two new methods for this (`quiescent`,
+  `idle_advance`), and no other device uses them yet.
 
 ### Fixed
 - **Dropping an instrument above its mix channel.** An instrument dragged to the place above its own mix channel

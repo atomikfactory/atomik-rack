@@ -15,6 +15,8 @@
 //! with 4 FX returns), `console-64` (64 strips, gate and compressor on), `lanes-200` and
 //! `lanes-2000` (automation lanes), `large-song` (100 tracks, 500 clips, 2,000 notes).
 //! Every scenario bounces `BARS` bars plus the release tail, so a run is a few seconds of audio.
+//! The `idle` rows (`idle/stereo-delay-x20/skip-off` and `skip-on`) render 256 batches of twenty silent stereo
+//! delays through the engine with the idle skip off and on; only the render loop is timed.
 #![allow(
     clippy::disallowed_methods,
     reason = "wall-clock timing is the point of a benchmark"
@@ -71,6 +73,49 @@ fn bounce(doc: &RackDoc, workers: u16, block: usize) -> usize {
     rendered.channels.first().map_or(0, Vec::len)
 }
 
+/// Batches one run of the idle rows renders (a third of a second of audio at 48 kHz, as the
+/// device bench).
+const IDLE_BATCHES: usize = 256;
+/// Stereo delays in the idle rows.
+const IDLE_DELAYS: usize = 20;
+
+/// The engine of the idle rows: twenty stereo delays with nothing connected, so every one reads
+/// silence, with the idle skip on or off, rendered once so each is past its first batch. The
+/// device bench's `idle` rows call `process` directly and cannot see what the engine skips; this
+/// one can. Only the render loop is timed (`render_idle`).
+fn idle_engine(skip: bool) -> (atomik_engine::Engine, atomik_engine::EngineHandle) {
+    use atomik_core::{SampleRate, Tempo};
+    use atomik_engine::{EngineConfig, Graph, new_engine};
+    let config = EngineConfig {
+        sample_rate: SampleRate::new(48_000.0).expect("rate"),
+        tempo: Tempo::new(120.0).expect("tempo"),
+        input_channels: 0,
+        output_channels: 2,
+        seed: 1,
+    };
+    let registry = default_registry();
+    let mut graph = Graph::new(&config);
+    for _ in 0..IDLE_DELAYS {
+        graph.add_device(registry.create("atomik.stereo-delay").expect("registered"));
+    }
+    let (mut engine, mut handle) = new_engine(config);
+    engine.set_idle_skip(skip);
+    handle
+        .submit_plan(graph.compile().expect("compiles"))
+        .expect("queued");
+    render_idle(&mut engine);
+    (engine, handle)
+}
+
+/// One timed run of the idle rows.
+fn render_idle(engine: &mut atomik_engine::Engine) -> usize {
+    let (mut left, mut right) = (vec![0.0f32; 64], vec![0.0f32; 64]);
+    for _ in 0..IDLE_BATCHES {
+        engine.render(&[], &mut [&mut left, &mut right]);
+    }
+    IDLE_BATCHES
+}
+
 /// Nanoseconds since the first call: the clock the app installs for the per-device CPU readout.
 fn bench_clock() -> u64 {
     static ORIGIN: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
@@ -104,6 +149,11 @@ fn main() {
             let secs = time_once(|| bounce(doc, 0, 256));
             println!("{name}: once {secs:.3} s");
         }
+        for skip in [false, true] {
+            let (mut engine, _handle) = idle_engine(skip);
+            let secs = time_once(|| render_idle(&mut engine));
+            println!("idle skip {skip}: once {secs:.3} s");
+        }
         return;
     }
     let full = std::env::var_os("ATOMIK_BENCH_FULL").is_some();
@@ -128,6 +178,18 @@ fn main() {
                 rec.report(&id);
             }
         }
+    }
+    for skip in [false, true] {
+        let id = format!(
+            "idle/stereo-delay-x{IDLE_DELAYS}/skip-{}",
+            if skip { "on" } else { "off" }
+        );
+        let (mut engine, _handle) = idle_engine(skip);
+        let rec = Recorder::new();
+        c.bench_function(&id, |bench| {
+            bench.iter_custom(rec.runner(|| render_idle(&mut engine)));
+        });
+        rec.report(&id);
     }
     c.final_summary();
 }
