@@ -8,6 +8,8 @@ may break APIs and the patch and project formats.
 
 ## [Unreleased]
 
+## [0.5.0-rc.2] - 2026-11-24
+
 ### Added
 - **Drop an effect on the master section.** A browser row that is an effect, dropped on the master section's
   panel in the rack, becomes the next free FX send (send and return wired, a "Send N" group under the master), in
