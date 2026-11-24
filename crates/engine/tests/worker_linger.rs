@@ -96,13 +96,12 @@ fn workers_spin_while_a_callback_runs() {
     for _ in 0..20 {
         render_blocks(&mut engine, &[], 2, 4096, 128);
     }
-    wait_until("workers parked after the last callback", || {
-        engine.worker_parks() >= 2
+    // The spins are counted when a worker parks, and the workers have parked before (at their
+    // start), so a park count says nothing here: wait for the count itself, which the park
+    // after the last callback brings.
+    wait_until("workers spun inside callbacks", || {
+        engine.worker_idle_spins() > 0
     });
-    assert!(
-        engine.worker_idle_spins() > 0,
-        "workers spun inside callbacks"
-    );
 }
 
 #[test]
