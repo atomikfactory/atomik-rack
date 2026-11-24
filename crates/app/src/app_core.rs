@@ -4418,6 +4418,10 @@ impl<S: EngineSink> Drop for AppCore<S> {
     }
 }
 
+#[path = "app_core_fault.rs"]
+mod fault_ops;
+pub use fault_ops::FaultBypass;
+
 #[path = "app_core_audio.rs"]
 mod audio;
 use audio::AudioState;

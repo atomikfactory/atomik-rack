@@ -1093,6 +1093,9 @@ impl<B: AudioBackend> LiveSession<B> {
 impl<B: AudioBackend> EngineSink for LiveSession<B> {
     fn reset(&mut self, config: &EngineConfig) {
         self.status.error = None;
+        // A fault belongs to the engine that is being replaced.
+        self.status.faulted = false;
+        self.status.faulted_device = None;
         self.shutdown();
         if !self.enabled {
             return;

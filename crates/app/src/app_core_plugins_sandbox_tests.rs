@@ -1800,3 +1800,19 @@ fn no_reload_by_itself_while_an_export_renders() {
     core.wait_background();
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+// ------------------------------------------------------------------ an engine fault
+
+#[test]
+fn a_crashed_plugin_is_left_to_the_crash_path_when_the_engine_reports_a_fault() {
+    let (mut core, stats, dev) = lost_core();
+    lose(&mut core, &stats, &dev, "exited with code 3");
+    let id = core.instance_id_of(&dev).unwrap();
+    assert!(core.fault_belongs_to_plugin_path(id));
+    assert_eq!(
+        core.bypass_faulted_device(Some(id)),
+        crate::app_core::FaultBypass::PluginPath("Atomik Test Gain".to_string())
+    );
+    let value = core.doc().device(&dev).and_then(|d| d.params.get("bypass"));
+    assert_eq!(value, None, "the document was not touched");
+}

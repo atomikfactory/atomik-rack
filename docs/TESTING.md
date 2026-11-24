@@ -2091,6 +2091,14 @@ Hand checks, not automated (they need an audio interface and your hands):
   toast: `AUDIO DEVICE LOST` (or `AUDIO STOPPED` on a driver that just goes quiet) within about half
   a second. Audio > Restart Audio with the interface still out reports why audio is off; plug it
   back in and Restart Audio plays again.
+- A contained engine fault restarts the audio by itself (`crates/app/src/fault_restart.rs` has the rule with simulated
+  time; `shell_device_loss_tests.rs` has the shell cases: a fault while stopped bypasses the named device and restarts
+  once, a fault during playback waits for the stop, two faults inside a minute restart once, the fourth is left to the
+  user, an undone bypass that faults again obeys the minute; `app_core_plugins_sandbox_tests.rs` has the crashed
+  plugin that is left to its own path). No real device panics in these tests: they feed the shell the status the
+  engine reports. Hand check: there is no menu command that makes a device panic, so only a build with a deliberately
+  broken device can show it end to end; the visible result is the message "Audio restarted after a fault in <device>;
+  the device is bypassed", the device bypassed (Edit > Undo brings it back) and sound again with the transport stopped.
 - Turn on Audio Settings > If the audio device is lost > Switch to the default devices, repeat: the
   app moves to the default output by itself with a toast, and `settings.json` still names the
   interface. Do it once for each host (WASAPI, ASIO where built, CoreAudio, ALSA).

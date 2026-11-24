@@ -37,6 +37,14 @@ may break APIs and the patch and project formats.
   no engine restart and no stop and start of the audio stream, so freezing a heavy track relieves an overloaded
   session at once. The track switches between two audio blocks (no crossfade; the tail of its old effects is cut,
   as when a device is removed during playback). Rendered audio and bounces do not change.
+- **Audio restarts by itself after a contained fault.** When a device panics while rendering, or a panic stops the
+  audio stream, the engine used to stay silent until you chose Audio > Restart Audio. Now, once the transport is
+  stopped (at once if it already is, otherwise at the next stop), the device the fault names is bypassed as an
+  ordinary edit you can undo, the audio is rebuilt, and a message says what happened ("Audio restarted after a fault
+  in <device>; the device is bypassed"). It restarts at most once a minute and at most three times in a session; after
+  that the message asks you to restart the audio yourself, as before. A device with no bypass switch (an instrument)
+  is named and left in place. A plugin whose process crashed keeps its own crash handling and reload. Audio >
+  Restart Audio works as before.
 
 ## [0.5.0-rc.2] - 2026-11-24
 

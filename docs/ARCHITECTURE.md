@@ -8309,7 +8309,13 @@ A bug in a device must cost that device, not the session. The rules:
   same guard: a panic there faults only that node, and `Arena::settle_faults` records it once per
   batch (a bool test while nothing happened). `Engine::fault` and `EngineHandle::fault` report it; the audio callback
   publishes it in `Telemetry::faulted`/`faulted_device`, the status line shows
-  `ENGINE FAULTED: <device>` and a toast points at Audio > Restart Audio, which rebuilds the engine.
+  `ENGINE FAULTED: <device>`. The shell reads that flag when it polls the status and answers with the rule in
+  [fault_restart.rs](../crates/app/src/fault_restart.rs): while the transport is stopped, at most once a minute and at
+  most three times a session, it bypasses the named device in the model (one undoable `SetParam`, so the new engine
+  does not meet the same crash; `AppCore::bypass_faulted_device`) and rebuilds the engine as Audio > Restart Audio does.
+  A fault during playback waits for the stop. After the limit, or when the plugin crash path already owns the device
+  (a sandboxed plugin's process ended: that path reloads it), a toast points at Audio > Restart Audio instead. The
+  time is the `Instant` the shell polls with, so tests move it. Nothing of this runs on the audio thread.
   The callback also wraps the whole render in `catch_unwind` as a last line: a panic outside any
   device (the engine's own code) silences the stream and sets `Telemetry::faulted`.
 - **A quiescent device is skipped** ([plan.rs](../crates/engine/src/plan.rs), `Node::skippable`). After each `process`

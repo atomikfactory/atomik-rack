@@ -3318,6 +3318,12 @@ impl<S: EngineSink> AppCore<S> {
         self.reload_plugin(device);
     }
 
+    /// Whether the plugin device `key` is CRASHED (its process ended and its reload, if any, is
+    /// the plugin path's business).
+    pub(super) fn plugin_is_crashed(&self, key: &DeviceKey) -> bool {
+        self.plugins.crashed.contains_key(key)
+    }
+
     /// A plugin process crashed (it died by itself; the hang guard's stops are handled by
     /// [`Self::reload_hung_plugin`]): it is reloaded from the document's last captured state, as
     /// RELOAD does and through the same load queue, once. Not when the plugin ran for less than

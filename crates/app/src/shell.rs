@@ -146,7 +146,7 @@
 
 use crate::about_box::{AboutBox, AboutOutcome};
 use crate::app_core::{
-    AppCore, AppError, FreezeThrough, MidiExport, Pane, Revealed, TabExportFormat,
+    AppCore, AppError, FaultBypass, FreezeThrough, MidiExport, Pane, Revealed, TabExportFormat,
 };
 use crate::commands::{AppCommand, Menu, MenuState, ScaleStep, SongList, menus_with_songs};
 use crate::context_menus::{self, MenuEnable};
@@ -640,6 +640,10 @@ pub struct Shell<B: AudioBackend> {
     status: String,
     /// The engine fault already announced with a toast (cleared when the fault is).
     fault_announced: bool,
+    /// The budget of automatic restarts after an engine fault, and the one that is waiting.
+    fault_restart: crate::fault_restart::FaultRestart,
+    /// The device the waiting restart is for (the engine's id of it).
+    fault_device: Option<u32>,
     /// The dead stream (stalled or lost) already announced with a toast, and already reset to
     /// the default devices (both cleared when the stream is alive again).
     stream_announced: bool,
@@ -972,6 +976,8 @@ impl<B: AudioBackend> Shell<B> {
             wins: BTreeMap::from([(WindowKind::Main, WinState::new(MAIN_SIZE, 1.0, Pane::Rack))]),
             status: String::new(),
             fault_announced: false,
+            fault_restart: crate::fault_restart::FaultRestart::default(),
+            fault_device: None,
             stream_announced: false,
             stream_reset: false,
             overload: OverloadStats::default(),
@@ -11727,6 +11733,75 @@ impl<B: AudioBackend> Shell<B> {
         }
     }
 
+    /// Answers an engine fault (see [`crate::fault_restart`]): the first poll that sees it tells
+    /// the user, and the audio is rebuilt by itself once the transport is stopped and a minute
+    /// has passed since the last such restart, up to three times a session. The device the
+    /// engine names is bypassed first (one undoable edit), so the new engine does not meet the
+    /// same crash. When the limit is used up, or the plugin crash path owns the device, the user
+    /// gets the manual message. True when the engine was rebuilt (the status is then stale).
+    fn handle_fault(&mut self, status: &AudioStatus, at: std::time::Instant) -> bool {
+        use crate::fault_restart::Arrival;
+        if !status.faulted {
+            self.fault_announced = false;
+            self.fault_device = None;
+            self.fault_restart.clear();
+            return false;
+        }
+        let stopped = !self.core.is_playing() && !self.core.is_recording();
+        if !self.fault_announced {
+            self.fault_announced = true;
+            self.fault_device = status.faulted_device;
+            let named = status
+                .faulted_device
+                .and_then(|id| self.core.device_name_of_instance(id));
+            let what = crate::status::faulted_text(&AudioStatus {
+                faulted_name: named,
+                ..status.clone()
+            });
+            let plugin_path = status
+                .faulted_device
+                .is_some_and(|id| self.core.fault_belongs_to_plugin_path(id));
+            let arrival = if self.silent || plugin_path {
+                Arrival::Manual
+            } else {
+                self.fault_restart.arrive()
+            };
+            match arrival {
+                Arrival::Manual => self.notify(format!(
+                    "{what}. Audio > Restart Audio rebuilds the engine; save your work first."
+                )),
+                Arrival::Automatic if !self.fault_restart.allowed(at, stopped) => {
+                    let text = if stopped {
+                        format!("{what}. Audio restarts by itself within a minute.")
+                    } else {
+                        format!("{what}. Audio restarts by itself when playback stops.")
+                    };
+                    self.notify(text);
+                }
+                Arrival::Automatic => {}
+            }
+        }
+        if !self.fault_restart.take_due(at, stopped) {
+            return false;
+        }
+        let message = match self.core.bypass_faulted_device(self.fault_device) {
+            FaultBypass::Bypassed(name) => {
+                format!("Audio restarted after a fault in {name}; the device is bypassed")
+            }
+            FaultBypass::Unsupported(name) => format!(
+                "Audio restarted after a fault in {name}; it has no bypass and may fail again"
+            ),
+            FaultBypass::NoDevice | FaultBypass::PluginPath(_) => {
+                "Audio restarted after a fault".to_owned()
+            }
+        };
+        self.core.rebuild_engine();
+        self.notify(message);
+        self.fault_announced = false;
+        self.fault_device = None;
+        true
+    }
+
     /// Reads audio telemetry into the status bar; true when its text changed.
     pub fn poll_status(&mut self) -> bool {
         self.poll_status_at(crate::session::clock_now())
@@ -11751,6 +11826,10 @@ impl<B: AudioBackend> Shell<B> {
             // The stream was replaced: show what is true now.
             status = self.core.sink().status().clone();
         }
+        if self.handle_fault(&status, at) {
+            // The engine was rebuilt after a fault: show what is true now.
+            status = self.core.sink().status().clone();
+        }
         status.notes_target = target;
         if self.silent && !status.running {
             status.error = Some("another song has the audio".to_string());
@@ -11760,15 +11839,6 @@ impl<B: AudioBackend> Shell<B> {
         status.faulted_name = status
             .faulted_device
             .and_then(|id| self.core.device_name_of_instance(id));
-        if status.faulted && !self.fault_announced {
-            self.fault_announced = true;
-            let what = crate::status::faulted_text(&status);
-            self.notify(format!(
-                "{what}. Audio > Restart Audio rebuilds the engine; save your work first."
-            ));
-        } else if !status.faulted {
-            self.fault_announced = false;
-        }
         let (plugin_drops, late_batches, bad_blocks) = self.core.plugin_overload();
         status.overload.plugin_drops = plugin_drops;
         status.overload.late_sandbox_batches = late_batches;

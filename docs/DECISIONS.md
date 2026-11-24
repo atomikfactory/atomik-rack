@@ -2299,3 +2299,25 @@ swap chain at every change); a lower worker count than one at Low power (a heavy
 separate setting per effect (three switches for one decision).
 
 **Status.** Default (not yet confirmed). Decided by: none yet.
+
+## BU. The audio restarts by itself after a contained fault, only while stopped, at most once a minute and three times
+
+**Decision.** When the engine reports a contained fault (a device that panicked, or a panic that halted the stream),
+the shell rebuilds the engine by itself, with these limits: only while the transport is stopped (a fault during
+playback waits for the stop), at least 60 seconds after the previous automatic restart, and at most three automatic
+restarts in a session (a plain count, not a streak: the simplest rule that cannot loop). Before the rebuild the device
+the fault names is bypassed in the model, as a normal undoable edit, so the new engine does not meet the same crash; a
+fault that names no device bypasses nothing, and a device without a bypass switch (an instrument) is named in the
+message and left in place. After the limit the user gets the manual message (Audio > Restart Audio), which keeps
+working. A plugin whose process crashed keeps its own crash handling: it is not an engine fault, and a device that the
+plugin path holds as crashed is never restarted from here. A message says what happened.
+
+**Why.** One contained bug in an unattended or live session was permanent silence until someone found the menu. The
+bypass first keeps the rebuild from repeating the crash; the stop and the minute keep a restart from cutting a take or
+looping. Undo brings the device back, and if it panics again the same limits hold.
+
+**Rejected.** Restarting during playback (it cuts the music and a take); an unlimited or per-streak count (a device that
+always panics would restart for ever, or the streak would need its own reset rule); removing the faulted device (a
+bypass is reversible); acting on a crashed sandboxed plugin here (it already has its reload).
+
+**Status.** Decided by the owner on 2026-11-24 (restart automatically, as planned).

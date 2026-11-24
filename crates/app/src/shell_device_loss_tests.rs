@@ -558,3 +558,198 @@ fn rescan_midi_ports_says_what_is_open() {
     let said = s.core().last_rejection().unwrap();
     assert!(said.contains("Example Pads"), "{said}");
 }
+
+// ------------------------------------------------------------------ a contained engine fault
+
+fn add_device(s: &mut Shell<Fake>, type_id: &str, key: &str) -> u32 {
+    let key = DeviceKey(key.into());
+    s.core_mut()
+        .apply_command(Command::AddDevice {
+            index: usize::MAX,
+            type_id: type_id.into(),
+            key: Some(key.clone()),
+        })
+        .unwrap();
+    s.core().instance_id_of(&key).unwrap()
+}
+
+fn faulted(device: Option<u32>) -> AudioStatus {
+    AudioStatus {
+        faulted: true,
+        faulted_device: device,
+        ..AudioStatus::default()
+    }
+}
+
+fn bypass_of(s: &Shell<Fake>, key: &str) -> f32 {
+    s.core()
+        .doc()
+        .device(&DeviceKey(key.into()))
+        .and_then(|d| d.params.get("bypass").copied())
+        .unwrap_or(0.0)
+}
+
+fn fault_shell(name: &str) -> (Shell<Fake>, Fake, PathBuf) {
+    let dir = scratch(name);
+    let world = Fake::default();
+    let s = shell(&world, &saved("Interface", false), &dir);
+    (s, world, dir)
+}
+
+#[test]
+fn a_device_fault_while_stopped_bypasses_the_device_and_restarts_once() {
+    let (mut s, world, dir) = fault_shell("fault-stopped");
+    let fx = add_device(&mut s, "atomik.reverb", "fx");
+    let starts = world.0.starts.borrow().len();
+    let t0 = crate::session::clock_now();
+
+    assert!(
+        s.handle_fault(&faulted(Some(fx)), t0),
+        "the engine was rebuilt"
+    );
+    assert_eq!(world.0.starts.borrow().len(), starts + 1);
+    assert!(bypass_of(&s, "fx") >= 0.5, "the faulted device is bypassed");
+    let message = s.core().last_rejection().unwrap();
+    assert!(
+        message.contains("Audio restarted after a fault in")
+            && message.contains("the device is bypassed"),
+        "{message}"
+    );
+    // The same fault, still reported by an old poll, does not restart again.
+    assert!(!s.handle_fault(&faulted(Some(fx)), t0 + Duration::from_secs(1)));
+    assert_eq!(world.0.starts.borrow().len(), starts + 1);
+
+    // The bypass is an ordinary edit: undo puts the device back in.
+    assert!(s.core_mut().undo());
+    assert!(bypass_of(&s, "fx") < 0.5);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_fault_during_playback_waits_for_the_stop() {
+    let (mut s, world, dir) = fault_shell("fault-playing");
+    let fx = add_device(&mut s, "atomik.reverb", "fx");
+    s.execute(AppCommand::Transport(atomik_ui::TransportAction::Play));
+    assert!(s.core().is_playing());
+    let starts = world.0.starts.borrow().len();
+    let t0 = crate::session::clock_now();
+
+    assert!(!s.handle_fault(&faulted(Some(fx)), t0));
+    assert!(!s.handle_fault(&faulted(Some(fx)), t0 + Duration::from_secs(30)));
+    assert_eq!(
+        world.0.starts.borrow().len(),
+        starts,
+        "nothing while playing"
+    );
+    assert!(bypass_of(&s, "fx") < 0.5, "nor a bypass");
+    let message = s.core().last_rejection().unwrap();
+    assert!(message.contains("when playback stops"), "{message}");
+
+    s.execute(AppCommand::Transport(atomik_ui::TransportAction::Stop));
+    assert!(!s.core().is_playing());
+    let after = world.0.starts.borrow().len();
+    assert!(s.handle_fault(&faulted(Some(fx)), t0 + Duration::from_secs(31)));
+    assert_eq!(world.0.starts.borrow().len(), after + 1, "one restart");
+    assert!(bypass_of(&s, "fx") >= 0.5);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn faults_a_minute_apart_restart_three_times_then_the_user_is_asked() {
+    let (mut s, world, dir) = fault_shell("fault-limit");
+    let t0 = crate::session::clock_now();
+    let starts = || world.0.starts.borrow().len();
+    let fault = faulted(None);
+    let clear = AudioStatus::default();
+    let secs = Duration::from_secs;
+
+    // The first fault restarts at once; the new engine has no fault.
+    let base = starts();
+    assert!(s.handle_fault(&fault, t0));
+    assert!(!s.handle_fault(&clear, t0 + secs(1)));
+    assert_eq!(starts(), base + 1);
+    assert_eq!(
+        s.core().last_rejection(),
+        Some("Audio restarted after a fault")
+    );
+
+    // The second, ten seconds later, waits for the minute.
+    assert!(!s.handle_fault(&fault, t0 + secs(10)));
+    assert_eq!(starts(), base + 1);
+    assert!(
+        s.core()
+            .last_rejection()
+            .unwrap()
+            .contains("within a minute")
+    );
+    assert!(!s.handle_fault(&fault, t0 + secs(59)));
+    assert!(s.handle_fault(&fault, t0 + secs(60)));
+    assert_eq!(starts(), base + 2);
+
+    // The third.
+    assert!(!s.handle_fault(&clear, t0 + secs(61)));
+    assert!(s.handle_fault(&fault, t0 + secs(130)));
+    assert_eq!(starts(), base + 3);
+
+    // The fourth is left to the user: the manual message, no restart, however long it waits.
+    assert!(!s.handle_fault(&clear, t0 + secs(131)));
+    assert!(!s.handle_fault(&fault, t0 + secs(1000)));
+    assert!(!s.handle_fault(&fault, t0 + secs(5000)));
+    assert_eq!(starts(), base + 3);
+    let message = s.core().last_rejection().unwrap();
+    assert!(message.contains("Audio > Restart Audio"), "{message}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn undoing_the_bypass_of_a_device_that_faults_again_still_obeys_the_minute() {
+    let (mut s, world, dir) = fault_shell("fault-undo");
+    add_device(&mut s, "atomik.reverb", "fx");
+    let fx = s.core().instance_id_of(&DeviceKey("fx".into())).unwrap();
+    let t0 = crate::session::clock_now();
+    assert!(s.handle_fault(&faulted(Some(fx)), t0));
+    assert!(s.core_mut().undo());
+    assert!(bypass_of(&s, "fx") < 0.5);
+    s.handle_fault(&AudioStatus::default(), t0 + Duration::from_secs(2));
+    let fx = s.core().instance_id_of(&DeviceKey("fx".into())).unwrap();
+    let starts = world.0.starts.borrow().len();
+
+    // It panics again twenty seconds later: nothing happens until the minute is over.
+    assert!(!s.handle_fault(&faulted(Some(fx)), t0 + Duration::from_secs(20)));
+    assert_eq!(world.0.starts.borrow().len(), starts);
+    assert!(
+        bypass_of(&s, "fx") < 0.5,
+        "nothing is touched before the restart"
+    );
+    assert!(s.handle_fault(&faulted(Some(fx)), t0 + Duration::from_secs(61)));
+    assert!(bypass_of(&s, "fx") >= 0.5);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_device_without_a_bypass_switch_is_named_and_left_in_place() {
+    let (mut s, _world, dir) = fault_shell("fault-instrument");
+    let synth = add_device(&mut s, "atomik.poly-synth", "synth");
+    assert!(s.handle_fault(&faulted(Some(synth)), crate::session::clock_now()));
+    let message = s.core().last_rejection().unwrap();
+    assert!(message.contains("it has no bypass"), "{message}");
+    assert!(s.core().doc().device(&DeviceKey("synth".into())).is_some());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_callback_panic_seen_through_the_poll_restarts_the_stream() {
+    let (mut s, world, dir) = fault_shell("fault-poll");
+    world.0.telemetry.set(Telemetry {
+        faulted: true,
+        ..running_telemetry(10)
+    });
+    let starts = world.0.starts.borrow().len();
+    s.poll_status_at(crate::session::clock_now());
+    assert_eq!(world.0.starts.borrow().len(), starts + 1);
+    assert_eq!(
+        s.core().last_rejection(),
+        Some("Audio restarted after a fault")
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
