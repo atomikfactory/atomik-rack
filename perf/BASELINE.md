@@ -722,3 +722,58 @@ used a truncating conversion or a rounding add (and no comparison on the range) 
 loop of dependent wraps (about 11 and 7 ns against 5 ns). The disassembly of the bench executables carries no symbols
 (the debug information is in a separate file the tool does not read), so the calls that remain were not counted: of
 the one function compiled on its own for a look, the shift form has no call on the path of a delay in range.
+
+## Values that have settled are not computed again (2026-11-24)
+
+Four small changes of one rule: a value that has arrived is not recomputed, and no output bit changes. Rows are the
+`process` bench (`cargo bench -p atomik-devices --bench process -- 'device/<name>/256'`), the median of 21 samples of
+256 batches, two runs each, before and after taken close together on the same build folder.
+
+**The one-pole smoother on its target.** `OnePoleSmoother::next_value` returns at once when the value holds the target
+bit for bit and the target is finite (the step leaves `+0` added and the snap writes the target back, so state and
+result are unchanged; a `-0` target is kept as it is, an infinite or NaN value takes the full path). With a time
+constant of 10 ms the smoother is within the `1e-7` snap about 8,000 samples (170 ms) after a step of one, so a held
+control sits on its target nearly all the time.
+
+| row | before, runs | after, runs |
+|---|---|---|
+| guitar-amp | 10.971 ms, 10.935 ms | 9.321 ms, 9.298 ms (-15 %) |
+| eq (the other user, steps per block) | 880.0 us, 887.3 us | 872.8 us, 872.9 us (did not move, slowed nothing) |
+
+**The wavetable synth resolves its tables once per control step.** `table_data` was called for the current and the old
+table of both oscillators for every sample of a voice. `table` and `old_table` are written only in `control` (every
+control interval, when the selected table changes) and in `start`, so the slices are looked up again after those two
+and held in between. They are the same slices, so the output is the same.
+
+| row | before, runs | after, runs |
+|---|---|---|
+| wavetable-synth, chord | 4.637 ms, 4.540 ms | 4.274 ms, 4.371 ms (-6 %) |
+| wavetable-synth, idle | 1.334 ms, 1.328 ms | 1.395 ms, 1.331 ms (did not move) |
+
+**The character device parses its voicing once.** `Character::new` parsed the embedded voicing tables and built the
+sixteen preset chains to take their specs and to check them, then built and prepared sixteen chains for the instance,
+so about four times as many chains were built as the instance keeps. The parsed and checked tables are now held in a
+`OnceLock` and shared through an `Arc` (nothing in them depends on an instance or a sample rate); the chains an
+instance keeps are built as before, in `new` and again in `prepare`. The audio path does not read the cache. Measured
+by a loop of 50 creations of `Character::new` and of 50 `prepare` calls in a unit test (release build, not kept in
+the tree), with the allocation counter of the test kit on one creation:
+
+| row | before, runs | after, runs |
+|---|---|---|
+| 50 x `Character::new` | 75.5 ms, 73.3 ms | 46.2 ms, 48.5 ms (-38 %) |
+| 50 x `prepare` | 42.9 ms, 48.1 ms | 43.0 ms, 45.6 ms (unchanged) |
+| allocations of one `new` | 2,961 | 601 (the first creation of a process still parses once) |
+| peak heap of one `new` | 2,512,820 bytes | 2,476,036 bytes |
+
+**The reverb reads a ramp that has arrived once per batch (tried, left out).** The reverb makes its thirty ramps once
+per batch and evaluates each at every sample. A ramp whose increment is zero has the same value at every sample, so
+the loop was changed to read those once and to evaluate only the ramps still moving (a unit test compared the two
+for both reverbs, with and without a cable on the mix input, bit for bit). The saving did not move beyond the run to
+run noise, because the feedback network and the delay reads cost far more than the evaluation of the ramps, so
+nothing was committed:
+
+| row | before, runs | after, runs |
+|---|---|---|
+| reverb | 3.781 ms, 3.949 ms | 3.661 ms, 3.775 ms (-3 %, under the noise bar) |
+| space-reverb | 4.051 ms, 3.839 ms | 3.795 ms, 3.748 ms (-4 %, under the noise bar) |
+

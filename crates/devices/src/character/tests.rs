@@ -1560,3 +1560,22 @@ mod row34;
 fn the_embedded_voicing_loads_so_the_device_does_not_pass_through() {
     assert!(!Character::new().voicing_failed());
 }
+
+#[test]
+fn a_device_made_from_the_shared_voicing_renders_like_one_made_from_a_fresh_parse() {
+    // `Character::new` shares the embedded tables parsed once per process; a device made from a
+    // table parsed just now (what the first device of a process used to get) renders the same
+    // for every preset, and two devices made one after the other too.
+    let x = noise(BATCH * 120, 53, 0.5);
+    let fresh = || load_voicing(VOICING_CSV, ROUTES_CSV).expect("the embedded tables load");
+    for preset in 0..16 {
+        let shared = render_preset(&mut dev(), preset, &x);
+        let again = render_preset(&mut dev(), preset, &x);
+        let mut h =
+            DeviceHarness::with_options(Box::new(Character::with_voicing(fresh())), SR, 120.0, 11);
+        let parsed = render_preset(&mut h, preset, &x);
+        assert_eq!(shared, again, "preset {preset}: two shared devices");
+        assert_eq!(shared, parsed, "preset {preset}: shared against fresh");
+    }
+    assert!(!Character::new().voicing_failed());
+}
