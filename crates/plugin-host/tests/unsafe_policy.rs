@@ -1,6 +1,6 @@
 //! `unsafe` is confined. The workspace denies `unsafe_code`; only the plugin
 //! format backends and the test plugin libraries (which talk to C ABIs), the test allocator and
-//! the host's float-environment, OLE and scan-process modules, the app's cursor query and child windows, the child's embedding call and one test window helper may use it, and every `unsafe` block there has a
+//! the host's float-environment, OLE and scan-process modules, the app's cursor query, memory query and child windows, the child's embedding call and one test window helper may use it, and every `unsafe` block there has a
 //! `SAFETY:` comment. This test reads the sources and fails if `unsafe` shows up anywhere else.
 
 use std::fs;
@@ -47,6 +47,8 @@ const ALLOWED_FILES: &[&str] = &[
     // Making a window a child of the main window, and the keyboard focus back (Windows), for the
     // plugin editors that sit inside the app window.
     "crates/app/src/platform/native_child.rs",
+    // The machine's physical memory (`GlobalMemoryStatusEx`, `sysctlbyname`).
+    "crates/app/src/platform/memory.rs",
     // The editor window of the plugin's process as a child of the app's window.
     "crates/plugin-hostd/src/embed.rs",
 ];

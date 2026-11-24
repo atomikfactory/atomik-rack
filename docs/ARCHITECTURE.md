@@ -59,7 +59,7 @@ The picture shows the main arrows only; the table below is exact.
 | `atomik-render` | [crates/render](../crates/render) | core, device-sdk, engine, devices, model, dsp, audio-file, plugin-host, plugin-clap, plugin-vst3, plugin-sandbox (dev: testkit) | none | Patch and project bounces, the audio export of the song or the loop (`export`), bundle rules, the shared sample-map builder, `probe_devices` (a bounce that stops early and reads the metering devices), the `atomik-render` CLI |
 | `atomik-play` | [crates/play](../crates/play) | core, device-sdk, engine, render, audio-io, midi-io | none | `atomik-play`, a live player for patches |
 | `atomik-ui` | [crates/ui](../crates/ui) | audio-file, library, core, device-sdk, dsp (the wavetable panel's frame display and the table editor's maths), devices (the headphone panel draws the device's own curve snapshot), model, tab (the chord diagram and the tab editor draw its voicings and techniques) | none | Platform-independent views, widgets, display lists, theme |
-| `atomik-app` | [crates/app](../crates/app) | core, device-sdk, devices, dsp, engine, model, tab, audio-file, library, video, update, vision, stems, render, ui, audio-io, midi-io, plugin-host, plugin-scan, plugin-hostd, plugin-sandbox | `src/platform/cursor.rs`, `src/platform/native_child.rs` | The `atomik` application: `AppCore`, `Shell`, background workers (import, onset detection, file browser), the window |
+| `atomik-app` | [crates/app](../crates/app) | core, device-sdk, devices, dsp, engine, model, tab, audio-file, library, video, update, vision, stems, render, ui, audio-io, midi-io, plugin-host, plugin-scan, plugin-hostd, plugin-sandbox | `src/platform/cursor.rs`, `src/platform/memory.rs`, `src/platform/native_child.rs` | The `atomik` application: `AppCore`, `Shell`, background workers (import, onset detection, file browser), the window |
 | `atomik-mcp` | [crates/mcp](../crates/mcp) | core, audio-file, device-sdk, library, model, render, app, ui (feature `cpu-canvas`), plugin-host | none | Development tool, not shipped: the MCP server (bin `atomik-mcp`) that bounces, measures and compares audio and drives a headless `Shell` for QA; see [MCP.md](MCP.md) |
 | `atomik-testkit` | [crates/testkit](../crates/testkit) | core, device-sdk | `src/no_alloc.rs` | Test-only: fakes, signal analysis, the allocation guard, the bench recorder (`bench.rs`) |
 
@@ -541,6 +541,21 @@ The settings are `backup_folder`, `backup_keep` and `backup_audio` of `WorkflowP
 `file.restore_backup`. `AppCore::restore_backup` accepts only a copy the list holds and opens it with `open_template`,
 so it is a new unsaved song whose audio is read from the copy's own `Audio` folder; after the question about unsaved
 changes it is `PendingAction::RestoreBackup`.
+
+**Memory figures and the limits that follow them.** `platform::memory` reads the machine's physical memory in the
+one file of the app that may use `unsafe` (`MemoryInfo { total, available }`: the total once, the free figure on each
+call; macOS has no free figure and says `None`). `AppCore` holds them (`memory_info`; a test replaces them with
+`set_memory_info`; the unit tests start with none). Three limits are pure functions of them and leave a machine with
+16 GiB or more, or one that does not tell, as it always was: the undo budget of each document the app makes
+(`undo_bytes_for`: 128 MiB under 8 GiB), the largest import (`import_limits_for`, see the audio-file section), and the question before a
+render. `atomik_render::estimate` (`export_bytes`, `stems_bytes`, `freeze_bytes`) gives what a render holds: the
+decoded size of every audio asset it reads (an asset several tracks use counts once; a bounce never streams, so a
+streamed asset counts in full) plus the output held twice (the rendered buffers and the copy that the conversion or
+the loudness finish makes), with the output channels of the document, a pair more for each strip of a stem pass (at
+most `TAPS_PER_PASS`) and the tapped pair of a freeze, which also renders the latency margin. When that is more than
+the free memory the export panel shows both figures (`AppCore::export_memory_question`) and a second EXPORT goes on,
+and a freeze or a preset export says it in a message and goes on when asked again (`memory_ask`). It is a question,
+not a refusal: the figure is rough and the system can page. The command-line tools and the QA server never ask.
 
 ### 2.4 Playback, per 64-frame batch
 
@@ -4366,7 +4381,12 @@ Nothing in this crate runs on the audio thread. Every function may allocate and 
   holds at most `DEFAULT_MAX_SAMPLES` (2^30 samples, 4 GiB of `f32`) and checks the size before it
   grows a buffer, since an allocation failure aborts the process and no `catch_unwind` sees it;
   `decode_file_with` and `decode_bytes_with` take the limit as a parameter and also return the
-  count of repaired samples (`Decoded`). `AudioData::new` turns every NaN and infinity into silence
+  count of repaired samples (`Decoded`). An import passes `ImportLimits` (`Bundle::import_limited`,
+  `decode_file_for_import`): one figure for a file already at the song's rate and a lower one for a
+  file that has to be converted, picked once the file's rate is known; a lossless file whose header
+  declares more than the figure is refused before the decoder is made. The app takes the figures
+  from the machine's memory (`import_limits_for`: a quarter of it, never above the cap, the default
+  from 16 GiB on). `AudioData::new` turns every NaN and infinity into silence
   (`new_counted` says how many), so nothing non-finite reaches the mixer; `AssetInfo` carries the
   count of an import.
 - **WAV** (`read_wav_f32`, `read_wav_f32_limited`, `WavStreamReader`): the header's sample count is a

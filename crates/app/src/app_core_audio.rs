@@ -1290,7 +1290,10 @@ impl<S: EngineSink> AppCore<S> {
             self.audio.generation,
             batch,
             bundle,
-            rate,
+            (
+                rate,
+                crate::memory_limits::import_limits_for(self.memory_info().total),
+            ),
             self.stream_threshold(),
             paths,
         );

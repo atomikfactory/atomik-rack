@@ -8,6 +8,7 @@ pub mod gpu;
 pub mod gpu_recovery;
 pub mod gpu_select;
 mod learn_strips;
+pub mod memory;
 mod native_child;
 #[cfg(target_os = "macos")]
 mod native_menu;

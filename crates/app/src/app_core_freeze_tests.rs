@@ -1396,3 +1396,27 @@ fn a_second_tempo_edit_replaces_the_render_that_is_running() {
     assert_eq!(tempo(&c), 90.0);
     assert!(!stale(&c, "lead"), "the render fits the last tempo");
 }
+
+#[test]
+fn a_freeze_that_may_not_fit_asks_first_and_goes_on_when_asked_again() {
+    use crate::platform::memory::MemoryInfo;
+    let mut c = core_with(1);
+    c.set_memory_info(MemoryInfo {
+        total: Some(8 << 30),
+        available: Some(1 << 20),
+    });
+    select_track(&mut c, "lead");
+    c.freeze_tracks(FreezeThrough::Track);
+    assert!(!c.freeze_busy(), "nothing started");
+    let said = c.last_rejection().unwrap();
+    assert!(
+        said.contains("needs about") && said.contains("is free"),
+        "{said}"
+    );
+    assert!(frozen(&c, "lead").is_none());
+    // The same freeze again goes on.
+    c.freeze_tracks(FreezeThrough::Track);
+    assert!(c.freeze_busy());
+    c.wait_background();
+    assert!(frozen(&c, "lead").is_some());
+}

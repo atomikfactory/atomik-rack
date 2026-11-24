@@ -99,7 +99,11 @@ impl ExportState {
 
 /// The range the panel's choices mean; `selection` is the time selection in ticks, when there is
 /// one (a selection that does not exist is an empty range, which the render refuses).
-fn span_of(scope: ExportScope, values: &ExportValues, selection: Option<(i64, i64)>) -> ExportSpan {
+pub(super) fn span_of(
+    scope: ExportScope,
+    values: &ExportValues,
+    selection: Option<(i64, i64)>,
+) -> ExportSpan {
     let range = || {
         let (start, end) = selection.unwrap_or((0, 0));
         ExportSpan::Range(start, end)
@@ -533,6 +537,35 @@ impl<S: EngineSink> AppCore<S> {
                 Err(why)
             }
         }
+    }
+
+    /// The question to ask before the export of `scope` to `path` starts, when the render may not
+    /// fit in the memory that is free (see [`atomik_render::estimate`]): `None` when it fits, when
+    /// the system does not say, and when this very question was asked just before (the second
+    /// start goes on). The estimate is rough and the system can page, so it is a question, never a
+    /// refusal.
+    pub fn export_memory_question(
+        &mut self,
+        scope: ExportScope,
+        path: &Path,
+        values: &ExportValues,
+    ) -> Option<String> {
+        let request = export_request(scope, values, self.export_selection());
+        let doc = self.doc();
+        let needed = if scope == ExportScope::Stems {
+            let strips = atomik_model::stem_sources(doc, &self.registry).len();
+            let span = (request.span, request.tail_seconds);
+            atomik_render::estimate::stems_bytes(doc, span, strips, &|_| false)
+        } else {
+            atomik_render::estimate::export_bytes(doc, &request, &|_| false)
+        }
+        .ok()?;
+        let free = self.memory_ask(&format!("export:{scope:?}:{}", path.display()), needed)?;
+        Some(format!(
+            "This export needs about {} of memory and {} is free: press EXPORT again to go on, or cancel",
+            crate::memory_limits::size_text(needed),
+            crate::memory_limits::size_text(free)
+        ))
     }
 
     /// The work of the export of `scope` to `path` (already named for its container) with

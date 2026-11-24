@@ -34,6 +34,37 @@ use crate::error::{AudioFileError, Result};
 /// [`decode_file_with`].
 pub const DEFAULT_MAX_SAMPLES: u64 = 1 << 30;
 
+/// How much an import may decode, in samples (all channels). An import converts a file to the
+/// session's rate, which holds a second copy while it runs, so a file that has to be converted
+/// has its own, lower figure. The default is [`DEFAULT_MAX_SAMPLES`] for both.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ImportLimits {
+    /// The most samples of a file already at the session's rate.
+    pub max_samples: u64,
+    /// The most samples of a file that has to be converted to the session's rate.
+    pub max_samples_resampled: u64,
+}
+
+impl Default for ImportLimits {
+    fn default() -> Self {
+        Self {
+            max_samples: DEFAULT_MAX_SAMPLES,
+            max_samples_resampled: DEFAULT_MAX_SAMPLES,
+        }
+    }
+}
+
+impl ImportLimits {
+    /// The limit for a file at `file_rate` that is going to `session_rate`.
+    pub fn for_rates(&self, file_rate: u32, session_rate: u32) -> u64 {
+        if file_rate == session_rate {
+            self.max_samples
+        } else {
+            self.max_samples_resampled
+        }
+    }
+}
+
 /// A decoded file and what the decoder had to repair.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Decoded {
@@ -54,7 +85,24 @@ pub fn decode_file(path: &Path) -> Result<AudioData> {
 pub fn decode_file_with(path: &Path, max_samples: u64) -> Result<Decoded> {
     let file = File::open(path)?;
     let ext = path.extension().and_then(|e| e.to_str());
-    decode_source(Box::new(file), ext, max_samples)
+    decode_source(Box::new(file), ext, Gate::flat(max_samples))
+}
+
+/// Decodes a file for an import into a session at `session_rate`, within `limits`: the figure
+/// that applies is picked once the file's rate is known, and a lossless file whose header
+/// declares more than that is refused before any audio is held.
+pub fn decode_file_for_import(
+    path: &Path,
+    session_rate: u32,
+    limits: ImportLimits,
+) -> Result<Decoded> {
+    let file = File::open(path)?;
+    let ext = path.extension().and_then(|e| e.to_str());
+    let gate = Gate {
+        limits,
+        session_rate: Some(session_rate),
+    };
+    decode_source(Box::new(file), ext, gate)
 }
 
 /// Decodes an in-memory file. `ext_hint` is an optional extension such as `"mp3"`; a wrong
@@ -79,16 +127,44 @@ pub fn decode_vec_with(
     ext_hint: Option<&str>,
     max_samples: u64,
 ) -> Result<Decoded> {
-    decode_source(Box::new(Cursor::new(bytes)), ext_hint, max_samples)
+    decode_source(
+        Box::new(Cursor::new(bytes)),
+        ext_hint,
+        Gate::flat(max_samples),
+    )
 }
 
-fn decode_source(
-    source: Box<dyn MediaSource>,
-    ext: Option<&str>,
-    max_samples: u64,
-) -> Result<Decoded> {
+/// The sample limit of one decode: one figure, or (for an import) one per case of the session's
+/// rate.
+#[derive(Clone, Copy)]
+struct Gate {
+    limits: ImportLimits,
+    session_rate: Option<u32>,
+}
+
+impl Gate {
+    fn flat(max_samples: u64) -> Self {
+        Self {
+            limits: ImportLimits {
+                max_samples,
+                max_samples_resampled: max_samples,
+            },
+            session_rate: None,
+        }
+    }
+
+    /// The limit for a file at `rate`.
+    fn max_for(&self, rate: u32) -> u64 {
+        match self.session_rate {
+            Some(session) => self.limits.for_rates(rate, session),
+            None => self.limits.max_samples,
+        }
+    }
+}
+
+fn decode_source(source: Box<dyn MediaSource>, ext: Option<&str>, gate: Gate) -> Result<Decoded> {
     // Symphonia should never panic on bad data; if a decoder bug does, report it as an error.
-    catch_unwind(AssertUnwindSafe(|| decode_inner(source, ext, max_samples))).unwrap_or_else(|_| {
+    catch_unwind(AssertUnwindSafe(|| decode_inner(source, ext, gate))).unwrap_or_else(|_| {
         Err(AudioFileError::Decode(
             "decoder panicked on malformed data".into(),
         ))
@@ -150,8 +226,13 @@ pub(crate) fn precheck_wav(source: &mut dyn MediaSource) -> Result<()> {
 fn decode_inner(
     mut source: Box<dyn MediaSource>,
     ext: Option<&str>,
-    max_samples: u64,
+    gate: Gate,
 ) -> Result<Decoded> {
+    // Until the file's rate is known the figure for a file at the session's rate applies.
+    let mut max_samples = gate
+        .limits
+        .max_samples
+        .max(gate.limits.max_samples_resampled);
     precheck_wav(source.as_mut())?;
     let source_bytes = source.byte_len();
     let mss = MediaSourceStream::new(source, Default::default());
@@ -179,6 +260,17 @@ fn decode_inner(
         .and_then(|p| p.audio())
         .ok_or_else(|| AudioFileError::Unsupported("no audio codec parameters".into()))?;
     let lossy = [CODEC_ID_MP1, CODEC_ID_MP2, CODEC_ID_MP3, CODEC_ID_VORBIS].contains(&params.codec);
+    // A lossless header states the length exactly (a stream that falls short is an error below),
+    // so a file that declares more than the limit is refused before the decoder is made.
+    if let (false, Some(declared), Some(rate), Some(channels)) = (
+        lossy,
+        declared_frames,
+        params.sample_rate,
+        params.channels.as_ref().map(|c| c.count() as u64),
+    ) && declared.saturating_mul(channels) > gate.max_for(rate)
+    {
+        return Err(too_long(gate.max_for(rate)));
+    }
     let mut decoder = symphonia::default::get_codecs()
         .make_audio_decoder(params, &AudioDecoderOptions::default())
         .map_err(map_sym)?;
@@ -210,6 +302,7 @@ fn decode_inner(
         let (r, n) = (spec.rate(), buf.num_planes());
         if channels.is_empty() {
             rate = r;
+            max_samples = gate.max_for(r);
             channels = vec![Vec::new(); n];
             // The container's frame count sizes the buffers once, so decoding never doubles
             // them while it grows. The claim is believed only up to what the file's own size
@@ -291,7 +384,11 @@ mod panic_tests {
 
     #[test]
     fn a_panicking_decoder_returns_error() {
-        let result = decode_source(Box::new(PanickingSource), Some("wav"), DEFAULT_MAX_SAMPLES);
+        let result = decode_source(
+            Box::new(PanickingSource),
+            Some("wav"),
+            Gate::flat(DEFAULT_MAX_SAMPLES),
+        );
         assert!(
             matches!(result, Err(AudioFileError::Decode(_))),
             "{result:?}"

@@ -365,6 +365,25 @@ may break APIs and the patch and project formats.
   looks at (64 prepared strips: 274.5 MiB of heap before, 258.5 MiB now; the working set of the process that holds
   them drops by 17 MiB). A panel fills from the moment it is shown, as it already did; the analyser devices and an
   audio track's tuner keep their ring from the start. Renders, bounces and the QA server read what they read before.
+- **The program reads the machine's physical memory.** One small file of the application (`platform/memory.rs`, the
+  only new place that may use `unsafe`) asks the system for the total and the free physical memory (Windows and
+  macOS through a system call, Linux by reading `/proc/meminfo`); the limits that follow the machine use it. Nothing
+  changes by itself.
+- **The undo history keeps a smaller budget on a machine with little memory.** A machine with less than 8 GB of
+  physical memory keeps 128 MiB of undo history instead of 512 MiB, for every song it opens or starts; a machine
+  with 8 GB or more, or one that does not tell its memory, behaves as before. The size is the reported memory
+  rounded up to a whole GiB, here and for the import limit, since a machine reports a little less than it has.
+- **An import larger than the machine can hold is refused before it starts.** A file whose decoded size
+  (frames x channels x 4 bytes, twice when it has to be converted to the song's rate on a machine under 16 GB) is
+  over a quarter of the physical memory, and never more than the 4 GiB of before, is refused from its header with
+  the message the program already gave for a file that is too long, instead of decoding until the allocation
+  fails. The sample rate conversion reports a lack of memory as an error instead of aborting. A machine with 16 GB
+  or more has the limit it always had.
+- **A bounce, export, stem export or freeze that may not fit in the free memory asks first.** The program estimates
+  what the render holds (the audio files it reads, plus the output twice) and, when that is more than the memory
+  that is free, says so with both figures, under the options of the export panel or as a message for a freeze;
+  asking again goes on. Nothing changes when the free memory is not known or is enough; the command-line tools and
+  the QA server never ask.
 
 ### Fixed
 - **Dropping an instrument above its mix channel.** An instrument dragged to the place above its own mix channel

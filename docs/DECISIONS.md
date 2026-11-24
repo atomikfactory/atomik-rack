@@ -2210,3 +2210,31 @@ meters the same way was measured and left alone: the console strips, the track h
 read them and keep a latched peak, clip lamps and a held maximum, so a hidden mixer would lose a clip.
 
 **Status.** Default (not yet confirmed). Decided by: none yet.
+
+## BR. The machine's memory is read in one file of the app, and three limits follow it
+
+**Question.** On a machine with 4 GB, the undo history (512 MiB), an import (4 GiB decoded) and a bounce (every asset
+decoded, the whole output held, twice) can each outgrow the memory, and an allocation that fails aborts the process.
+The limits have to follow the machine, and the figure has to come from the system.
+
+**Decision.** `crates/app/src/platform/memory.rs` is the one new file that may use `unsafe`: `GlobalMemoryStatusEx`
+on Windows and `sysctlbyname("hw.memsize")` on macOS, each a few lines with a `SAFETY:` comment; Linux reads
+`/proc/meminfo` as text and needs none. It gives the total (read once) and the memory that is available now. Every
+limit is a pure function of those figures, so a test injects a machine (`AppCore::set_memory_info`): the undo budget
+(`undo_bytes_for`: 128 MiB under 8 GiB), the import limit (`import_limits_for`: a quarter of the memory, never above
+the old cap) and the estimate of a render (`atomik_render::estimate`). The model, audio-file and render crates stay
+free of system calls: they take the limit or the figure as a parameter. Every limit leaves a machine with 16 GiB or
+more, and a machine that does not tell its memory, exactly as before. The size compared is the reported memory
+rounded up to a whole GiB, because a machine reports a little less than it is sold with. Below 16 GiB a file that has to be converted
+to the song's rate counts twice, because the conversion holds a second copy; at 16 GiB and above the old cap is
+kept as it was, so the doubling does not shrink what a large machine accepts.
+
+A render that may not fit is a question, not a refusal: the estimate is rough and the system can page. The export
+panel shows the two figures under the options and a second EXPORT goes on; a freeze or a preset export says it in a
+message and goes on when asked again. The command-line tools and the QA server have no one to ask and never ask.
+
+**Rejected.** Reading `/proc/meminfo` or the registry in the model crate (the model stays free of system calls);
+refusing a render outright (a machine with a large page file can do it); a setting for each limit (no new
+setting); a native confirmation dialog (a second EXPORT is the way the panel already confirms a replaced file).
+
+**Status.** Default (not yet confirmed). Decided by: the owner for the one `unsafe` file; the rest none yet.

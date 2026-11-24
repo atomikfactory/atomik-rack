@@ -10,7 +10,7 @@
 //! flag with the core and reports through [`Msg::Video`], even when it panics.
 
 use crate::audio_import::{Loaded, Msg, display_name, import_file};
-use atomik_audio_file::Bundle;
+use atomik_audio_file::{Bundle, ImportLimits};
 use atomik_video::{
     AudioStream, Control, FfmpegStatus, Pick, Prepared, ProbeInfo, ProxyCache, ProxySpec, Search,
     VideoError, VideoTool, discover, extract_audio, lead_us, pick_stream, prepare, probe_file,
@@ -260,7 +260,13 @@ fn audio_of(
     if ctl.cancel.load(std::sync::atomic::Ordering::Relaxed) {
         return Err(VideoError::Cancelled);
     }
-    let loaded = import_file(&mut bundle, &wav, rate, threshold).map_err(VideoError::Import)?;
+    let loaded = import_file(
+        &mut bundle,
+        &wav,
+        (rate, ImportLimits::default()),
+        threshold,
+    )
+    .map_err(VideoError::Import)?;
     Ok(AudioOutcome::Imported(Box::new(AudioImported {
         lead_us: lead_us(&probe, &stream),
         loaded,

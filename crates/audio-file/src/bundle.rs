@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use crate::data::AudioData;
-use crate::decode::decode_file_with;
+use crate::decode::{ImportLimits, decode_file_for_import};
 use crate::error::{AudioFileError, Result};
 use crate::hash::content_hash;
 use crate::peaks::PeakPyramid;
@@ -285,7 +285,18 @@ impl Bundle {
     /// `session_rate` (frame positions written against the file scale by the ratio of the two
     /// lengths).
     pub fn import_counted(&mut self, src: &Path, session_rate: u32) -> Result<(AssetInfo, u64)> {
-        let decoded = decode_file_with(src, crate::DEFAULT_MAX_SAMPLES)?;
+        self.import_limited(src, session_rate, ImportLimits::default())
+    }
+
+    /// [`Self::import_counted`] within `limits`: a file that would decode to more is refused (see
+    /// [`decode_file_for_import`]).
+    pub fn import_limited(
+        &mut self,
+        src: &Path,
+        session_rate: u32,
+        limits: ImportLimits,
+    ) -> Result<(AssetInfo, u64)> {
+        let decoded = decode_file_for_import(src, session_rate, limits)?;
         let replaced = decoded.replaced;
         let original = decoded.audio.frames() as u64;
         let data = resample_owned(decoded.audio, session_rate)?;

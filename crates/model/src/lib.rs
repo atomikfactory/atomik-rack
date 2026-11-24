@@ -1406,6 +1406,11 @@ impl Document {
         }
     }
 
+    /// The undo limits in force: the most steps and the most bytes ([`Document::set_undo_limits`]).
+    pub fn undo_limits(&self) -> (usize, usize) {
+        self.undo_limits
+    }
+
     /// Changes how much undo history the document keeps: at most `steps` steps (at least 1) and
     /// an estimated `bytes` of memory (the latest step stays whatever its size). Older steps are
     /// forgotten at once; the assets only they referenced leave the pool at the next
