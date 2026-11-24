@@ -2532,6 +2532,17 @@ The param ids run in this order (`input` 0 … `meter.reset` 27); the band param
   until reset. **`meter.reset`** (a rising edge from 0 to 1) clears the integrated loudness, both
   windows and the true-peak maximum, and `reset()` does too; the transport does not. Note that the
   output still carries the last `latency` samples of the audio from before the reset.
+- **Observed flag.** The loudness and the true-peak maximum are for the panel alone: the sound never reads
+  them. The device carries an observed flag (on a tap that is never written; it is not a parameter, so it is
+  not saved, automated or undone) that the windowed app clears while no panel of the device is on screen
+  (folded, scrolled out, in a closed container, or its window minimized). Cleared, the loudness meter and the
+  two true-peak passes are skipped and the four values read -120, the state right after a reset. Set again,
+  they measure from that moment: the momentary and short-term windows fill again, and the integrated loudness
+  and the true-peak maximum cover the time since the panel came back, not the time it was hidden, so the
+  panel shows what it shows after a reset until the windows have filled. The limiter, its detector, the band
+  compressors and the four gain-reduction values never depend on the flag. The default is observed: an
+  offline render, a bounce, the headless readings and the tests never clear it and read exactly what they
+  read before.
 - **Latency** (set in `prepare`, moved by `lookahead`; shown for the default 1.5 ms):
   `17 + round(1.5 ms × sr)` samples = **89 at 48 kHz, 83 at 44.1 kHz, 161 at 96 kHz**: 17 is the
   group delay of the oversampler's up path (a
@@ -2888,6 +2899,14 @@ and were put before `bypass`, which moved from id 6 to id 8.
   oversampled, unrefined, as in Annex 2) since the last reset in dBTP. A stereo 1 kHz sine at -23
   dBFS peak reads -22.99 LUFS (tested to 0.15 dB, and through the headless meter probe). Off, they
   read -120 and cost nothing.
+- **Observed flag.** What only the panel reads is measured only while the panel is on screen: the windowed
+  app clears the device's observed flag (on its scope tap; not a parameter, so not saved or automated) while
+  no panel of the device is shown. Cleared, the stereo image (correlation, balance, width, mid and side), the
+  RMS levels, the loudness and the true peak are not measured and read as after a reset (0 for the image and
+  the RMS, -120 for the loudness and the true peak); set again, they measure from that moment, so the
+  integrated loudness and the true peak cover the time since the panel came back. The recent and held peaks
+  and the sample peak since the last reset (the latched clip history) run always, as do the audio and the
+  scope tap. The default is observed: an offline render, the headless readings and the tests never clear it.
 - **Loudness history.** With `loudness_view` History the loudness box shows the short-term loudness
   of the last five minutes (one value a second, newest at the right, -70 LUFS and below left as a
   gap) over a span of 12 LU above the `target` line to 30 LU below it, with the line in orange,

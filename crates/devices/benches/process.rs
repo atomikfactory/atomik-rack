@@ -4,7 +4,9 @@
 //! median run divided by 256. Run: `cargo bench -p atomik-devices --bench process`; a filter
 //! argument selects devices (`-- poly-synth`). `ATOMIK_BENCH_ONCE` runs each device once. The
 //! built-in instruments also run an `idle` row (`device/<name>/idle/256batches`): the same rig
-//! without notes, what an instrument costs while nothing is played.
+//! without notes, what an instrument costs while nothing is played. The mastering device and the
+//! phase meter also run an `unobserved` row (`device/<name>/unobserved/256batches`): the same rig
+//! with the observed flag cleared, what they cost while no panel shows them.
 #![allow(
     clippy::disallowed_methods,
     reason = "wall-clock timing is the point of a benchmark"
@@ -20,6 +22,8 @@ use std::time::Duration;
 const BATCHES: usize = 256;
 /// Types that need host data (children, audio assets or a plugin) and cannot run bare.
 const SKIPPED: [&str; 2] = ["atomik.container", "atomik.audio-track"];
+/// The devices whose display-only metering stops while no panel shows them (the observed flag).
+const OBSERVED: [&str; 2] = ["atomik.mastering", "atomik.phase-meter"];
 /// The instruments that also get an idle row.
 const INSTRUMENTS: [&str; 6] = [
     "atomik.poly-synth",
@@ -68,6 +72,16 @@ fn rig(registry: &Registry, type_id: &str, chord: bool) -> DeviceHarness {
     h
 }
 
+/// The rig of a device that carries the observed flag, with the flag cleared.
+fn unobserved(registry: &Registry, type_id: &str) -> DeviceHarness {
+    let h = rig(registry, type_id, true);
+    h.device()
+        .scope_tap()
+        .expect("a tap that carries the flag")
+        .set_observed(false);
+    h
+}
+
 fn run(h: &mut DeviceHarness) -> f32 {
     for _ in 0..BATCHES {
         h.process_unguarded();
@@ -89,6 +103,10 @@ fn main() {
             if INSTRUMENTS.contains(&id) {
                 let mut h = rig(&registry, id, false);
                 println!("{id}: idle once {:.6} s", time_once(|| run(&mut h)));
+            }
+            if OBSERVED.contains(&id) {
+                let mut h = unobserved(&registry, id);
+                println!("{id}: unobserved once {:.6} s", time_once(|| run(&mut h)));
             }
         }
         return;
@@ -113,6 +131,16 @@ fn main() {
                 id.trim_start_matches("atomik.")
             );
             let mut h = rig(&registry, id, false);
+            let rec = Recorder::new();
+            c.bench_function(&name, |b| b.iter_custom(rec.runner(|| run(&mut h))));
+            rec.report(&name);
+        }
+        if OBSERVED.contains(&id) {
+            let name = format!(
+                "device/{}/unobserved/{BATCHES}batches",
+                id.trim_start_matches("atomik.")
+            );
+            let mut h = unobserved(&registry, id);
             let rec = Recorder::new();
             c.bench_function(&name, |b| b.iter_custom(rec.runner(|| run(&mut h))));
             rec.report(&name);

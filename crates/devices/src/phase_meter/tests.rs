@@ -407,3 +407,111 @@ fn the_results_do_not_depend_on_the_sample_rate_setup_order() {
     d.prepare(&info);
     assert_eq!(d.hold, Some(3 * 44_100));
 }
+
+// ---------------------------------------------------------------- the observed flag
+
+fn flag(h: &DeviceHarness, observed: bool) {
+    h.device()
+        .scope_tap()
+        .expect("a tap")
+        .set_observed(observed);
+}
+
+/// One batch of the scenario from `start`: correlated noise with a louder left channel.
+fn scenario(h: &mut DeviceHarness, start: usize) -> ([Vec<f32>; 2], [f32; PHASE_METERS]) {
+    let mut rng = [Rng::new(40 + start as u64), Rng::new(90 + start as u64)];
+    let (_, out) = run(h, start, 1, |c, _| {
+        let x = rng[0].next_bipolar();
+        if c == 0 {
+            0.7 * x
+        } else {
+            0.3 * x + 0.2 * rng[1].next_bipolar()
+        }
+    });
+    (out, values(h))
+}
+
+fn same_values(a: &[f32], b: &[f32]) -> bool {
+    a.iter().zip(b).all(|(x, y)| x.to_bits() == y.to_bits())
+}
+
+const GATED: [usize; 12] = [
+    value::RMS_L,
+    value::RMS_R,
+    value::TRUE_PEAK_DB,
+    value::CORRELATION,
+    value::BALANCE,
+    value::WIDTH,
+    value::MID_RMS,
+    value::SIDE_RMS,
+    value::MOMENTARY,
+    value::SHORT_TERM,
+    value::INTEGRATED,
+    value::SAMPLE_PEAK_DB,
+];
+
+#[test]
+fn a_meter_nobody_told_measures_as_before_and_a_cleared_one_keeps_the_sound_and_the_peaks() {
+    let (mut on, mut off, mut plain) = (device(), device(), device());
+    assert!(on.device().scope_tap().unwrap().is_observed());
+    flag(&plain, true);
+    flag(&off, false);
+    for i in 0..400 {
+        let (oa, va) = scenario(&mut on, i * BATCH);
+        let (op, vp) = scenario(&mut plain, i * BATCH);
+        let (ob, vb) = scenario(&mut off, i * BATCH);
+        assert_eq!(bits(&oa[0]), bits(&op[0]));
+        assert!(same_values(&va, &vp), "batch {i}: the default is unchanged");
+        assert_eq!(bits(&oa[0]), bits(&ob[0]), "the audio is the same");
+        assert_eq!(bits(&oa[1]), bits(&ob[1]), "the audio is the same");
+        // Peaks, holds and the latched sample peak run always.
+        for k in [
+            value::PEAK_L,
+            value::PEAK_R,
+            value::HOLD_L,
+            value::HOLD_R,
+            value::SAMPLE_PEAK_DB,
+        ] {
+            assert_eq!(va[k].to_bits(), vb[k].to_bits(), "batch {i} value {k}");
+        }
+        // The rest is at its reset state.
+        for k in GATED.into_iter().filter(|k| *k != value::SAMPLE_PEAK_DB) {
+            let at_rest = if matches!(
+                k,
+                value::TRUE_PEAK_DB | value::MOMENTARY | value::SHORT_TERM | value::INTEGRATED
+            ) {
+                FLOOR_DB
+            } else {
+                0.0
+            };
+            assert_eq!(vb[k].to_bits(), at_rest.to_bits(), "batch {i} value {k}");
+        }
+    }
+    assert!(values(&on)[value::MOMENTARY] > -40.0);
+}
+
+#[test]
+fn observed_again_the_meter_measures_from_that_moment() {
+    let (mut gated, mut control) = (device(), device());
+    for i in 0..40 {
+        scenario(&mut gated, i * BATCH);
+        scenario(&mut control, i * BATCH);
+    }
+    flag(&gated, false);
+    for i in 40..120 {
+        scenario(&mut gated, i * BATCH);
+        scenario(&mut control, i * BATCH);
+    }
+    // The control had the same audio and a reset where the flag came back (the reset of the
+    // meter also clears the peak holds, which the gated one kept: they are not compared).
+    control.set_param("meter.reset", 1.0);
+    flag(&gated, true);
+    for i in 120..200 {
+        let (_, vg) = scenario(&mut gated, i * BATCH);
+        let (_, vc) = scenario(&mut control, i * BATCH);
+        for k in GATED.into_iter().filter(|k| *k != value::SAMPLE_PEAK_DB) {
+            assert_eq!(vg[k].to_bits(), vc[k].to_bits(), "batch {i} value {k}");
+        }
+    }
+    assert!(values(&gated)[value::MOMENTARY] > -40.0);
+}

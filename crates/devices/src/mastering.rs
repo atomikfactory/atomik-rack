@@ -43,6 +43,14 @@
 //!   maximum (unrefined, as in Annex 2) of the **output**. `meter.reset` is a momentary toggle:
 //!   a rising edge (0 to 1) clears the integrated loudness, the windows and the true-peak
 //!   maximum (as does `reset()`); the transport does not reset it. Leave it at 0 afterwards.
+//! * **Observed flag.** The loudness and true-peak numbers are for the panel alone: the sound
+//!   never reads them. The device owns a tap that is never written ([`ScopeTap::flags_only`]) whose
+//!   observed flag the windowed app clears while no panel of the device is on screen. Cleared, the
+//!   meter and the two true-peak passes are skipped and the four values read -120 (the state
+//!   right after a reset); set again, they measure from that moment, so the integrated loudness
+//!   and the true-peak maximum cover the time since the panel came back. The limiter, its detector
+//!   and the gain reduction values are never gated. The flag is on by default: an offline render,
+//!   a test and the QA server never clear it and measure as before.
 //! * **Latency** `DETECT_DELAY (17) + round(look-ahead * sr)` samples (89 at 48 kHz for 1.5 ms, 83 at 44.1 kHz,
 //!   161 at 96 kHz), constant and set in `prepare`: it is the whole audio path (the oversampler
 //!   is only used for detection; the audio never goes through it).
@@ -57,12 +65,13 @@ use crate::bypass::{Bypassable, bypass_param};
 use atomik_core::{BATCH, ParamDescriptor, ParamId, Taper, Unit};
 use atomik_device_sdk::{
     Device, DeviceDescriptor, DeviceFactory, DeviceKind, Direction, PrepareInfo, ProcessContext,
-    SocketDescriptor, SocketId, SocketKind,
+    ScopeTap, SocketDescriptor, SocketId, SocketKind,
 };
 use atomik_dsp::{
     Biquad, BiquadCoeffs, BiquadShape, BlockSmoother, exp2_det, exp2_det_f64, log2_det,
     static_gain_reduction_knee_db,
 };
+use std::sync::Arc;
 
 pub mod limiter;
 pub mod loudness;
@@ -689,6 +698,10 @@ pub struct Mastering {
     tp: [PeakDetector; 2],
     tp_max: f32,
     meters: [f32; 8],
+    /// Carries the observed flag the interface sets (a tap that is never written).
+    tap: Arc<ScopeTap>,
+    /// The display-only metering was running at the previous batch.
+    observing: bool,
 }
 
 impl Default for Mastering {
@@ -757,6 +770,8 @@ impl Mastering {
             tp: [PeakDetector::new(BATCH), PeakDetector::new(BATCH)],
             tp_max: 0.0,
             meters: [FLOOR_DB, FLOOR_DB, FLOOR_DB, FLOOR_DB, 0.0, 0.0, 0.0, 0.0],
+            tap: Arc::new(ScopeTap::flags_only()),
+            observing: true,
         };
         m.derive();
         m
@@ -845,6 +860,7 @@ impl Device for Mastering {
         self.tp_max = 0.0;
         self.reset_pending = false;
         self.meters = [FLOOR_DB, FLOOR_DB, FLOOR_DB, FLOOR_DB, 0.0, 0.0, 0.0, 0.0];
+        self.observing = self.tap.is_observed();
         self.fresh = true;
     }
 
@@ -911,6 +927,18 @@ impl Device for Mastering {
                 sm.set_immediate(g);
             }
             self.fresh = false;
+        }
+        // The display-only metering (loudness, true peak) runs only while something shows it
+        // (the observed flag, module docs); it starts from nothing when it starts or stops, so
+        // what it reads covers the time it was wanted.
+        let observed = self.tap.is_observed();
+        if observed != self.observing {
+            self.observing = observed;
+            self.meter.reset();
+            for t in &mut self.tp {
+                t.reset();
+            }
+            self.tp_max = 0.0;
         }
         if self.reset_pending {
             self.reset_pending = false;
@@ -1070,24 +1098,33 @@ impl Device for Mastering {
             out[1][n] = lim[1][n] * g;
             cv[n] = 1.0 - env[n] * cv_mb[n];
         }
-        self.meter.process(&out[0], &out[1]);
-        let mut pk = [0.0f32; BATCH];
-        for (det, o) in self.tp.iter_mut().zip(&out) {
-            det.process(o, &mut pk, false);
-            for v in &pk {
-                self.tp_max = self.tp_max.max(*v);
+        let mut shown = [FLOOR_DB; 4];
+        if observed {
+            self.meter.process(&out[0], &out[1]);
+            let mut pk = [0.0f32; BATCH];
+            for (det, o) in self.tp.iter_mut().zip(&out) {
+                det.process(o, &mut pk, false);
+                for v in &pk {
+                    self.tp_max = self.tp_max.max(*v);
+                }
             }
+            let tp_db = if self.tp_max > 1e-6 {
+                (DB_PER_LOG2 * log2_det(self.tp_max)).max(FLOOR_DB)
+            } else {
+                FLOOR_DB
+            };
+            shown = [
+                self.meter.momentary(),
+                self.meter.short_term(),
+                self.meter.integrated(),
+                tp_db,
+            ];
         }
-        let tp_db = if self.tp_max > 1e-6 {
-            (DB_PER_LOG2 * log2_det(self.tp_max)).max(FLOOR_DB)
-        } else {
-            FLOOR_DB
-        };
         self.meters = [
-            self.meter.momentary(),
-            self.meter.short_term(),
-            self.meter.integrated(),
-            tp_db,
+            shown[0],
+            shown[1],
+            shown[2],
+            shown[3],
             gr_band[0] as f32,
             gr_band[1] as f32,
             gr_band[2] as f32,
@@ -1106,6 +1143,10 @@ impl Device for Mastering {
         let n = self.meters.len().min(out.len());
         out[..n].copy_from_slice(&self.meters[..n]);
         n
+    }
+
+    fn scope_tap(&self) -> Option<Arc<ScopeTap>> {
+        Some(Arc::clone(&self.tap))
     }
 
     fn latency_frames(&self) -> u32 {

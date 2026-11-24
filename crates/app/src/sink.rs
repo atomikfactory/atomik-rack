@@ -160,6 +160,13 @@ pub trait EngineSink {
     fn set_device_scope_live(&mut self, _id: DeviceInstanceId, _live: bool) -> bool {
         false
     }
+    /// [`atomik_device_sdk::ScopeTap::set_observed`] of the scope tap of a device: tells a
+    /// mastering device or a phase meter whether a panel (or any other reader) wants its
+    /// display-only metering. Sent when it changes. Returns whether the device has a tap; without
+    /// an engine it does nothing and returns false.
+    fn set_device_observed(&mut self, _id: DeviceInstanceId, _observed: bool) -> bool {
+        false
+    }
     /// [`atomik_device_sdk::ScopeTap::set_pre`] of the scope tap of a device: whether a meter
     /// panel wants the signal before the fader (a plugin device: before the plugin) instead of
     /// after it. Sent every frame like the live flag. Returns whether the device has a tap.
@@ -431,6 +438,10 @@ pub struct RecordingSink {
     pub device_scopes: BTreeMap<DeviceInstanceId, (Vec<f32>, Vec<f32>, u64)>,
     /// The devices [`EngineSink::set_device_scope_live`] switched on and not off again.
     pub scopes_live: std::collections::BTreeSet<DeviceInstanceId>,
+    /// The devices [`EngineSink::set_device_observed`] told that nothing looks (not told again).
+    pub unobserved: std::collections::BTreeSet<DeviceInstanceId>,
+    /// How often [`EngineSink::set_device_observed`] was called.
+    pub observed_calls: usize,
     /// The devices [`EngineSink::set_device_scope_point`] last asked for the pre-fader point.
     pub scopes_pre: std::collections::BTreeSet<DeviceInstanceId>,
     /// The devices [`EngineSink::reserve_device_scope_large`] was called for, with the number of
@@ -674,6 +685,16 @@ impl EngineSink for RecordingSink {
         left[..n].copy_from_slice(&l[l.len() - n..]);
         right[..n].copy_from_slice(&r[r.len() - n..]);
         Some((n, *head))
+    }
+
+    fn set_device_observed(&mut self, id: DeviceInstanceId, observed: bool) -> bool {
+        self.observed_calls += 1;
+        if observed {
+            self.unobserved.remove(&id);
+        } else {
+            self.unobserved.insert(id);
+        }
+        true
     }
 
     fn set_device_scope_live(&mut self, id: DeviceInstanceId, live: bool) -> bool {

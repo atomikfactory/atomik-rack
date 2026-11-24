@@ -353,6 +353,7 @@ pub struct AppCore<S: EngineSink> {
     vca_lanes: Vec<(u32, Vec<DeviceKey>)>,
     /// The spectrum and phase meter devices of the flat rack and their analysis state.
     analysers: analysers::Analysers,
+    observed: observed::Observed,
     /// The audio track tuners that show and what the engine was told about them.
     tuners: tuner::Tuners,
     /// The EQs whose analyser the engine was told to run.
@@ -711,6 +712,7 @@ impl<S: EngineSink> AppCore<S> {
             vca_sent: BTreeMap::new(),
             vca_lanes: Vec::new(),
             analysers: analysers::Analysers::default(),
+            observed: observed::Observed::default(),
             tuners: tuner::Tuners::default(),
             eq_live: eq_live::EqLive::default(),
             eq_spectra: eq_spectrum::EqSpectra::default(),
@@ -1963,6 +1965,7 @@ impl<S: EngineSink> AppCore<S> {
         self.vca_sent.clear();
         self.fx_meter_seq.clear();
         self.analysers.restart();
+        self.observed.restart();
         self.tuners.restart();
         self.eq_live.restart();
         self.eq_spectra.restart();
@@ -1980,6 +1983,7 @@ impl<S: EngineSink> AppCore<S> {
         self.plugin_devices = plugins::plugin_keys(&expanded);
         self.analysers
             .set_devices(analysers::analyser_keys(&expanded));
+        self.observed.set_devices(&expanded);
         clock.lap(&mut stages, "build");
         for device in &expanded.devices {
             // A frozen device keeps its place in the id order but is not built.
@@ -2054,6 +2058,7 @@ impl<S: EngineSink> AppCore<S> {
         self.feed_automation_values();
         self.feed_device_meters();
         self.feed_device_scopes();
+        self.feed_observed();
         self.feed_tuners();
         self.feed_spectrum_eq();
         self.feed_meter_panels();
@@ -2397,6 +2402,7 @@ impl<S: EngineSink> AppCore<S> {
             self.meter_devices = plugins::metered_with_plugins(exp);
             self.plugin_devices = plugins::plugin_keys(exp);
             self.analysers.set_devices(analysers::analyser_keys(exp));
+            self.observed.set_devices(exp);
         }
         if defer && !self.restart_deferred {
             self.restart_deferred = true;
@@ -4396,6 +4402,9 @@ mod audition;
 #[path = "app_core_players.rs"]
 mod players;
 
+#[path = "app_core_observed.rs"]
+mod observed;
+
 #[path = "app_core_analysers.rs"]
 mod analysers;
 pub use analysers::{LOUDNESS_VALUE_NAMES, MeterReadout, PHASE_VALUE_NAMES};
@@ -4966,6 +4975,10 @@ mod fx_tests;
 #[cfg(test)]
 #[path = "app_core_analyser_tests.rs"]
 mod analyser_tests;
+
+#[cfg(test)]
+#[path = "app_core_observed_tests.rs"]
+mod observed_tests;
 
 #[cfg(test)]
 #[path = "app_core_players_tests.rs"]

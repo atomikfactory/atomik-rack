@@ -26,6 +26,13 @@
 //!   published short-term values.
 //! * **`meter.reset`** is a momentary toggle like the mastering meter's: a rising edge clears the
 //!   integrated loudness, the loudness windows, the peak maxima and the holds (as does `reset()`).
+//! * **Observed flag** (the tap's [`ScopeTap::is_observed`]). What the device measures only for its
+//!   panel (the stereo image, the RMS levels, the loudness and the true peak) is skipped while the
+//!   windowed app says no panel is on screen: those values read as after a reset (-120 for the
+//!   loudness, true peak and levels in dB, 0 for the image and the RMS) and, once the panel is
+//!   back, measure from that moment. The recent and held peaks and the sample peak since reset
+//!   (the latched clip history) run always, as does the audio and the scope tap. The flag is on by
+//!   default and only the windowed app clears it.
 //! * **Scope.** Every batch goes into the device's [`ScopeTap`]; the UI draws the goniometer
 //!   (`scope` 0, M/S: mid up, side across, so mono is a vertical line) or the plain Lissajous
 //!   figure (`scope` 1, L/R: left across, right up) from the newest frames, `scope_gain` dB larger.
@@ -286,6 +293,8 @@ pub struct PhaseMeter {
     reset_level: bool,
     reset_pending: bool,
     values: [f32; PHASE_METERS],
+    /// The display-only metering was running at the previous batch.
+    observing: bool,
 }
 
 impl std::fmt::Debug for PhaseMeter {
@@ -323,6 +332,7 @@ impl PhaseMeter {
             reset_level: false,
             reset_pending: false,
             values: [0.0; PHASE_METERS],
+            observing: true,
         };
         meter.clear_values();
         meter
@@ -405,6 +415,7 @@ impl Device for PhaseMeter {
 
     fn reset(&mut self) {
         self.clear_state();
+        self.observing = self.tap.is_observed();
     }
 
     fn set_param(&mut self, id: ParamId, plain: f32) {
@@ -443,6 +454,18 @@ impl Device for PhaseMeter {
     }
 
     fn process(&mut self, ctx: &mut ProcessContext<'_>) {
+        // What only the panel reads is measured while it is wanted (module docs); it starts from
+        // nothing when it starts or stops.
+        let observed = self.tap.is_observed();
+        if observed != self.observing {
+            self.observing = observed;
+            self.stereo.reset();
+            self.loudness.reset();
+            for t in &mut self.true_peak {
+                t.reset();
+            }
+            self.true_peak_max = 0.0;
+        }
         if self.reset_pending {
             self.clear_state();
         }
@@ -457,10 +480,13 @@ impl Device for PhaseMeter {
             self.update_hold(c, *b, *r);
         }
         self.sample_peak = self.sample_peak.max(batch[0]).max(batch[1]);
-        self.stereo.process(&l, &r);
+        if observed {
+            self.stereo.process(&l, &r);
+        }
 
+        let loudness_on = self.loudness_on && observed;
         let mut true_peak_db = FLOOR_DB;
-        if self.loudness_on {
+        if loudness_on {
             self.loudness.process(&l, &r);
             let mut pk = [0.0f32; BATCH];
             for (det, x) in self.true_peak.iter_mut().zip([&l, &r]) {
@@ -477,16 +503,29 @@ impl Device for PhaseMeter {
         v[value::PEAK_R] = recent[1];
         v[value::HOLD_L] = self.held[0];
         v[value::HOLD_R] = self.held[1];
-        v[value::RMS_L] = self.stereo.rms_left();
-        v[value::RMS_R] = self.stereo.rms_right();
+        let image = if observed {
+            [
+                self.stereo.rms_left(),
+                self.stereo.rms_right(),
+                self.stereo.correlation(),
+                self.stereo.balance(),
+                self.stereo.width(),
+                self.stereo.mid_rms(),
+                self.stereo.side_rms(),
+            ]
+        } else {
+            [0.0; 7]
+        };
+        v[value::RMS_L] = image[0];
+        v[value::RMS_R] = image[1];
         v[value::SAMPLE_PEAK_DB] = db(self.sample_peak);
         v[value::TRUE_PEAK_DB] = true_peak_db;
-        v[value::CORRELATION] = self.stereo.correlation();
-        v[value::BALANCE] = self.stereo.balance();
-        v[value::WIDTH] = self.stereo.width();
-        v[value::MID_RMS] = self.stereo.mid_rms();
-        v[value::SIDE_RMS] = self.stereo.side_rms();
-        if self.loudness_on {
+        v[value::CORRELATION] = image[2];
+        v[value::BALANCE] = image[3];
+        v[value::WIDTH] = image[4];
+        v[value::MID_RMS] = image[5];
+        v[value::SIDE_RMS] = image[6];
+        if loudness_on {
             v[value::MOMENTARY] = self.loudness.momentary();
             v[value::SHORT_TERM] = self.loudness.short_term();
             v[value::INTEGRATED] = self.loudness.integrated();

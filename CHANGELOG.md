@@ -352,6 +352,13 @@ may break APIs and the patch and project formats.
   longer keeps that strip's tap running. Each panel carries on from the state it kept when it is shown again;
   the spectrogram has no rows for the time it was hidden, and the phase meter's loudness graph and range cover
   the time it was shown. The headless reading of the QA server, offline renders and the tests are unchanged.
+- **The mastering device and the phase meter measure only while a panel shows them.** Their loudness and true-peak
+  meters (and the phase meter's stereo image) are for the panel alone, so while no panel of the device is on screen
+  they are not computed: the mastering device costs 2.9 ms instead of 3.5 ms for 256 batches, the phase meter 0.11
+  ms instead of 0.67 ms. When the panel comes back the meters start again from that moment, so the integrated
+  loudness and the true-peak maximum cover the time since it was shown and read like right after a reset (-120)
+  until the windows have filled. The limiter, its gain reduction and the sound are never affected, and renders,
+  bounces, the QA server and the delivery checks measure exactly as before.
 
 ### Fixed
 - **Dropping an instrument above its mix channel.** An instrument dragged to the place above its own mix channel

@@ -22,6 +22,14 @@
 //!   the UI sets it, the device reads it once per batch and writes nothing while it is off, so
 //!   a tap nobody shows costs one relaxed load per batch. Devices whose whole job is the display
 //!   (the spectrum and phase meter devices) ignore it and always write.
+//! * **An observed flag** ([`ScopeTap::set_observed`], [`ScopeTap::is_observed`]): the other half
+//!   of "does anything look?". It says whether the numbers a device only measures for its panel
+//!   (loudness, true peak, stereo image) are wanted: the windowed app clears it while no panel of
+//!   the device is on screen and sets it again before the panel is, and the device skips that
+//!   display-only metering while it is clear. It is **on by default** and only the windowed app
+//!   ever clears it, so an offline render, a test and the QA server measure exactly as before.
+//!   It is not a parameter (it is not saved, automated or undone). A device with no samples to
+//!   show carries it on a tap that is never written ([`ScopeTap::flags_only`]).
 //! * **A point** ([`ScopeTap::set_pre`], [`ScopeTap::is_pre`]): a console strip can write the
 //!   signal before its fader instead of after it. The UI sets it like the live flag and the
 //!   device reads it only while the tap is live, so a tap nobody shows is still one load.
@@ -71,6 +79,8 @@ pub struct ScopeTap {
     head: AtomicU64,
     /// Whether anything looks at the tap (see the module docs).
     live: AtomicBool,
+    /// Whether the display-only metering of the device is wanted (see the module docs).
+    observed: AtomicBool,
     /// Whether a strip writes the signal before its fader (see the module docs).
     pre: AtomicBool,
     /// The large ring, once a reader asked for it.
@@ -108,9 +118,17 @@ impl ScopeTap {
             right: ring(),
             head: AtomicU64::new(0),
             live: AtomicBool::new(false),
+            observed: AtomicBool::new(true),
             pre: AtomicBool::new(false),
             big: OnceLock::new(),
         }
+    }
+
+    /// A tap that carries the flags only (the smallest ring, never written): for a device that
+    /// has no samples to show but is told whether its display-only metering is wanted
+    /// ([`Self::set_observed`]). Allocates; non-RT.
+    pub fn flags_only() -> Self {
+        Self::with_frames(64)
     }
 
     /// Makes room for windows of up to 65536 frames: allocates the large ring when this tap
@@ -152,6 +170,17 @@ impl ScopeTap {
     /// RT-safe. Whether something looks at the tap: one relaxed load.
     pub fn is_live(&self) -> bool {
         self.live.load(Ordering::Relaxed)
+    }
+
+    /// Tells the device whether its display-only metering is wanted (module docs). Any thread.
+    pub fn set_observed(&self, observed: bool) {
+        self.observed.store(observed, Ordering::Relaxed);
+    }
+
+    /// RT-safe. Whether the display-only metering is wanted: one relaxed load. True until the
+    /// interface says otherwise.
+    pub fn is_observed(&self) -> bool {
+        self.observed.load(Ordering::Relaxed)
     }
 
     /// Tells a strip to write the signal before its fader (`true`) or after it (module docs).
@@ -274,6 +303,17 @@ mod tests {
             (from..from + n).map(|i| i as f32).collect(),
             (from..from + n).map(|i| -(i as f32)).collect(),
         )
+    }
+
+    #[test]
+    fn a_tap_is_observed_until_somebody_says_otherwise() {
+        for tap in [ScopeTap::new(), ScopeTap::flags_only()] {
+            assert!(tap.is_observed(), "the default is yes");
+            tap.set_observed(false);
+            assert!(!tap.is_observed());
+            tap.set_observed(true);
+            assert!(tap.is_observed());
+        }
     }
 
     #[test]
