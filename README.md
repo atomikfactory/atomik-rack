@@ -104,6 +104,8 @@ Release builds are attached to each [GitHub release](https://github.com/atomikfa
 - **macOS (Apple Silicon and Intel):** `atomik-rack-<version>-macos-universal.dmg` or `atomik-rack-<version>-macos-universal.zip`.
 - **Linux (x86-64):** `atomik-rack-<version>-x86_64.AppImage` (any distribution), `atomik-rack_<version>_amd64.deb` for Debian and Ubuntu, or `atomik-rack-<version>-linux-x86_64.tar.gz`.
 
+**System requirements:** a graphics driver with DirectX 12, Vulkan or Metal (the interface is drawn on the graphics card; there is no software-rendering mode).
+
 A [nightly build](https://github.com/atomikfactory/atomik-rack/releases/tag/nightly) of `main` is published every day that it changes, under the same names with `nightly-<date>-<commit>` as the version. It is a pre-release: expect rough edges.
 
 Builds are code-signed (Windows) and notarised (macOS) only when the project's signing certificates are configured, and the release notes say whether they were. They are not signed yet, so each system warns the first time; the steps below work whether or not a build is signed.

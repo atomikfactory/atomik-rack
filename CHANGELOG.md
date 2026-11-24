@@ -65,6 +65,10 @@ may break APIs and the patch and project formats.
   thread.
 - **The last value of a drag is no longer dropped when the engine's parameter queue is full.** The newest refused
   value of each parameter is sent again on the next poll.
+- **A computer without a graphics driver keeps getting a message, now stated as a requirement.** The app never runs on
+  the software adapter unless `WGPU_ADAPTER_NAME` names it (it faults inside the system's software rasteriser); with no
+  hardware adapter it shows a box asking for a graphics driver with DirectX 12, Vulkan or Metal and exits. There is no
+  software rendering mode: a CPU frame took 16 to 47 ms in a measurement. The README lists the requirement.
 
 ## [0.5.0-rc.2] - 2026-11-24
 
