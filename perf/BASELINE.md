@@ -1125,3 +1125,32 @@ Note on the audio row: with the listing worker started before the audio stream, 
 of 46 ms (the driver's first look at the machine slows the opening of the audio device). The shipped change therefore
 starts the worker after the audio stream runs. That placement was not measured (the app was not started again); the
 owner's check: start time with the change, and the audio row.
+
+## Thin LTO for the shipped programs: measured, not adopted (2026-11-24)
+
+Release build vs the same build with `lto = "thin"` (codegen-units unchanged). atomik-render, `--loop-count 4`, median of 5, process CPU ms:
+
+| Project | current | thin LTO | change |
+|---|---|---|---|
+| fx-demo | 4281 | 4141 | -3.3 % |
+| character-demo | 3688 | 3672 | -0.4 % |
+| audio-demo | 797 | 781 | -2 % |
+| master-demo | 813 | 781 | -4 % |
+| sampler-demo | 438 | 453 | +3 % |
+
+Criterion (median): render song/workers0/block256 186.2 -> 177.5 ms; rack 719.9 -> 693.3 ms; large-song 1.462 -> 1.575 s (noisy); dsp biquad-stereo/4096 ~23 -> ~27 us (worse); chorus +1-2 %; compressor +1 %; oversample 4x +1-5 %.
+Binaries +2.2 % (atomik) / +2.4 % (atomik-render); build time ~3x. Decision: not adopted (no DSP gain >= 5 %).
+
+## CPU renderer, one main-window frame (spike, 2026-11-24)
+
+Headless, the MCP screenshot path (`paint_in(Main, CpuCanvas)` + `finish()`), release, 3 warm-up + 20 frames, median / p95 ms. vello_cpu is single-threaded, so the 4-thread profile equals unrestricted.
+
+| Scene | 1366x768 | 1920x1080 |
+|---|---|---|
+| empty project | 16.0 / 16.2 | 18.8 / 22.5 |
+| master-demo | 19.5 / 20.0 | 27.9 / 35.4 |
+| fx-demo | 27.6 / 28.1 | 32.6 / 39.0 |
+| player-demo | 28.6 / 29.2 | 31.8 / 34.4 |
+| stress rack (rack view) | 47.4 / 48.1 | 57.1 / 62.7 |
+
+Recording (path-to-strip work while painting) dominates: 13-43 ms; rasterising 3-5 ms. The CPU canvas has no display-list cache (the GPU canvas caches by id and revision). Harness kept outside the repo: orchestration/spike56_frame_time.rs.
