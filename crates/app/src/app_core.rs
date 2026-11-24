@@ -285,6 +285,9 @@ pub struct AppCore<S: EngineSink> {
     /// `follow_console_selection` saw a new console selection (cleared by the pane event).
     selection_changed: bool,
     document: Document,
+    /// The machine's memory as the limits see it: `None` reads the system on every use, a test
+    /// injects a figure ([`AppCore::set_memory_info`]).
+    memory: Option<crate::platform::memory::MemoryInfo>,
     view: RackView,
     ids: BTreeMap<DeviceKey, DeviceInstanceId>,
     /// The MIDI Out ports last handed to the sink (see `app_core_midi_out.rs`).
@@ -677,6 +680,8 @@ impl<S: EngineSink> AppCore<S> {
             rebuild_stages: Stages::new(),
             open_stages: Stages::new(),
             document: Document::new(doc),
+            // The unit tests do not depend on the machine they run on.
+            memory: cfg!(test).then_some(crate::platform::memory::MemoryInfo::UNKNOWN),
             view,
             ids: BTreeMap::new(),
             midi_out_sent: Vec::new(),
@@ -830,12 +835,33 @@ impl<S: EngineSink> AppCore<S> {
         };
         // The engine measures every device all the time; View > Show Device CPU only shows it.
         core.sink.set_cpu_timing(true);
+        core.apply_memory_limits();
         core.audio_reset();
         core.rebuild_engine();
         core.audio_opened();
         core.video_opened();
         core.midi_maps_changed();
         core
+    }
+
+    /// The machine's memory figures: the injected ones, else the system's.
+    pub fn memory_info(&self) -> crate::platform::memory::MemoryInfo {
+        self.memory
+            .unwrap_or_else(crate::platform::memory::MemoryInfo::read)
+    }
+
+    /// Makes the limits that follow the machine's memory use `info` instead of the system's (a
+    /// test of a small machine), and applies the undo budget to the open document.
+    pub fn set_memory_info(&mut self, info: crate::platform::memory::MemoryInfo) {
+        self.memory = Some(info);
+        self.apply_memory_limits();
+    }
+
+    /// Gives the open document the undo budget that fits the machine.
+    fn apply_memory_limits(&mut self) {
+        let bytes = crate::memory_limits::undo_bytes_for(self.memory_info().total);
+        self.document
+            .set_undo_limits(atomik_model::MAX_UNDO_STEPS, bytes);
     }
 
     /// The device registry.
@@ -1859,6 +1885,7 @@ impl<S: EngineSink> AppCore<S> {
         self.set_saved(doc.clone());
         self.end_patch_browse_for_new_document();
         self.document = Document::new(doc);
+        self.apply_memory_limits();
         // The new project's plugin params that a plugin's own table leaves out stay listed.
         self.plugins_pin_document_params();
         self.file = file;

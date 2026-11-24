@@ -64,6 +64,7 @@ pub mod logging;
 pub mod manual;
 pub mod masking_worker;
 pub mod master_keyboard;
+pub mod memory_limits;
 pub use atomik_ui::menu_layout;
 pub mod language_tab;
 pub mod listen;

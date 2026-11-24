@@ -369,6 +369,9 @@ may break APIs and the patch and project formats.
   only new place that may use `unsafe`) asks the system for the total and the free physical memory (Windows and
   macOS through a system call, Linux by reading `/proc/meminfo`); the limits that follow the machine use it. Nothing
   changes by itself.
+- **The undo history keeps a smaller budget on a machine with little memory.** A machine with less than 8 GB of
+  physical memory keeps 128 MiB of undo history instead of 512 MiB, for every song it opens or starts; a machine
+  with 8 GB or more, or one that does not tell its memory, behaves as before.
 
 ### Fixed
 - **Dropping an instrument above its mix channel.** An instrument dragged to the place above its own mix channel
