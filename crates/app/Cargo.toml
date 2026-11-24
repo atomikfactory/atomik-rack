@@ -79,13 +79,16 @@ clap.workspace = true
 [target.'cfg(target_os = "macos")'.dependencies]
 # default-features off: the gtk3 feature is only for Linux, where we do not use muda.
 muda = { workspace = true, default-features = false }
+# The machine's physical memory (`sysctlbyname`, in `platform/memory.rs`).
+libc.workspace = true
 
 # Windows only: message boxes with buttons of our own words are task dialogs, which need the
 # Common Controls v6 manifest that build.rs embeds (here and in atomik-mcp).
 [target.'cfg(windows)'.dependencies]
 rfd = { workspace = true, features = ["common-controls-v6"] }
-# The cursor position during an operating-system file drag (winit sends none on Windows).
-windows-sys = { workspace = true, features = ["Win32_Foundation", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_WindowsAndMessaging"] }
+# The cursor position during an operating-system file drag (winit sends none on Windows), and
+# the machine's physical memory.
+windows-sys = { workspace = true, features = ["Win32_Foundation", "Win32_System_SystemInformation", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_WindowsAndMessaging"] }
 
 # Windows only: embeds the application icon in atomik.exe (build.rs; a no-op elsewhere).
 [target.'cfg(windows)'.build-dependencies]

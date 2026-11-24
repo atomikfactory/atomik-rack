@@ -365,6 +365,10 @@ may break APIs and the patch and project formats.
   looks at (64 prepared strips: 274.5 MiB of heap before, 258.5 MiB now; the working set of the process that holds
   them drops by 17 MiB). A panel fills from the moment it is shown, as it already did; the analyser devices and an
   audio track's tuner keep their ring from the start. Renders, bounces and the QA server read what they read before.
+- **The program reads the machine's physical memory.** One small file of the application (`platform/memory.rs`, the
+  only new place that may use `unsafe`) asks the system for the total and the free physical memory (Windows and
+  macOS through a system call, Linux by reading `/proc/meminfo`); the limits that follow the machine use it. Nothing
+  changes by itself.
 
 ### Fixed
 - **Dropping an instrument above its mix channel.** An instrument dragged to the place above its own mix channel
