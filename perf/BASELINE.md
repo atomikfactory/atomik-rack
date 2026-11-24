@@ -985,8 +985,9 @@ then decoding only the files that stay: the tests check that a streamed file is 
 ## Storing a long take (2026-11-25)
 
 A ten minute stereo take at 48 kHz (28.8 million frames, a 220 MiB in-progress file) stored by the writer thread,
-`audio_writer_tests::ten_minute_stereo_take_figures` (release profile, warm file cache, heap held at once on the
-writer's thread, counting allocator):
+a one-off run of the app's `store_laps` (release profile, warm file cache, heap held at once on the writer's
+thread, counting allocator; the test that printed it is gone). The ceiling is kept by
+`crates/audio-file/tests/bounded.rs` (6 channels x 1 000 000 frames under 2 MB):
 
 ```text
 path                          peak heap held   time

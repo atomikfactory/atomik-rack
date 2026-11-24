@@ -235,3 +235,58 @@ fn a_file_that_needs_converting_uses_the_lower_figure_and_a_big_limit_imports_as
         .unwrap();
     assert_eq!(big.hash, plain.import(&src, 48_000).unwrap().hash);
 }
+
+/// Sample `f` of channel `c`: computed from the index, so the test holds no buffer of the take.
+fn index_sample(c: usize, f: u64) -> f32 {
+    ((f * 7 + c as u64 * 13) % 1000) as f32 / 500.0 - 1.0
+}
+
+#[test]
+fn a_take_stored_block_by_block_holds_a_few_blocks_not_the_take() {
+    const FRAMES: u64 = 1_000_000;
+    const CHANNELS: u16 = 6;
+    // The take is 24 MB of f32. One block of six channels is 192 KiB, the interleave buffer the
+    // same, the finished peaks about 0.25 MB (a few copies of them live while they are written):
+    // measured at 0.85 MB, held to 2 MB.
+    let take_bytes = (FRAMES * u64::from(CHANNELS) * 4) as usize;
+    let mut bundle = Bundle::create(&common::tmp_dir("block-store").join("P")).unwrap();
+    let (info, peak) = peak_of(|| {
+        bundle
+            .add_recording_from(48_000, CHANNELS, FRAMES, "take", |from, out| {
+                for (c, ch) in out.iter_mut().enumerate() {
+                    for (i, s) in ch.iter_mut().enumerate() {
+                        *s = index_sample(c, from + i as u64);
+                    }
+                }
+                Ok(())
+            })
+            .unwrap()
+    });
+    assert_eq!(info.frames, FRAMES);
+    assert!(
+        peak < 2_000_000,
+        "storing {take_bytes} bytes held {peak} bytes at once"
+    );
+    assert!(bundle.exists(&info.hash));
+
+    // For contrast: a take held in memory and stored whole holds at least its own size.
+    let frames = 200_000usize;
+    let ((), whole) = peak_of(|| {
+        let data = AudioData::new(
+            48_000,
+            (0..usize::from(CHANNELS))
+                .map(|c| {
+                    (0..frames)
+                        .map(|f| index_sample(c, f as u64))
+                        .collect::<Vec<f32>>()
+                })
+                .collect(),
+        )
+        .unwrap();
+        bundle.add_recording(&data, "whole").unwrap();
+    });
+    assert!(
+        whole >= frames * usize::from(CHANNELS) * 4,
+        "the whole-buffer store held {whole} bytes"
+    );
+}
