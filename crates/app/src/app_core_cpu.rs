@@ -51,6 +51,10 @@ pub struct TrackCpu {
     pub percent: f32,
     /// Whether Freeze Track can take it.
     pub freezable: bool,
+    /// Where the track stands in the song (the order of equal loads).
+    position: usize,
+    /// The devices the sum covers: the instrument, the channel, then the insert effects.
+    members: Vec<DeviceKey>,
 }
 
 /// The state of the readout.
@@ -68,6 +72,11 @@ pub(super) struct CpuMeters {
     tracks: Vec<TrackCpu>,
     /// The track each top-level device belongs to, by name.
     owner: BTreeMap<DeviceKey, String>,
+    /// The document revision `tracks` and `owner` were built for: while it holds, a pass only
+    /// refreshes the percentages and the order.
+    plan_revision: Option<u64>,
+    /// The channel loads handed to the console (kept, refilled in place).
+    strips: BTreeMap<DeviceKey, f32>,
     /// The freeze hint watch.
     hint: HintWatch,
 }
@@ -184,13 +193,18 @@ impl<S: EngineSink> AppCore<S> {
             return;
         }
         self.view.set_cpu_loads(Some(&self.cpu.load));
-        let strips: BTreeMap<DeviceKey, f32> = self
-            .cpu
-            .tracks
-            .iter()
-            .map(|t| (t.channel.clone(), t.percent))
-            .collect();
-        self.console.set_cpu_loads(Some(&strips));
+        let cpu = &mut self.cpu;
+        cpu.strips
+            .retain(|k, _| cpu.tracks.iter().any(|t| t.channel == *k));
+        for t in &cpu.tracks {
+            match cpu.strips.get_mut(&t.channel) {
+                Some(v) => *v = t.percent,
+                None => {
+                    cpu.strips.insert(t.channel.clone(), t.percent);
+                }
+            }
+        }
+        self.console.set_cpu_loads(Some(&cpu.strips));
     }
 
     /// Once per frame: turns the engine's samples into loads.
@@ -201,13 +215,14 @@ impl<S: EngineSink> AppCore<S> {
             let Some(now) = self.sink.read_device_cpu(*id) else {
                 continue;
             };
-            let Some(before) = cpu.last.get(key).copied() else {
+            let Some(slot) = cpu.last.get_mut(key) else {
                 cpu.last.insert(key.clone(), now);
                 continue;
             };
+            let before = *slot;
             if now.budget_ns < before.budget_ns {
                 // The engine was rebuilt: its clock started again.
-                cpu.last.insert(key.clone(), now);
+                *slot = now;
                 continue;
             }
             let window = now.budget_ns - before.budget_ns;
@@ -215,12 +230,25 @@ impl<S: EngineSink> AppCore<S> {
                 continue;
             }
             if let Some(pct) = load_percent(before, now) {
-                let gauge = cpu.gauges.entry(key.clone()).or_default();
-                gauge.push(pct, window);
-                cpu.load.insert(key.clone(), gauge.average());
+                if !cpu.gauges.contains_key(key) {
+                    cpu.gauges.insert(key.clone(), Gauge::default());
+                }
+                if let Some(gauge) = cpu.gauges.get_mut(key) {
+                    gauge.push(pct, window);
+                    let average = gauge.average();
+                    match cpu.load.get_mut(key) {
+                        Some(v) => *v = average,
+                        None => {
+                            cpu.load.insert(key.clone(), average);
+                        }
+                    }
+                }
                 moved = true;
             }
-            cpu.last.insert(key.clone(), now);
+            // `slot` is still the entry of `key`: the maps above are other fields.
+            if let Some(slot) = cpu.last.get_mut(key) {
+                *slot = now;
+            }
         }
         // A device that left the rack takes its figure with it.
         let ids = &self.ids;
@@ -236,11 +264,33 @@ impl<S: EngineSink> AppCore<S> {
         }
     }
 
-    /// Sums every track's chain (see [`TrackCpu`]) from the device loads.
+    /// Sums every track's chain (see [`TrackCpu`]) from the device loads. The chains, names and
+    /// the owner map are built again only when the document changed since the last pass; every
+    /// other pass refreshes the percentages and the order in place.
     fn rebuild_track_cpu(&mut self) {
-        let doc = self.doc();
-        let loads = &self.cpu.load;
+        let revision = self.document.revision();
+        if self.cpu.plan_revision != Some(revision) {
+            self.plan_track_cpu();
+            self.cpu.plan_revision = Some(revision);
+        }
+        let cpu = &mut self.cpu;
+        let loads = &cpu.load;
         let under = |k: &DeviceKey| atomik_ui::rack::load_under(loads, k).unwrap_or(0.0);
+        for t in &mut cpu.tracks {
+            let (head, effects) = t.members.split_at(2);
+            t.percent = under(&head[0]) + under(&head[1]) + effects.iter().map(under).sum::<f32>();
+        }
+        // Heaviest first; equal loads keep the song's order.
+        cpu.tracks.sort_unstable_by(|a, b| {
+            b.percent
+                .total_cmp(&a.percent)
+                .then(a.position.cmp(&b.position))
+        });
+    }
+
+    /// Reads every track's chain, name and owner entries from the document.
+    fn plan_track_cpu(&mut self) {
+        let doc = self.document.doc();
         let mut tracks = Vec::new();
         let mut owner = BTreeMap::new();
         for t in &doc.song.tracks {
@@ -250,13 +300,9 @@ impl<S: EngineSink> AppCore<S> {
             let name = doc
                 .device(&t.device)
                 .map_or_else(|| t.device.0.clone(), |d| d.name.clone());
-            let percent = under(&t.device)
-                + under(&chain.channel)
-                + chain.effects.iter().map(under).sum::<f32>();
-            for key in std::iter::once(&t.device)
-                .chain(std::iter::once(&chain.channel))
-                .chain(chain.effects.iter())
-            {
+            let mut members = vec![t.device.clone(), chain.channel.clone()];
+            members.extend(chain.effects);
+            for key in &members {
                 owner.insert(key.clone(), name.clone());
             }
             let freezable = t.frozen.is_none()
@@ -266,11 +312,12 @@ impl<S: EngineSink> AppCore<S> {
                 track: t.device.clone(),
                 channel: chain.channel,
                 name,
-                percent,
+                percent: 0.0,
                 freezable,
+                position: tracks.len(),
+                members,
             });
         }
-        tracks.sort_by(|a, b| b.percent.total_cmp(&a.percent));
         self.cpu.tracks = tracks;
         self.cpu.owner = owner;
     }

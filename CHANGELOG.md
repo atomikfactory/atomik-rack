@@ -126,6 +126,10 @@ may break APIs and the patch and project formats.
   tempo edit, an undo or a new song is still picked up on the next frame. An idle frame of the fx-demo project
   allocates nothing; a playing one only in the frames of the device CPU readout (about five a second). What is shown
   does not change.
+- **The device CPU readout no longer allocates in a playing window.** Each pass (about five a second) rebuilt every
+  track's chain, name and owner list. They are now kept and read again only when the project changes; a pass
+  refreshes the percentages and the order in place. A playing frame of the fx-demo project now allocates nothing
+  (it was 800 heap operations over sixty frames). The figures and their order are the same as before.
 
 ### Fixed
 - **Exporting a patch, a MIDI file or MIDI mappings, a tab or chord sheet, the device list or the diagnostics report
