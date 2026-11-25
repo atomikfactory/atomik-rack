@@ -19,6 +19,10 @@ may break APIs and the patch and project formats.
   recovery copies are neither read nor written), no audio device, no plugins loaded or scanned and no project
   reopened, so a setting, a device or a plugin that stops a normal start cannot. The window title ends in
   `[Safe mode]` and a message says so. It cannot be combined with `--settings`.
+- **Kill tests for recovery and for a killed plugin process.** One test ends a running session with a hard kill and
+  checks that the next start offers the recovery and opens the edited document; another kills one sandboxed plugin
+  process while two play and checks that only that device turns crashed, the other keeps processing and the saved
+  state restores. Tests and documentation only.
 
 ### Changed
 - **The rack builds the automation values it shows once, not on every paint.** While an automation lane has points,
