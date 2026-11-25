@@ -9,14 +9,15 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Changed
-- **Faster pull request CI: the tests run with cargo-nextest, and the example-song renders run in the release legs.**
-  CI runs every test in a process of its own and the tests of all test programs together (the `ci` profile of
-  `.config/nextest.toml`; no retries; the tests that start and kill real plugin processes run one at a time), then the
-  doc tests with `cargo test --doc`. The eight example-song render programs of `atomik-render` (`fx_demo`,
-  `plugin_demo`, `plugin_demo_vst3`, `character_demo`, `container_demo`, `determinism_examples`, `player_demo`,
-  `drum_demo`) no longer run in the debug legs of a pull request without the `full-ci` label; every push to `main`
-  and every manual run still runs them on all three systems (the debug legs, macOS included, and the release legs).
-  `cargo test` works as before. No test was removed or changed.
+- **Faster pull request CI: the test programs run side by side, and the example-song renders run in the release legs.**
+  CI builds the tests once and runs up to three test programs at the same time (`scripts/ci-test.sh`; each program
+  keeps its own threads, working directory and environment as under `cargo test`; no retries; the tests that start
+  and kill real plugin processes run last, one program at a time), then the doc tests with `cargo test --doc`. The
+  eight example-song render programs of `atomik-render` (`fx_demo`, `plugin_demo`, `plugin_demo_vst3`,
+  `character_demo`, `container_demo`, `determinism_examples`, `player_demo`, `drum_demo`) no longer run in the debug
+  legs of a pull request without the `full-ci` label; every push to `main` and every manual run still runs them on
+  all three systems (the debug legs, macOS included, and the release legs). `cargo test` works as before. No test
+  was removed or changed.
 
 ## [0.5.0-rc.3] - 2026-11-25
 

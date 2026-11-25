@@ -173,21 +173,17 @@ jobs:
           # shellcheck disable=SC2086
           cargo build $flags $packages
           echo "ATOMIK_TEST_PLUGINS_PREBUILT=1" >> "$GITHUB_ENV"
-      # cargo-nextest runs each test in a process of its own and the tests of every test program
-      # together (`cargo test` runs the programs one after the other); the settings are the `ci`
-      # profile of .config/nextest.toml. It runs no doc tests: those follow with `cargo test --doc`.
-      - uses: taiki-e/install-action@75a7c0f87bd666af3cdb75c5b9e9d03ab6044e6f # v2.90.6
-        if: env.RUN_CODE == 'true'
-        with:
-          tool: cargo-nextest@0.9.133
-      # The debug legs leave out the example-song renders: whole example projects rendered one or
-      # more times, minutes of the macOS leg. The release legs run them, so every push to main
-      # still runs them. Keep this list equal to the one in docs/TESTING.md.
+      # scripts/ci-test.sh builds the test programs once and runs several of them at the same
+      # time (`cargo test` runs them one after the other, and cargo-nextest, which starts a
+      # process per test, was slower on the 19 000 small tests of this workspace). Each program
+      # still runs as libtest threads in one process with the environment and working directory
+      # cargo gives it, no test is retried, and every program runs even if one fails.
       # On a pull request without the `full-ci` label the eight example-song renders are left out
       # of the debug legs (they run in the release legs). Everywhere else (main, nightly, a manual
       # run, a labelled pull request) the debug legs run them too, so macOS, which has no release
-      # leg, renders every example song on each push to main.
-      - name: cargo nextest (debug)
+      # leg, renders every example song on each push to main. Keep the list of the eight programs
+      # (in scripts/ci-test.py) equal to the one in docs/TESTING.md.
+      - name: cargo test (debug)
         if: env.RUN_CODE == 'true' && matrix.profile == 'debug'
         shell: bash
         env:
@@ -195,18 +191,12 @@ jobs:
             ${{ github.event_name == 'pull_request'
                 && !contains(github.event.pull_request.labels.*.name, 'full-ci') }}
         # shellcheck disable=SC2086
-        run: |
-          filter='all()'
-          if [ "$SKIP_RENDERS" = "true" ]; then
-            filter='not (binary_id(atomik-render::fx_demo) | binary_id(atomik-render::plugin_demo_vst3) | binary_id(atomik-render::plugin_demo) | binary_id(atomik-render::character_demo) | binary_id(atomik-render::container_demo) | binary_id(atomik-render::determinism_examples) | binary_id(atomik-render::player_demo) | binary_id(atomik-render::drum_demo))'
-          fi
-          echo "test filter: $filter"
-          cargo nextest run --profile ci $PACKAGES --no-fail-fast --no-tests=pass -E "$filter"
-      - name: cargo nextest (release)
+        run: sh scripts/ci-test.sh debug $PACKAGES
+      - name: cargo test (release)
         if: env.RUN_CODE == 'true' && matrix.profile == 'release'
         shell: bash
         # shellcheck disable=SC2086
-        run: cargo nextest run --profile ci $PACKAGES --release --no-fail-fast --no-tests=pass
+        run: sh scripts/ci-test.sh release $PACKAGES
       - name: doc tests (debug)
         if: env.RUN_CODE == 'true' && matrix.profile == 'debug'
         shell: bash
