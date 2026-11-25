@@ -145,16 +145,25 @@ pub trait Device: Send + 'static {
     }
 
     /// RT-safe. Whether the device has gone silent and may be left uncalled while its inputs
-    /// stay silent. The engine asks once after each `process` (single-stage devices only) and,
-    /// while the answer was `true`, does not call `process` for a batch in which
+    /// stay silent. The engine asks once after the last stage of each `process` and, while the
+    /// answer was `true`, does not call `process` (or a stage of it) for a batch in which
     ///
-    /// * every audio and CV input is `+0.0` in every sample (bitwise: `-0.0` and NaN are not),
+    /// * every audio and CV input (of the stage, for a multi-stage device, less the sockets
+    ///   [`Device::idle_ignored_inputs`] names) is `+0.0` in every sample (bitwise: `-0.0` and
+    ///   NaN are not),
     /// * no note event, playback batch or parameter change reaches the device, and
     /// * the transport only advances (same tempo, same playing state, no jump of the position),
     ///
-    /// and calls [`Device::idle_advance`] once instead. Any other call into the device
-    /// (`set_param`, `swap_samples`, `swap_player_data`) makes the engine ask again after the
-    /// next `process`.
+    /// and calls [`Device::idle_advance_stage`] (which is [`Device::idle_advance`] for a
+    /// single-stage device) once instead. Any other call into the device (`set_param`,
+    /// `swap_samples`, `swap_player_data`) makes the engine ask again after the next `process`.
+    ///
+    /// A multi-stage device is decided stage by stage: a stage that is called (its inputs are not
+    /// silent) ends the answer for the stages after it in the same batch, so they are called too
+    /// and the engine asks again after the last one; a stage that is skipped leaves the later
+    /// ones free to be called or skipped by their own inputs. Such a device must leave what it
+    /// hands from one stage to the next exactly as a silent stage would
+    /// ([`Device::idle_advance_stage`]).
     ///
     /// **Contract.** A device may answer `true` only if, from its present state, processing a
     /// batch with such inputs would (i) write only `+0.0` to every output, (ii) emit no note,
@@ -173,6 +182,30 @@ pub trait Device: Send + 'static {
     /// place of `process` for a batch the engine skipped (see [`Device::quiescent`]). The
     /// default does nothing. Same audio-thread rules as `process`.
     fn idle_advance(&mut self, _frames: usize) {}
+
+    /// RT-safe. [`Device::idle_advance`] for stage `stage` of a multi-stage device: what the
+    /// stage would have done to the device's state over a silent batch (and nothing else). The
+    /// default is `idle_advance`, which is right for a single-stage device (its stage is 0).
+    fn idle_advance_stage(&mut self, _stage: u8, frames: usize) {
+        self.idle_advance(frames);
+    }
+
+    /// Read once, when the engine builds the node (non-RT). Audio or CV inputs that the engine
+    /// leaves out of its test that the inputs are silent: an input that only scales what the
+    /// device makes from its other inputs (a gain that multiplies a signal that is silent) and so
+    /// cannot make a silent batch sound. Empty by default.
+    fn idle_ignored_inputs(&self) -> &'static [SocketId] {
+        &[]
+    }
+
+    /// RT-safe. Whether `stage` of a multi-stage device makes its outputs from the device's own
+    /// state whatever its inputs (a gain it publishes, say): the engine then calls it every
+    /// batch, also while the device is quiescent, and a call of it does not end the answer for
+    /// the stages after it. Only asked of a quiescent multi-stage device. The default is
+    /// `false`.
+    fn idle_stage_runs(&self, _stage: u8) -> bool {
+        false
+    }
 
     /// Processing latency in frames introduced by this device.
     fn latency_frames(&self) -> u32 {

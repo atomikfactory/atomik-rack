@@ -100,14 +100,18 @@ pub(crate) struct Node {
     pub(crate) preview: Option<PreviewClock>,
     /// The device answered [`Device::quiescent`] `true` after its last `process` and nothing has
     /// touched it since: while its inputs stay silent the node is skipped (see
-    /// [`Node::skippable`]). Always false for a multi-stage device.
+    /// [`Node::skippable`]). A stage of a multi-stage device that is called ends the answer for
+    /// the stages after it in the same batch (the device asks again after its last stage).
     pub(crate) idle: bool,
     /// The time of the node's last batch, run or skipped; read only while `idle`.
     idle_time: Option<TimeInfo>,
-    /// The descriptor has a stage above 0 (such a node is never skipped).
+    /// The descriptor has a stage above 0: its stages are skipped one by one.
     multi_stage: bool,
+    /// `Device::idle_ignored_inputs()` read at construction.
+    idle_ignored: &'static [SocketId],
     /// Batches skipped so far (test hook, see [`crate::Engine::idle_skipped`]); written by the
-    /// thread that runs the node, read by the audio thread between batches.
+    /// thread that runs the node, read by the audio thread between batches. A batch of a
+    /// multi-stage device counts when its last stage was skipped.
     pub(crate) skipped: u64,
 }
 
@@ -216,6 +220,7 @@ impl Node {
         Self {
             has_meter_values: device.has_meter_values(),
             variable_latency: device.variable_latency(),
+            idle_ignored: device.idle_ignored_inputs(),
             stages,
             device,
             sockets,
@@ -378,10 +383,10 @@ impl Node {
     /// per-device timing is on, its two clock reads serve both `busy_ns` and the cost.
     ///
     /// **Idle skip.** With `idle_skip` on, a node whose device answered [`Device::quiescent`] after
-    /// its last run is not called while [`Node::skippable`] holds: `gather` has already left every
-    /// output at `+0.0` and every note output empty, so the device only gets
-    /// [`Device::idle_advance`]. The batch is not timed and does not feed the cost the load rule
-    /// reads.
+    /// its last run is not called while [`Node::skippable`] holds for the stage: `gather` has
+    /// already left every output of the stage at `+0.0` and every note output empty, so the
+    /// device only gets [`Device::idle_advance_stage`]. The batch is not timed and does not feed
+    /// the cost the load rule reads.
     pub(crate) fn run(
         &mut self,
         time: TimeInfo,
@@ -394,8 +399,8 @@ impl Node {
             self.silence();
             return false;
         }
-        if idle_skip && self.skippable(&time) {
-            return self.idle_batch(time);
+        if idle_skip && self.skippable(&time, stage) {
+            return self.idle_batch(time, stage, last);
         }
         let started = crate::timing::start();
         let accurate = probe.is_some_and(|p| p.due) || !self.cost_known;
@@ -500,6 +505,12 @@ impl Node {
                 }
             }
         }
+        // A stage of a multi-stage device that runs changes the state the stages after it rest
+        // on, so they run too (a stage that only publishes the device's own state does not,
+        // see `Device::idle_stage_runs`); the device is asked again after its last stage.
+        if self.idle && !last && !self.device.idle_stage_runs(stage) {
+            self.idle = false;
+        }
         let mut ctx =
             ProcessContext::new(time, &mut self.signals, &mut self.notes, &self.connected)
                 .with_playback(playback);
@@ -517,18 +528,19 @@ impl Node {
             }
             // Asked after the batch, from the state the device is left in. A node on its own
             // preview clock is never skipped, so it is not asked either.
-            self.idle =
-                idle_skip && !self.multi_stage && self.preview.is_none() && self.device.quiescent();
+            self.idle = idle_skip && self.preview.is_none() && self.device.quiescent();
             self.idle_time = self.idle.then_some(time);
         }
     }
 
-    /// Whether this batch can be skipped: the device was quiescent after its last batch (and
-    /// nothing has touched it since), the node is healthy, single-stage and not previewing, no
-    /// note, playback batch or transport event reaches it, and every audio and CV input is
-    /// bitwise `+0.0`. A pure function of the node and of what `gather` delivered, so the
-    /// answer is the same on any thread; the dispatcher and [`Node::run`] both ask it.
-    pub(crate) fn skippable(&self, time: &TimeInfo) -> bool {
+    /// Whether `stage` of this batch can be skipped: the device was quiescent after its last
+    /// batch (and nothing earlier in this batch has run it since), the node is healthy and not
+    /// previewing, no note, playback batch or transport event reaches it, every audio and CV
+    /// input of the stage is bitwise `+0.0` (less the sockets the device says only scale what it
+    /// makes), and the device does not ask for the stage to run. A pure function of the node and
+    /// of what `gather` delivered, so the answer is the same on any thread; the dispatcher and
+    /// [`Node::run`] both ask it.
+    pub(crate) fn skippable(&self, time: &TimeInfo, stage: u8) -> bool {
         self.idle
             && !self.faulted
             && !self.playback_on
@@ -537,37 +549,45 @@ impl Node {
                 .idle_time
                 .as_ref()
                 .is_some_and(|prev| steady(prev, time))
-            && self.inputs_silent()
+            && self.inputs_silent(stage)
+            && !(self.multi_stage && self.device.idle_stage_runs(stage))
     }
 
-    /// No note event in any note input and every audio and CV input is bitwise `+0.0`.
-    fn inputs_silent(&self) -> bool {
+    /// No note event in any note input of `stage` and every audio and CV input of it that is
+    /// cabled is bitwise `+0.0` (an input that is not cabled was left at zero by `gather`).
+    fn inputs_silent(&self, stage: u8) -> bool {
         self.sockets.iter().enumerate().all(|(i, s)| {
-            if !s.direction.is_input() {
+            if !s.direction.is_input() || self.stage_of(i) != stage {
                 true
             } else if is_notes(s.kind) {
                 self.notes[i].is_empty()
             } else {
-                self.signals[i].iter().all(|x| x.to_bits() == 0)
+                !self.connected[i]
+                    || self.idle_ignored.contains(&s.id)
+                    || self.signals[i].iter().all(|x| x.to_bits() == 0)
             }
         })
     }
 
-    /// The skipped batch: the device only advances what runs free. Returns true if it panicked
+    /// The skipped stage: the device only advances what runs free. Returns true if it panicked
     /// doing so (like [`Node::run`]).
-    fn idle_batch(&mut self, time: TimeInfo) -> bool {
+    fn idle_batch(&mut self, time: TimeInfo, stage: u8, last: bool) -> bool {
         let device = self.device.as_mut();
         let outcome = catch_unwind(AssertUnwindSafe(|| {
             let _rt = atomik_core::rt_guard::audio_thread();
-            device.idle_advance(BATCH);
+            device.idle_advance_stage(stage, BATCH);
         }));
         if outcome.is_err() {
             self.faulted = true;
             self.silence();
             return true;
         }
-        self.idle_time = Some(time);
-        self.skipped += 1;
+        // The time of the batch is kept by its last stage: the stages of one batch all compare
+        // with the batch before it.
+        if last {
+            self.idle_time = Some(time);
+            self.skipped += 1;
+        }
         false
     }
 

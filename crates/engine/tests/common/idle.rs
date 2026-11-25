@@ -271,9 +271,42 @@ static STAGED: DeviceDescriptor = DeviceDescriptor {
     ],
 };
 
-/// A two-stage device that says `quiescent()` all the time: the engine must still call it.
+/// The calls a [`Staged`] device got, per stage.
+#[derive(Default)]
+pub struct StageCounts {
+    pub process: [AtomicU64; 2],
+    pub advance: [AtomicU64; 2],
+}
+
+impl StageCounts {
+    pub fn process(&self, stage: usize) -> u64 {
+        self.process[stage].load(Relaxed)
+    }
+
+    pub fn advance(&self, stage: usize) -> u64 {
+        self.advance[stage].load(Relaxed)
+    }
+}
+
+/// What the test asks of a [`Staged`] device.
+#[derive(Clone, Copy)]
+pub struct StagedOptions {
+    /// The idle skip switch of the engine.
+    pub skip: bool,
+    /// Stage 0 publishes the device's own state every batch (`Device::idle_stage_runs`).
+    pub publishes: bool,
+    /// The device names `ret` as an input that cannot make a silent batch sound.
+    pub ignore_ret: bool,
+}
+
+/// A two-stage device that says `quiescent()` all the time: stage 0 passes `in` to `send` and
+/// keeps its first sample, stage 1 adds that sample to `ret`. Silent in, silent out, so the
+/// answer is right for the batches the engine skips (a skipped stage 0 keeps silence).
 struct Staged {
-    counts: Arc<Counts>,
+    counts: Arc<StageCounts>,
+    held: f32,
+    publishes: bool,
+    ignore_ret: bool,
 }
 
 impl Device for Staged {
@@ -285,19 +318,41 @@ impl Device for Staged {
     fn set_param(&mut self, _: ParamId, _: f32) {}
     fn process(&mut self, ctx: &mut ProcessContext<'_>) {
         self.process_stage(0, ctx);
+        self.process_stage(1, ctx);
     }
     fn process_stage(&mut self, stage: u8, ctx: &mut ProcessContext<'_>) {
-        self.counts.process.fetch_add(1, Relaxed);
+        self.counts.process[usize::from(stage)].fetch_add(1, Relaxed);
         match stage {
-            0 => *ctx.output(SocketId(1)) = *ctx.input(SocketId(0)),
-            _ => *ctx.output(SocketId(3)) = *ctx.input(SocketId(2)),
+            0 => {
+                let input = *ctx.input(SocketId(0));
+                self.held = input[0];
+                *ctx.output(SocketId(1)) = input;
+            }
+            _ => {
+                let mut out = *ctx.input(SocketId(2));
+                out.iter_mut().for_each(|x| *x += self.held);
+                *ctx.output(SocketId(3)) = out;
+            }
         }
     }
     fn quiescent(&self) -> bool {
         true
     }
     fn idle_advance(&mut self, _: usize) {
-        self.counts.advance.fetch_add(1, Relaxed);
+        self.held = 0.0;
+    }
+    fn idle_advance_stage(&mut self, stage: u8, frames: usize) {
+        self.counts.advance[usize::from(stage)].fetch_add(1, Relaxed);
+        if stage == 0 {
+            self.idle_advance(frames);
+        }
+    }
+    fn idle_ignored_inputs(&self) -> &'static [SocketId] {
+        static RET: [SocketId; 1] = [SocketId(2)];
+        if self.ignore_ret { &RET } else { &[] }
+    }
+    fn idle_stage_runs(&self, stage: u8) -> bool {
+        self.publishes && stage == 0
     }
 }
 
@@ -525,39 +580,50 @@ impl World {
     }
 }
 
-/// A plan of one two-stage device fed by a silent source on both of its inputs.
-pub fn staged_world(skip: bool) -> (World, Arc<Counts>) {
+/// A plan of one two-stage device: a source on `in` (source 0 of the world) and a source on
+/// `ret` (source 1), both silent.
+pub fn staged_world(o: StagedOptions) -> (World, Arc<StageCounts>, DeviceInstanceId) {
     let c = cfg(0, 1);
     let mut g = Graph::new(&c);
-    let mode = Arc::new(AtomicU32::new(SILENCE));
-    let src = g.add_device(Box::new(Src {
-        mode: Arc::clone(&mode),
-        cost: Settings::new(0),
-        state: 1,
-    }));
-    let counts = Arc::new(Counts::default());
+    let mut srcs = Vec::new();
+    let mut source = |g: &mut Graph| {
+        let mode = Arc::new(AtomicU32::new(SILENCE));
+        let id = g.add_device(Box::new(Src {
+            mode: Arc::clone(&mode),
+            cost: Settings::new(0),
+            state: 1,
+        }));
+        srcs.push(mode);
+        id
+    };
+    let (src_in, src_ret) = (source(&mut g), source(&mut g));
+    let counts = Arc::new(StageCounts::default());
     let dev = g.add_device(Box::new(Staged {
         counts: Arc::clone(&counts),
+        held: 0.0,
+        publishes: o.publishes,
+        ignore_ret: o.ignore_ret,
     }));
-    g.connect(ep(src, SocketId(0)), ep(dev, SocketId(0)))
+    g.connect(ep(src_in, SocketId(0)), ep(dev, SocketId(0)))
         .unwrap();
-    g.connect(ep(src, SocketId(0)), ep(dev, SocketId(2)))
+    g.connect(ep(src_ret, SocketId(0)), ep(dev, SocketId(2)))
         .unwrap();
     let out = iface(&g, "out_1");
     g.connect(ep(dev, SocketId(3)), out).unwrap();
     let (mut engine, mut handle) = new_engine_with_options(c, EngineOptions::default());
-    engine.set_idle_skip(skip);
+    engine.set_idle_skip(o.skip);
     handle.submit_plan(g.compile().unwrap()).unwrap();
     (
         World {
             engine,
             handle,
-            srcs: vec![mode],
+            srcs,
             probes: Vec::new(),
             batches: 0,
             outputs: 1,
         },
         counts,
+        dev,
     )
 }
 

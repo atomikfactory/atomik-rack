@@ -33,7 +33,7 @@ pub mod timing;
 mod tune;
 mod workers;
 
-pub use arena::{RoutingPlan, Topology};
+pub use arena::{RoutingPlan, Topology, set_default_idle_skip};
 pub use atomik_core::harmony::{ChordMark, KeyMark, SongChord, SongHarmony};
 pub use atomik_dsp::lens::{LensSettings, Voicing as LensVoicing};
 pub use audio::{

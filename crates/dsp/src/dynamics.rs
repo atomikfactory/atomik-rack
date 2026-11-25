@@ -58,6 +58,9 @@ pub const AUTO_FULL_DB: f32 = 6.0;
 pub const GATE_DETECTOR_MS: f32 = 5.0;
 /// Fixed expansion ratio of the gate's expander mode.
 pub const EXPANDER_RATIO: f32 = 2.0;
+/// A release stage (dB) below this cannot lift the smoothed reduction over its flush of 1e-9
+/// again, a factor ten under it for the rounding of the smoothing (see `Compressor::is_quiet`).
+const QUIET_RELEASE_DB: f32 = 1e-10;
 
 /// Compressor level detection.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -264,6 +267,11 @@ impl Compressor {
             self.alpha_release
         };
         self.y1 = c.max(c + alpha_release * (self.y1 - c));
+        // The release stage decays towards zero and would stall on the smallest denormal (the
+        // product rounds back to it); it is flushed where it can no longer reach `gr`.
+        if self.y1 < 1e-30 {
+            self.y1 = 0.0;
+        }
         self.gr = self.y1 + self.alpha_attack * (self.gr - self.y1);
         if self.gr < 1e-9 {
             self.gr = 0.0;
@@ -293,6 +301,36 @@ impl Compressor {
         } else {
             0.0
         };
+    }
+
+    /// Whether a silent sample leaves the compressor with no gain reduction at all (gain exactly 1
+    /// and nothing for the meters) and changes nothing but the decay of its release stage: the
+    /// detector reads zero, the smoothed reduction is zero and the release stage is so small that
+    /// it cannot raise the reduction above the flush (1e-9) again. [`Compressor::skip_silent`]
+    /// then does what the silent samples do, without the detector. A program-dependent release
+    /// never qualifies.
+    #[inline]
+    pub fn is_quiet(&self) -> bool {
+        !self.auto
+            && self.quiet_below > 0.0
+            && self.gr == 0.0
+            && self.y1 < QUIET_RELEASE_DB
+            && (self.detector == Detector::Peak || self.ms == 0.0)
+    }
+
+    /// Advances `n` silent samples of a compressor that [`is_quiet`](Compressor::is_quiet): the
+    /// release stage decays exactly as [`Compressor::process`] would make it, with a zero curve.
+    /// The detector's state is left alone (a peak detector never touches it, a quiet RMS one is
+    /// zero) and the reduction stays zero.
+    #[inline]
+    pub fn skip_silent(&mut self, n: usize) {
+        debug_assert!(self.is_quiet());
+        for _ in 0..n {
+            self.y1 = 0.0f32.max(self.alpha_release * self.y1);
+            if self.y1 < 1e-30 {
+                self.y1 = 0.0;
+            }
+        }
     }
 
     /// Current gain reduction in dB (≥ 0).
@@ -890,5 +928,105 @@ mod shortcut_tests {
                 );
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod quiet_tests {
+    use super::*;
+
+    const SR: f32 = 48_000.0;
+
+    /// A compressor worked hard for a while by a loud signal, in `detector` mode.
+    fn worked(detector: Detector, release_ms: f32) -> Compressor {
+        let mut c = Compressor::new(SR);
+        c.set_threshold_db(-30.0);
+        c.set_ratio(6.0);
+        c.set_release_ms(release_ms);
+        c.set_detector(detector);
+        for n in 0..24_000 {
+            let x = 0.8 * (std::f32::consts::TAU * 220.0 * n as f32 / SR).sin();
+            c.process(x, 0.5 * x);
+        }
+        c
+    }
+
+    #[test]
+    fn a_compressor_is_quiet_once_its_reduction_and_release_stage_have_run_dry() {
+        for detector in [Detector::Rms, Detector::Peak] {
+            let mut c = worked(detector, 120.0);
+            assert!(!c.is_quiet(), "{detector:?}: it is compressing");
+            let mut samples = 0;
+            while !c.is_quiet() {
+                assert!(c.process(0.0, 0.0) <= 1.0);
+                samples += 1;
+                assert!(samples < 2_000_000, "{detector:?}: it never calmed down");
+            }
+            // The reduction is flushed at 1e-9 dB well before the release stage is: the compressor
+            // is quiet seconds before every part of its state is zero.
+            assert!(samples < 600_000, "{detector:?}: {samples} samples");
+        }
+    }
+
+    #[test]
+    fn skipping_silent_samples_leaves_the_state_where_processing_them_does() {
+        for detector in [Detector::Rms, Detector::Peak] {
+            for release_ms in [50.0, 120.0, 400.0] {
+                let mut processed = worked(detector, release_ms);
+                while !processed.is_quiet() {
+                    processed.process(0.0, 0.0);
+                }
+                let mut skipped = processed.clone();
+                // Far past the point where the release stage reaches zero.
+                for batch in 0..60_000 {
+                    for _ in 0..64 {
+                        let gain = processed.process(0.0, 0.0);
+                        assert_eq!(gain.to_bits(), 1.0f32.to_bits());
+                    }
+                    skipped.skip_silent(64);
+                    assert!(
+                        processed == skipped,
+                        "{detector:?} {release_ms} ms: batch {batch}"
+                    );
+                    if processed.y1 == 0.0 && batch > 100 {
+                        break;
+                    }
+                }
+                assert!(skipped.y1 == 0.0, "the release stage ran dry");
+                // And sound afterwards is the same bits from either.
+                for n in 0..2_000 {
+                    let x = 0.7 * (std::f32::consts::TAU * 330.0 * n as f32 / SR).sin();
+                    assert_eq!(
+                        processed.process(x, x).to_bits(),
+                        skipped.process(x, x).to_bits()
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_program_dependent_release_and_a_detector_that_holds_a_level_are_not_quiet() {
+        let mut c = worked(Detector::Rms, 100.0);
+        c.set_release_auto(true);
+        assert!(!c.is_quiet());
+        let mut c = worked(Detector::Rms, 100.0);
+        c.reset();
+        c.process(0.5, 0.5);
+        assert!(!c.is_quiet(), "the detector holds a level");
+        c.reset();
+        assert!(c.is_quiet(), "a cleared compressor is");
+    }
+
+    #[test]
+    fn the_release_stage_is_flushed_before_it_stalls_on_the_smallest_denormal() {
+        let mut c = worked(Detector::Peak, 200.0);
+        for _ in 0..2_000_000 {
+            c.process(0.0, 0.0);
+            if c.y1 == 0.0 {
+                return;
+            }
+        }
+        panic!("y1 = {:e}", c.y1);
     }
 }

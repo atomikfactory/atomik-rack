@@ -101,6 +101,14 @@ may break APIs and the patch and project formats.
 - **A knob turned while a song plays re-applies only the automation of that knob.** Any control message used to make
   every automation lane write its value again at the next batch; now only the lanes of that device and parameter do.
   Rendered audio does not change.
+- **Silent channel and bus strips are no longer processed.** A strip whose inputs are silent and whose filters,
+  equaliser, compressors, smoothers and latency line have all come to rest is left alone for the batch, stage by
+  stage (a return that sounds while the input is silent wakes only the second stage), so a project with many silent
+  tracks costs a fraction of what it did: an idle strip takes about 40 % of its former time and a 64-strip song of
+  silent tracks bounces in a quarter of the time. A gate that is on, a polarity switch, a cabled control voltage, the
+  look-ahead and a hard right pan keep a strip running. The analyser tap still gets its silent blocks. Rendered audio
+  does not change, byte for byte. The compressor's release stage is now flushed to zero once it can no longer reach
+  the gain reduction (it used to stall on the smallest denormal), which changes no sample.
 - **One process fewer per plugin on Windows.** A sandboxed plugin's process and a plugin scan's process now start with
   no console at all, instead of a hidden one, so the system no longer starts a console host next to each of them.
   Measured with the plugin sweep, a plugin process of its own costs 2.1 MB, 12 threads and 146 handles per instance

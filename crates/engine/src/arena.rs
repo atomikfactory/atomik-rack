@@ -361,6 +361,16 @@ pub(crate) struct Arena {
     pub(crate) idle_skip: bool,
 }
 
+static DEFAULT_IDLE_SKIP: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+
+/// Whether engines created from now on skip quiescent devices (test switch: a process-wide
+/// default read when an arena is made, for a render that cannot reach its engine; not a stable
+/// API). The default is on.
+#[doc(hidden)]
+pub fn set_default_idle_skip(on: bool) {
+    DEFAULT_IDLE_SKIP.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
 /// Non-RT construction.
 impl Arena {
     /// An empty arena with `capacity` slots.
@@ -369,7 +379,7 @@ impl Arena {
             nodes: (0..capacity).map(|_| None).collect(),
             index: Vec::with_capacity(capacity),
             fresh_fault: false,
-            idle_skip: true,
+            idle_skip: DEFAULT_IDLE_SKIP.load(std::sync::atomic::Ordering::Relaxed),
         }
     }
 

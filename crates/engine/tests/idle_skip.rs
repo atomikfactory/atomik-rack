@@ -188,16 +188,137 @@ fn a_device_that_says_it_is_not_quiescent_is_called_every_batch() {
     assert_eq!(w.advances(0), 3, "idle_advance is not called");
 }
 
+const STAGED: StagedOptions = StagedOptions {
+    skip: true,
+    publishes: false,
+    ignore_ret: false,
+};
+
+/// The bit patterns of what a staged world renders over `batches` batches, the sound of the
+/// two sources given by `modes(batch)`.
+fn staged_bits(o: StagedOptions, batches: usize, modes: impl Fn(usize) -> (u32, u32)) -> Vec<u32> {
+    let (mut w, _, _) = staged_world(o);
+    let mut bits = Vec::new();
+    for n in 0..batches {
+        let (a, b) = modes(n);
+        w.set_source(0, a);
+        w.set_source(1, b);
+        push_bits(&mut bits, &w.batch());
+    }
+    bits
+}
+
 #[test]
-fn a_multi_stage_device_is_never_skipped() {
-    let (mut w, counts) = staged_world(true);
+fn the_stages_of_a_quiescent_device_are_skipped_one_by_one() {
+    let (mut w, counts, id) = staged_world(STAGED);
     w.run(10);
     assert_eq!(
-        counts.process.load(std::sync::atomic::Ordering::Relaxed),
-        20,
-        "both stages, every batch"
+        (counts.process(0), counts.process(1)),
+        (1, 1),
+        "both stages once, then found quiescent"
     );
-    assert_eq!(counts.advance.load(std::sync::atomic::Ordering::Relaxed), 0);
+    assert_eq!((counts.advance(0), counts.advance(1)), (9, 9));
+    assert_eq!(w.engine.idle_skipped(id), Some(9), "a batch counts once");
+}
+
+#[test]
+fn sound_on_the_first_stage_input_runs_the_stage_after_it_too() {
+    let (mut w, counts, _) = staged_world(STAGED);
+    w.run(4);
+    w.set_source(0, NOISE);
+    w.batch();
+    assert_eq!(
+        (counts.process(0), counts.process(1)),
+        (2, 2),
+        "stage 0 ran, so stage 1 ran with its input silent"
+    );
+    w.set_source(0, SILENCE);
+    w.run(3);
+    assert_eq!(
+        (counts.process(0), counts.process(1)),
+        (2, 2),
+        "quiet again"
+    );
+    assert_eq!((counts.advance(0), counts.advance(1)), (3 + 3, 3 + 3));
+}
+
+#[test]
+fn sound_on_the_second_stage_input_runs_that_stage_alone() {
+    let (mut w, counts, id) = staged_world(STAGED);
+    w.run(4);
+    let skipped = w.engine.idle_skipped(id).unwrap();
+    w.set_source(1, NOISE);
+    w.batch();
+    assert_eq!(
+        (counts.process(0), counts.process(1)),
+        (1, 2),
+        "only stage 1 ran"
+    );
+    assert_eq!(counts.advance(0), 3 + 1, "stage 0 was advanced");
+    assert_eq!(
+        w.engine.idle_skipped(id),
+        Some(skipped),
+        "a batch whose last stage ran is not a skipped one"
+    );
+    w.set_source(1, SILENCE);
+    w.run(2);
+    assert_eq!((counts.process(0), counts.process(1)), (1, 2));
+}
+
+#[test]
+fn a_stage_that_publishes_its_state_runs_without_waking_the_others() {
+    let (mut w, counts, _) = staged_world(StagedOptions {
+        publishes: true,
+        ..STAGED
+    });
+    w.run(10);
+    assert_eq!(counts.process(0), 10, "stage 0 every batch");
+    assert_eq!(counts.process(1), 1, "stage 1 once");
+    assert_eq!(counts.advance(0), 0);
+    assert_eq!(counts.advance(1), 9);
+}
+
+#[test]
+fn an_input_the_device_ignores_does_not_keep_its_stage_running() {
+    let (mut w, counts, _) = staged_world(StagedOptions {
+        ignore_ret: true,
+        ..STAGED
+    });
+    w.run(2);
+    w.set_source(1, NOISE);
+    w.run(5);
+    assert_eq!(
+        (counts.process(0), counts.process(1)),
+        (1, 1),
+        "the return is not looked at"
+    );
+    let (mut w, counts, _) = staged_world(STAGED);
+    w.run(2);
+    w.set_source(1, NOISE);
+    w.run(5);
+    assert_eq!(counts.process(1), 1 + 5, "looked at, the stage runs");
+}
+
+#[test]
+fn a_staged_render_is_the_same_skipped_or_not() {
+    let modes = |n: usize| match n {
+        10..=14 => (NOISE, SILENCE),
+        20..=24 => (SILENCE, NOISE),
+        30..=32 => (NOISE, NOISE),
+        40 => (NEGATIVE_ZERO, SILENCE),
+        _ => (SILENCE, SILENCE),
+    };
+    let on = staged_bits(STAGED, 50, modes);
+    let off = staged_bits(
+        StagedOptions {
+            skip: false,
+            ..STAGED
+        },
+        50,
+        modes,
+    );
+    assert!(on.iter().any(|&b| b != 0));
+    assert_eq!(on, off);
 }
 
 #[test]
