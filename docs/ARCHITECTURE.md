@@ -5126,7 +5126,11 @@ take the app down; Settings > Plugins can switch back to running plugins inside 
   `in_l, in_r, sc_in_l, sc_in_r, notes_in, out_l, out_r, notes_out`; params are `bypass` then
   `p<plugin id>` keys with the plugin's own plain value (CLAP value; VST3 normalised, stepped as
   index). `Registry::register_plugin` keeps plugin types in their own map; `Registry::create` of a
-  plugin type builds the stand-in device, the real one comes from the manager.
+  plugin type builds the stand-in device, the real one comes from the manager. The catalogue registers its
+  plugins with `Registry::register_plugin_lazy`: the layout is checked then, but the descriptor is only built (and
+  interned) by the first `get`, `descriptor` or `create` of that type (`LazyDescriptor`, a `OnceLock`, thread-safe, once;
+  never on the audio thread, which only holds descriptors its devices already have). The browser lists a plugin from
+  the catalogue entry and needs no descriptor.
 - **The device (RT side).** [plugin-host/src/device.rs](../crates/plugin-host/src/device.rs):
   `PluginDevice` implements `Device` for every backend through the object-safe `PluginProcessor`. It
   calls the plugin with exactly **64 frames** per batch (so live, bounce and every host block feed
@@ -5208,7 +5212,8 @@ take the app down; Settings > Plugins can switch back to running plugins inside 
   next frame, and the exit waits for it at most five seconds.
   The parameter table of a plugin is held once per catalogue: the catalog entry owns the layout behind an `Arc`, and
   the table of interned descriptors (`descriptor_for_shared`) and the browser's rows share it instead of keeping their
-  own copies; what remains per parameter is the leaked descriptor (about 116 bytes) and the scan cache's own copy.
+  own copies; what remains per parameter is the scan cache's own copy, and the leaked descriptor (about 116 bytes)
+  of the plugins something has read (a project's, the rack's).
   A hosted instance holds the plugin's layout in the format instance, in the manager and in the handle it returns
   (about 130 bytes a parameter each); the figures are in [perf/BASELINE.md](../perf/BASELINE.md).
 - **Plugin manager.** What the user decides about a plugin (a star, tags, hidden by Disable, the quarantine after

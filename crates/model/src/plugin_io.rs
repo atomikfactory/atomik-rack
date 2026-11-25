@@ -444,8 +444,8 @@ pub(crate) fn stand_in_registry(
             // Replaced below by the saved layout.
             continue;
         }
-        let desc = registry.descriptor(t).expect("listed types are registered");
-        copy.register_plugin(t.to_owned(), desc).map_err(fail)?;
+        // A type whose descriptor is not built yet stays unbuilt in the copy.
+        copy.register_plugin_from(registry, t).map_err(fail)?;
     }
     for (type_id, h) in missing {
         let desc = descriptor_for(&h.plugin, &h.layout).map_err(|e| ModelError::Load {

@@ -79,7 +79,13 @@ fn enabled() -> PluginSettings {
 struct Catalogue {
     cache: isize,
     entries: isize,
+    /// The registered catalogue: lazy slots, no descriptor built.
     registered: isize,
+    /// What reading the descriptor of five plugins builds.
+    five: isize,
+    /// What reading the descriptor of every other plugin builds (what an eager registry held
+    /// from the start, together with `five`).
+    rest: isize,
     layout_clone: isize,
 }
 
@@ -97,6 +103,18 @@ fn measure_catalogue(tag: &str, params: usize) -> Catalogue {
         catalog.register_pinned_into(&mut registry, &mut |_, _| {}, &BTreeMap::new())
     });
     assert_eq!(report.registered, FILES, "{:?}", report.errors);
+    let ids: Vec<String> = registry.plugin_type_ids().map(str::to_string).collect();
+    let (_, five) = held_heap_of(|| {
+        for id in &ids[..5] {
+            std::hint::black_box(registry.descriptor(id).expect("registered"));
+        }
+    });
+    let (_, rest) = held_heap_of(|| {
+        for id in &ids[5..] {
+            std::hint::black_box(registry.descriptor(id).expect("registered"));
+        }
+    });
+    assert_eq!(registry.plugin_descriptors_built(), FILES);
     let layout = layout_of(params);
     let (clone, layout_clone) = held_heap_of(|| layout.clone());
     drop(clone);
@@ -106,6 +124,8 @@ fn measure_catalogue(tag: &str, params: usize) -> Catalogue {
         cache: cache_bytes,
         entries,
         registered,
+        five,
+        rest,
         layout_clone,
     }
 }
@@ -191,6 +211,7 @@ fn kib(bytes: isize) -> String {
 fn the_catalogue_of_132_plugin_files_holds_this_much_at_start() {
     for (tag, params) in [("a", 50usize), ("b", 500), ("c", 2_000)] {
         let c = measure_catalogue(tag, params);
+        let eager = c.registered + c.five + c.rest;
         let all = c.cache + c.entries + c.registered;
         let per_param = all as f64 / (FILES * params) as f64;
         println!(
@@ -203,14 +224,29 @@ fn the_catalogue_of_132_plugin_files_holds_this_much_at_start() {
             kib(c.layout_clone),
             kib(all),
         );
+        println!(
+            "descriptors {params:>4} params x {FILES} files: at start {}, after reading 5 {}, after reading all {} (eager)",
+            kib(c.registered),
+            kib(c.registered + c.five),
+            kib(eager),
+        );
         let table = (FILES * params) as isize;
         // What the registry adds is the leaked descriptors alone (about 116 bytes a param): the
         // table of interned layouts shares the catalog's copy instead of keeping its own, which
         // was another 120 bytes a param.
         assert!(
-            c.registered <= 135 * table + 400 * 1024,
+            eager <= 135 * table + 400 * 1024,
             "registered {} for {table} params",
-            kib(c.registered)
+            kib(eager)
+        );
+        // Registering builds no descriptor: the catalogue holds a small slot per plugin, whatever
+        // its param count, and reading five descriptors costs five plugins, not the catalogue.
+        assert!(c.registered <= 200 * 1024, "at start {}", kib(c.registered));
+        assert!(
+            c.five <= (c.five + c.rest) * 6 / FILES as isize,
+            "five {} of {}",
+            kib(c.five),
+            kib(c.five + c.rest)
         );
         // The catalog entries hold one layout each and nothing else of size.
         assert!(

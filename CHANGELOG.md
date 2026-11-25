@@ -90,6 +90,11 @@ may break APIs and the patch and project formats.
 - **A knob turned while a song plays re-applies only the automation of that knob.** Any control message used to make
   every automation lane write its value again at the next batch; now only the lanes of that device and parameter do.
   Rendered audio does not change.
+- **A plugin's parameter list is built when something first needs it, not when the plugin is listed.** The registry
+  kept a full descriptor (parameters, ports, names) for every plugin of the catalogue from the start of the app, about
+  7.3 MiB for 132 plugins of 500 parameters, most of them plugins no project uses. It now holds the scanned layout and
+  builds the descriptor the first time a project, the rack or a stand-in reads it, once, away from the audio thread.
+  The descriptors, their parameter ids and order, the project format and the plugin scan cache are unchanged.
 
 ### Fixed
 - **Exporting a patch, a MIDI file or MIDI mappings, a tab or chord sheet, the device list or the diagnostics report

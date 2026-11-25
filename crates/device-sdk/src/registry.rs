@@ -1,8 +1,9 @@
 //! Registry of device factories keyed by type id.
 
-use crate::plugin::{PluginStandIn, is_plugin_type_id};
-use crate::{DescriptorError, Device, DeviceDescriptor, ModTables};
+use crate::plugin::{LazyDescriptor, PluginStandIn, is_plugin_type_id};
+use crate::{DescriptorError, Device, DeviceDescriptor, ModTables, PluginLayout, PluginRef};
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
 
 /// Creates instances of one device type.
 #[derive(Clone, Copy)]
@@ -62,6 +63,9 @@ pub enum RegistryError {
     /// No plugin type with this id is registered.
     #[error("plugin type `{0}` is not registered")]
     UnknownPlugin(String),
+    /// The layout of a lazily registered plugin cannot give a descriptor.
+    #[error("{0}")]
+    InvalidLayout(DescriptorError),
 }
 
 /// Device factories by type id, in deterministic (sorted) order.
@@ -82,7 +86,23 @@ pub struct Registry {
     modulated: BTreeMap<&'static str, &'static ModTables>,
     /// Dynamically registered plugin types. Kept apart from `factories`, so the
     /// sorted static list and its counts do not change.
-    plugins: BTreeMap<String, &'static DeviceDescriptor>,
+    plugins: BTreeMap<String, PluginSlot>,
+}
+
+/// A registered plugin type: its descriptor, or what builds it when something first reads it.
+#[derive(Debug)]
+enum PluginSlot {
+    Built(&'static DeviceDescriptor),
+    Lazy(LazyDescriptor),
+}
+
+impl PluginSlot {
+    fn descriptor(&self) -> Option<&'static DeviceDescriptor> {
+        match self {
+            Self::Built(d) => Some(d),
+            Self::Lazy(l) => l.get(),
+        }
+    }
 }
 
 impl Registry {
@@ -242,8 +262,59 @@ impl Registry {
         if self.plugins.contains_key(&type_id) {
             return Err(RegistryError::DuplicatePlugin(type_id));
         }
-        self.plugins.insert(type_id, descriptor);
+        self.plugins.insert(type_id, PluginSlot::Built(descriptor));
         Ok(())
+    }
+
+    /// [`Self::register_plugin`] for a plugin whose descriptor is built when it is first read
+    /// ([`LazyDescriptor`]): registering a whole catalogue builds none. The layout is checked
+    /// now, so what [`crate::descriptor_for`] would refuse is refused here, with the same error.
+    pub fn register_plugin_lazy(
+        &mut self,
+        plugin: PluginRef,
+        layout: Arc<PluginLayout>,
+    ) -> Result<(), RegistryError> {
+        let type_id = plugin.type_id();
+        if self.plugins.contains_key(&type_id) {
+            return Err(RegistryError::DuplicatePlugin(type_id));
+        }
+        let lazy = LazyDescriptor::new(plugin, layout).map_err(RegistryError::InvalidLayout)?;
+        self.plugins.insert(type_id, PluginSlot::Lazy(lazy));
+        Ok(())
+    }
+
+    /// Registers the plugin type `type_id` of `source` here too, as it is there: a lazy type
+    /// stays lazy (nothing is built for it), a built one stays built.
+    pub fn register_plugin_from(
+        &mut self,
+        source: &Registry,
+        type_id: &str,
+    ) -> Result<(), RegistryError> {
+        let slot = source
+            .plugins
+            .get(type_id)
+            .ok_or_else(|| RegistryError::UnknownPlugin(type_id.to_string()))?;
+        if self.plugins.contains_key(type_id) {
+            return Err(RegistryError::DuplicatePlugin(type_id.to_string()));
+        }
+        let slot = match slot {
+            PluginSlot::Built(d) => PluginSlot::Built(d),
+            PluginSlot::Lazy(l) => PluginSlot::Lazy(l.clone()),
+        };
+        self.plugins.insert(type_id.to_string(), slot);
+        Ok(())
+    }
+
+    /// How many registered plugin types have their descriptor built (a type registered with
+    /// [`Self::register_plugin`] always has).
+    pub fn plugin_descriptors_built(&self) -> usize {
+        self.plugins
+            .values()
+            .filter(|s| match s {
+                PluginSlot::Built(_) => true,
+                PluginSlot::Lazy(l) => l.is_built(),
+            })
+            .count()
     }
 
     /// Removes a plugin type (a rescan or a disabled plugin). Existing devices keep running.
@@ -278,6 +349,7 @@ impl Registry {
         }
         self.plugins
             .get(type_id)
+            .and_then(PluginSlot::descriptor)
             .map(|d| Box::new(PluginStandIn::new(d)) as Box<dyn Device>)
     }
 
@@ -287,7 +359,7 @@ impl Registry {
     pub fn get(&self, type_id: &str) -> Option<DeviceEntry> {
         let descriptor = match self.factories.get(type_id) {
             Some(f) => f.descriptor,
-            None => *self.plugins.get(type_id)?,
+            None => self.plugins.get(type_id)?.descriptor()?,
         };
         Some(DeviceEntry { descriptor })
     }
@@ -307,6 +379,7 @@ impl Registry {
 mod tests {
     use super::*;
     use crate::descriptor::tests::GOOD;
+    use crate::plugin::descriptor_for;
     use crate::{PrepareInfo, ProcessContext};
     use atomik_core::{ParamDescriptor, ParamId};
 
@@ -583,5 +656,150 @@ mod tests {
             .unwrap();
         assert!(!r.takes_samples("clap.reg.e"));
         assert!(!r.takes_player_data("clap.reg.e"));
+    }
+
+    // ----- plugin types whose descriptor is built on first use ---------
+
+    fn lazy_ref(id: &str) -> PluginRef {
+        PluginRef {
+            format: crate::PluginFormat::Clap,
+            id: id.to_string(),
+        }
+    }
+
+    fn lazy_layout(params: u32) -> Arc<PluginLayout> {
+        use crate::plugin::*;
+        Arc::new(PluginLayout {
+            name: "Lazy".to_string(),
+            vendor: "V".to_string(),
+            version: "1".to_string(),
+            kind_hint: PluginKindHint::Effect,
+            main_in: Some(Channels::Stereo),
+            main_out: Some(Channels::Stereo),
+            sidechain: false,
+            notes_in: false,
+            notes_out: false,
+            aux_out: 0,
+            params: (0..params)
+                .map(|i| crate::PluginParamInfo {
+                    id: 10 + i,
+                    name: format!("Param {i}"),
+                    module: String::new(),
+                    min: 0.0,
+                    max: 4.0,
+                    default: 1.0,
+                    stepped: i % 2 == 1,
+                    steps: if i % 2 == 1 { 4 } else { 0 },
+                })
+                .collect(),
+        })
+    }
+
+    fn leaks() -> usize {
+        crate::plugin::LEAKS.with(std::cell::Cell::get)
+    }
+
+    #[test]
+    fn a_lazy_plugin_type_builds_nothing_until_it_is_read_and_then_once() {
+        let mut r = Registry::new();
+        let before = leaks();
+        for k in 0..6 {
+            r.register_plugin_lazy(lazy_ref(&format!("lazy.once.{k}")), lazy_layout(40))
+                .unwrap();
+        }
+        assert_eq!(leaks(), before, "registering built nothing");
+        assert_eq!(r.plugin_descriptors_built(), 0);
+        assert_eq!(r.plugin_type_ids().count(), 6);
+        assert!(r.is_plugin("clap.lazy.once.3"));
+
+        let first = r.descriptor("clap.lazy.once.3").expect("registered");
+        let built = leaks();
+        assert!(built > before, "the first read builds the descriptor");
+        assert_eq!(r.plugin_descriptors_built(), 1);
+        let again = r.descriptor("clap.lazy.once.3").expect("registered");
+        let stand_in = r.create("clap.lazy.once.3").expect("registered");
+        assert!(std::ptr::eq(first, again));
+        assert!(std::ptr::eq(first, stand_in.descriptor()));
+        assert_eq!(leaks(), built, "later reads build nothing");
+        assert_eq!(
+            r.plugin_descriptors_built(),
+            1,
+            "the other five stay unbuilt"
+        );
+    }
+
+    #[test]
+    fn a_lazy_descriptor_is_the_one_an_eager_registration_gives() {
+        let (plugin, layout) = (lazy_ref("lazy.same"), lazy_layout(30));
+        let mut lazy = Registry::new();
+        lazy.register_plugin_lazy(plugin.clone(), Arc::clone(&layout))
+            .unwrap();
+        let eager = descriptor_for(&plugin, &layout).unwrap();
+        let mut plain = Registry::new();
+        plain.register_plugin(plugin.type_id(), eager).unwrap();
+        let got = lazy.descriptor(&plugin.type_id()).expect("registered");
+        assert!(std::ptr::eq(got, eager), "same interned descriptor");
+        let want = plain.descriptor(&plugin.type_id()).expect("registered");
+        assert_eq!(got.params.len(), want.params.len());
+        for (a, b) in got.params.iter().zip(want.params) {
+            assert_eq!(
+                (a.id, a.key, a.name, a.min, a.max, a.default, a.discrete),
+                (b.id, b.key, b.name, b.min, b.max, b.default, b.discrete)
+            );
+        }
+        assert_eq!(got.type_id, want.type_id);
+        assert_eq!(got.sockets.len(), want.sockets.len());
+    }
+
+    #[test]
+    fn a_lazy_registration_refuses_what_the_eager_one_refuses_and_leaks_nothing() {
+        let mut r = Registry::new();
+        let plugin = lazy_ref("lazy.bad");
+        let mut dup = (*lazy_layout(3)).clone();
+        dup.params[1].id = dup.params[0].id;
+        let mut silent = (*lazy_layout(1)).clone();
+        silent.main_in = None;
+        silent.main_out = None;
+        let before = leaks();
+        for layout in [dup, silent] {
+            let eager = descriptor_for(&plugin, &layout).unwrap_err();
+            let lazy = r
+                .register_plugin_lazy(plugin.clone(), Arc::new(layout))
+                .unwrap_err();
+            assert_eq!(lazy, RegistryError::InvalidLayout(eager));
+        }
+        assert!(!r.is_plugin("clap.lazy.bad"));
+        assert_eq!(leaks(), before);
+        r.register_plugin_lazy(plugin.clone(), lazy_layout(2))
+            .unwrap();
+        assert_eq!(
+            r.register_plugin_lazy(plugin, lazy_layout(2)),
+            Err(RegistryError::DuplicatePlugin("clap.lazy.bad".to_string()))
+        );
+    }
+
+    #[test]
+    fn a_copy_of_a_lazy_type_stays_unbuilt() {
+        let mut r = Registry::new();
+        r.register_plugin_lazy(lazy_ref("lazy.copy.a"), lazy_layout(20))
+            .unwrap();
+        r.register_plugin_lazy(lazy_ref("lazy.copy.b"), lazy_layout(21))
+            .unwrap();
+        let built = r.descriptor("clap.lazy.copy.b").expect("registered");
+        let mut copy = Registry::new();
+        let before = leaks();
+        copy.register_plugin_from(&r, "clap.lazy.copy.a").unwrap();
+        copy.register_plugin_from(&r, "clap.lazy.copy.b").unwrap();
+        assert_eq!(leaks(), before, "copying built nothing");
+        assert_eq!(copy.plugin_descriptors_built(), 1, "b was built, a was not");
+        assert!(std::ptr::eq(
+            copy.descriptor("clap.lazy.copy.b").expect("copied"),
+            built
+        ));
+        assert!(copy.descriptor("clap.lazy.copy.a").is_some());
+        assert_eq!(
+            copy.register_plugin_from(&r, "clap.nope"),
+            Err(RegistryError::UnknownPlugin("clap.nope".to_string()))
+        );
     }
 }
