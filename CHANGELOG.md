@@ -25,6 +25,11 @@ may break APIs and the patch and project formats.
   processes per instance and the idle CPU of the instances processing silence. An ordinary test of the same file
   asserts the counts that do not depend on the machine (children per mode, threads of a shared child, nothing left
   behind). No behaviour of the app changes.
+- **A binary size gate and a way to make the count baselines.** The performance workflow has a job that builds the
+  release `atomik`, `atomik-render` and `atomik-plugin-host` and fails when one is more than 5 % larger than
+  `perf/baseline-sizes.txt` (a notice while the file is missing), and a `baseline_only` run option that runs just
+  the instruction and size jobs so their artifacts can be committed as the baselines. `docs/TESTING.md` lists each
+  count that is gated, where, and its tolerance.
 
 ### Changed
 - **The rack builds the automation values it shows once, not on every paint.** While an automation lane has points,

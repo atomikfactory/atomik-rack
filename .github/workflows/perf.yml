@@ -1,6 +1,6 @@
 name: Performance
 
-# Scheduled measurements, never on a pull request and never gating one. Four jobs:
+# Scheduled measurements, never on a pull request and never gating one. Five jobs:
 #
 # - benches: runs the criterion benches of render, devices, dsp and model (one command per crate)
 #   and keeps their output, with a description of the runner, as an artifact. Wall-clock time on
@@ -11,9 +11,17 @@ name: Performance
 #   passes: commit them as perf/baseline-instructions.txt to start gating. The manual input
 #   `inject_regression` inflates the counts by 20 % before the comparison, to prove that the gate
 #   fails.
+# - sizes: builds the release programs `atomik`, `atomik-render` and `atomik-plugin-host` and fails
+#   when one is more than 5 % larger than perf/baseline-sizes.txt. With no baseline file yet it
+#   uploads the sizes and passes, like the instruction job.
 # - timings: the compile-time report of a full build (`cargo build --timings`), as an artifact.
 # - realtime: the release-profile check that a demo patch renders at least 50 times faster than
 #   real time.
+#
+# To create or refresh the two baselines, run the workflow by hand with `baseline_only` (only the
+# instructions and sizes jobs run), download the artifacts `instruction-counts` and `binary-sizes`
+# and commit `instructions.txt` as perf/baseline-instructions.txt and `sizes.txt` as
+# perf/baseline-sizes.txt (docs/TESTING.md, "Baselines of the count gates").
 on:
   schedule:
     - cron: "17 4 * * 1"
@@ -21,6 +29,10 @@ on:
     inputs:
       inject_regression:
         description: "Inflate the measured instruction counts by 20 % (the job must then fail)"
+        type: boolean
+        default: false
+      baseline_only:
+        description: "Run only the instruction counts and the binary sizes (to produce the baselines)"
         type: boolean
         default: false
 
@@ -38,7 +50,7 @@ env:
 jobs:
   benches:
     name: benches
-    if: github.repository == 'atomikfactory/atomik-rack'
+    if: github.repository == 'atomikfactory/atomik-rack' && !inputs.baseline_only
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -113,9 +125,42 @@ jobs:
             echo "::notice::no perf/baseline-instructions.txt yet: the counts are in the artifact; commit them there to gate on them"
           fi
 
+  # The size of the release programs, the same build line as the release workflow's Linux leg
+  # (build.yml). A grown binary usually means a new dependency or a generic that was copied
+  # many times.
+  sizes:
+    name: binary sizes
+    if: github.repository == 'atomikfactory/atomik-rack'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-rust
+        with:
+          cache-key: perf-sizes
+      - name: Build the release programs
+        run: cargo build --release --locked -p atomik-app -p atomik-render -p atomik-plugin-hostd
+      - name: Measure the sizes
+        run: |
+          mkdir -p perf-out
+          sh scripts/perf-gate.sh sizes measure perf-out/sizes.txt
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: binary-sizes
+          path: perf-out
+      - name: Compare with the baseline
+        run: |
+          if [ -f perf/baseline-sizes.txt ]; then
+            sh scripts/perf-gate.sh sizes compare perf/baseline-sizes.txt perf-out/sizes.txt 5
+          else
+            echo "::notice::no perf/baseline-sizes.txt yet: the sizes are in the artifact; commit them there to gate on them"
+          fi
+
   realtime:
     name: real-time factor
-    if: github.repository == 'atomikfactory/atomik-rack'
+    if: github.repository == 'atomikfactory/atomik-rack' && !inputs.baseline_only
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -131,7 +176,7 @@ jobs:
   # test profile (what a pull request builds first), kept for reading.
   timings:
     name: build timings
-    if: github.repository == 'atomikfactory/atomik-rack'
+    if: github.repository == 'atomikfactory/atomik-rack' && !inputs.baseline_only
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
