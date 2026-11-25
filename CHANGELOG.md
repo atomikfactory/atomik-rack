@@ -132,6 +132,14 @@ may break APIs and the patch and project formats.
   parallel shards (`scripts/coverage-shards.txt`; every workspace package is in exactly one, the last shard is every
   package no other lists, and `scripts/coverage-shards.py check` fails otherwise), each writes the report of its
   run, and a final job merges them (`scripts/merge-lcov.py`) and applies the same gate, floors and lcov artifact.
+- **The Workflow tab of the settings scrolls on a short window.** At 728 pixels high the last row (Master keyboard) ran
+  under the Cancel and Apply buttons. The rows now scroll with the wheel when they do not fit; nothing changes when
+  they do.
+- **The piano roll header no longer draws the CUT chip over the SNAP label.** The four tool chips sat about 4 pixels
+  over the label ("CUT P"). They now sit 30 pixels further left, clear of it, at every window size.
+- **The mixer strips scroll with the wheel on a short window.** The wheel over the label under a knob, or over the
+  scrollbar below the strips, now scrolls instead of turning the control under the pointer; over the knob, fader or
+  button it still changes it (Shift: finely, as in the rack), and over a strip's background it scrolled already.
 
 ## [0.5.0-rc.2] - 2026-11-24
 

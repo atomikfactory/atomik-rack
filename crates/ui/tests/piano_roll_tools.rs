@@ -332,3 +332,36 @@ fn select_double_click_on_a_note_does_not_draw() {
     );
     assert!(lists(&a).is_empty());
 }
+
+/// The SNAP label sits between the tool chips and the grid field: the last chip (CUT) ends
+/// before the label starts, measured with the text engine, at the narrowest width the app
+/// has and at a wide one.
+#[test]
+fn the_tool_chips_and_the_snap_label_do_not_overlap() {
+    use atomik_ui::kurbo::Rect;
+    use atomik_ui::{Op, TextEngine};
+    let (doc, reg) = (song_doc(), registry());
+    for width in [1000.0, 1280.0, 1920.0] {
+        let mut v = piano_roll(&doc, &reg);
+        v.set_bounds(Rect::new(0.0, 0.0, width, 400.0));
+        let mut dl = atomik_ui::DisplayList::new();
+        v.paint(&mut dl, &doc, &reg);
+        let label = dl
+            .ops()
+            .iter()
+            .find_map(|op| match op {
+                Op::Text(run) if run.text == "SNAP" => Some(run.clone()),
+                _ => None,
+            })
+            .expect("the SNAP label is painted");
+        let w = f64::from(TextEngine::new().measure(&label));
+        let label_left = label.pos.x - w;
+        let razor = v.tool_button_center(Tool::Razor).x + 11.5;
+        assert!(
+            razor + 2.0 <= label_left,
+            "at {width}: the CUT chip ends at {razor}, the SNAP label starts at {label_left}"
+        );
+        // The title still has room: the first chip is right of the title's start.
+        assert!(v.tool_button_center(Tool::Select).x > 300.0);
+    }
+}

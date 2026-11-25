@@ -122,6 +122,18 @@ use vello::peniko::Color;
 pub const TOOLBAR_H: f64 = 28.0;
 /// Height of the snapshot bar under the toolbar.
 pub const SNAPSHOT_BAR_H: f64 = cs::BAR_H;
+/// Height of the label under a knob, which the wheel treats as background (see `knob_cell`).
+const KNOB_LABEL_H: f64 = 12.0;
+
+/// A scrollbar of the console.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Scrollbar {
+    /// Under the strips: scrolls sideways.
+    Horizontal,
+    /// Beside the upper sections of the strips or of the master.
+    Vertical,
+}
+
 /// Horizontal scrollbar height (below the strips).
 pub const SCROLLBAR_H: f64 = 8.0;
 /// Pixels of drag for the full range of a send bar.
@@ -4582,9 +4594,14 @@ impl ConsoleView {
             return;
         }
         let hit = self.hit(pos);
+        // Over a knob, a fader or a button the wheel changes the control (Shift: finely, as in
+        // the rack); over a knob's label, the strip's background or a scrollbar it scrolls.
+        let scrollbar = self.over_scrollbar(pos);
         if matches!(self.drag, Drag::None)
             && let Hit::Ctrl(t, c) = hit
             && !modifiers.command()
+            && scrollbar.is_none()
+            && !self.on_knob_label(t, c, pos)
         {
             out.extend(self.step(t, c, delta.y.signum(), self.fine_adjust(modifiers)));
             return;
@@ -4617,7 +4634,9 @@ impl ConsoleView {
             self.scroll_inserts(t, if delta.y < 0.0 { 1 } else { -1 });
             return;
         }
-        let horizontal = modifiers.shift || delta.x.abs() > delta.y.abs();
+        let horizontal = modifiers.shift
+            || delta.x.abs() > delta.y.abs()
+            || scrollbar == Some(Scrollbar::Horizontal);
         let amount = if delta.x.abs() > delta.y.abs() {
             -delta.x
         } else {
@@ -4636,6 +4655,71 @@ impl ConsoleView {
         }
         self.clamp_scroll();
         self.repaint = true;
+    }
+
+    /// The scrollbar `pos` is over (with a margin for the thin bars), when it is shown.
+    fn over_scrollbar(&self, pos: Point) -> Option<Scrollbar> {
+        let (top, sr) = (self.area_top(), self.strips_rect());
+        if self.content_width() > sr.width() + 1e-9
+            && pos.x >= sr.x0
+            && pos.x < sr.x1
+            && pos.y >= sr.y1
+            && pos.y < sr.y1 + SCROLLBAR_H
+        {
+            return Some(Scrollbar::Horizontal);
+        }
+        let near = |x: f64, y0: f64, y1: f64| {
+            pos.x >= x - 4.0 && pos.x <= x + 8.0 && pos.y >= y0 && pos.y < y1
+        };
+        if let Some(l) = self.strip_layout()
+            && l.upper_height > l.pinned_top + 1e-9
+        {
+            let x = (self.strips_end_x() - STRIP_GAP + 1.0).min(sr.x1 - 6.0);
+            if near(x, top, top + l.pinned_top) {
+                return Some(Scrollbar::Vertical);
+            }
+        }
+        if let (Some(mx), Some(l)) = (self.master_x(), self.master_layout.as_ref())
+            && l.upper_height > self.area_height() + 1e-9
+            && near(mx + l.fader_x - 7.0, top, top + self.area_height())
+        {
+            return Some(Scrollbar::Vertical);
+        }
+        None
+    }
+
+    /// Whether `pos` is on the label under a knob (the cell of control `c` of `t` minus its
+    /// knob): that part of the cell is background to the wheel.
+    fn on_knob_label(&self, t: Target, c: usize, pos: Point) -> bool {
+        let Some((pc, ..)) = self.ctrl_of(t, c) else {
+            return false;
+        };
+        if pc.kind != CtrlKind::Knob || pc.label.is_empty() {
+            return false;
+        }
+        let top = self.area_top();
+        let y = match t {
+            Target::Strip(_) => {
+                let pinned = self
+                    .view_of(t)
+                    .and_then(|v| self.layout_of(v.desc))
+                    .is_some_and(|l| l.is_pinned(pc.section));
+                pos.y - top + if pinned { 0.0 } else { self.scroll.y }
+            }
+            Target::Master => {
+                let beside_fader = self
+                    .master_layout
+                    .as_ref()
+                    .is_some_and(|l| pc.rect.x0 >= l.fader_x);
+                pos.y - top
+                    + if beside_fader {
+                        0.0
+                    } else {
+                        self.master_scroll
+                    }
+            }
+        };
+        y >= pc.rect.y1 - KNOB_LABEL_H
     }
 
     /// The strip whose insert rows `pos` is over, when its chain has more rows than fit.
@@ -5647,7 +5731,11 @@ fn knob_cell(
     accent: Color,
 ) {
     let r = pc.rect;
-    let label_h = if pc.label.is_empty() { 0.0 } else { 12.0 };
+    let label_h = if pc.label.is_empty() {
+        0.0
+    } else {
+        KNOB_LABEL_H
+    };
     let radius = ((r.width() / 2.0 - 1.0).min((r.height() - label_h) / 2.0 - 1.0)).min(14.0);
     let center = pt(r.center().x, r.y0 + (r.height() - label_h) / 2.0);
     let scale = radius / (paint::KNOB_RING_R + 1.3);

@@ -2,7 +2,7 @@
 //! preferences that live in `workflow.json`. Each is a labelled switch; nothing is saved until
 //! the dialog's **Apply**.
 
-use crate::keyboard_tab::{PAD, TITLE, TabOutcome};
+use crate::keyboard_tab::{FOOTER, PAD, TITLE, TabOutcome};
 use crate::keymap_store::WorkflowPrefs;
 use atomik_ui::kurbo::{Point, Rect, RoundedRect};
 use atomik_ui::{Align, Canvas, CanvasExt, Key, PointerButton, TextRun, Theme, UiEvent};
@@ -11,6 +11,12 @@ use std::path::PathBuf;
 const ROW: f64 = 40.0;
 const GAP: f64 = 2.0;
 const BUTTON_W: f64 = 84.0;
+/// Rows of the tab: eight switches, two folders, autosave and four steppers.
+const ROWS: f64 = 15.0;
+/// Height of everything the tab shows, under its title: the rows and the note.
+pub(crate) const CONTENT_HEIGHT: f64 = ROWS * (ROW + GAP) + 60.0;
+/// Pixels one wheel notch moves the content.
+const SCROLL_STEP: f64 = 40.0;
 
 /// `text` with its head cut when longer than [`PATH_CHARS`] characters.
 fn shorten(text: &str) -> String {
@@ -148,12 +154,18 @@ pub struct WorkflowLayout {
 pub struct WorkflowTab {
     prefs: WorkflowPrefs,
     hover: Option<Point>,
+    /// How far the rows are scrolled up (only when they do not fit the panel).
+    scroll: f64,
 }
 
 impl WorkflowTab {
     /// A tab editing `prefs`.
     pub fn new(prefs: WorkflowPrefs) -> Self {
-        Self { prefs, hover: None }
+        Self {
+            prefs,
+            hover: None,
+            scroll: 0.0,
+        }
     }
 
     /// The edited preferences.
@@ -205,11 +217,27 @@ impl WorkflowTab {
         }
     }
 
-    /// Lays the tab out inside `panel`.
+    /// The area the rows show in: under the title, above the footer buttons.
+    fn viewport(panel: Rect) -> Rect {
+        Rect::new(
+            panel.x0 + PAD,
+            panel.y0 + TITLE,
+            panel.x1 - PAD,
+            (panel.y1 - FOOTER).max(panel.y0 + TITLE),
+        )
+    }
+
+    /// The largest scroll: what the rows need beyond the viewport (zero when they fit).
+    fn max_scroll(panel: Rect) -> f64 {
+        (CONTENT_HEIGHT - Self::viewport(panel).height()).max(0.0)
+    }
+
+    /// Lays the tab out inside `panel`, shifted up by the scroll.
     pub fn layout(&self, panel: Rect) -> WorkflowLayout {
         let x0 = panel.x0 + PAD;
         let inner = panel.width() - 2.0 * PAD;
-        let mut y = panel.y0 + TITLE;
+        let scroll = self.scroll.clamp(0.0, Self::max_scroll(panel));
+        let mut y = panel.y0 + TITLE - scroll;
         let mut toggles = Vec::new();
         for (pref, label, description) in [
             (
@@ -358,11 +386,15 @@ impl WorkflowTab {
             },
             UiEvent::PointerMove { pos, .. } => self.hover = Some(*pos),
             UiEvent::PointerLeave => self.hover = None,
+            UiEvent::Wheel { delta, .. } => {
+                let max = Self::max_scroll(panel);
+                self.scroll = (self.scroll - delta.y * SCROLL_STEP).clamp(0.0, max);
+            }
             UiEvent::PointerDown {
                 pos,
                 button: PointerButton::Primary,
                 ..
-            } => {
+            } if Self::viewport(panel).contains(*pos) => {
                 let layout = self.layout(panel);
                 if layout.library.choose.contains(*pos) {
                     return TabOutcome::PickLibraryFolder;
@@ -410,6 +442,7 @@ impl WorkflowTab {
     /// Paints the tab inside `panel`.
     pub fn paint(&self, canvas: &mut dyn Canvas, theme: &Theme, panel: Rect) {
         let l = self.layout(panel);
+        canvas.push_clip(&Self::viewport(panel).into());
         for t in &l.toggles {
             if self.hover.is_some_and(|p| t.rect.contains(p)) {
                 canvas.fill_with(RoundedRect::from_rect(t.rect, 6.0), theme.browser_row);
@@ -549,5 +582,6 @@ impl WorkflowTab {
             11.5,
             theme.text_muted,
         ));
+        canvas.pop_clip();
     }
 }
