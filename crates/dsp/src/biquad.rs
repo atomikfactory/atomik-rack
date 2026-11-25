@@ -229,6 +229,13 @@ impl Biquad {
         *self = Self::default();
     }
 
+    /// Whether the four history values are zero (either sign), so a silent sample gives `+0.0`
+    /// and leaves them zero.
+    #[inline]
+    pub fn is_clear(&self) -> bool {
+        self.x1 == 0.0 && self.x2 == 0.0 && self.y1 == 0.0 && self.y2 == 0.0
+    }
+
     /// Filters one sample with `c`.
     #[inline]
     pub fn process(&mut self, c: &BiquadCoeffs, x: f64) -> f64 {
@@ -336,6 +343,15 @@ impl SmoothedBiquad {
     /// True when every parameter has reached its target.
     pub fn is_settled(&self) -> bool {
         self.settled
+    }
+
+    /// True when the parameters have reached their targets and both channels' histories are
+    /// zero: a silent sample then gives `+0.0` and changes nothing, so a caller that knows its
+    /// input is silent may leave the section uncalled (every shape of this module has a
+    /// positive `b0`).
+    #[inline]
+    pub fn is_at_rest(&self) -> bool {
+        self.settled && self.l.is_clear() && self.r.is_clear()
     }
 
     /// The coefficients currently in use.
