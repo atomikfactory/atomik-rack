@@ -44,15 +44,42 @@ fn shell() -> Shell<NullBackend> {
     s
 }
 
-/// Frames at the idle rate (ten a second): a warm-up that fills the caches, then the measured
-/// stretch, which is long enough to contain every once-a-second pass.
+/// Drives frames of the shell, `step` seconds apart from `at`, until the background work that
+/// opening a file started (audio loads, browser scans, writers) has finished and a few quiet
+/// frames have passed, so that its results land before a count starts and not inside it on a
+/// slow machine. Returns the time reached. It waits on the shell's own busy signal, for up to a
+/// minute, never for a fixed number of frames.
+fn settle<B: AudioBackend>(s: &mut Shell<B>, mut at: f64, step: f64) -> f64 {
+    let mut quiet = 0;
+    for _ in 0..12_000 {
+        if quiet >= 10 {
+            return at;
+        }
+        if s.is_busy() {
+            quiet = 0;
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        } else {
+            quiet += 1;
+        }
+        at += step;
+        s.frame_at(at);
+    }
+    panic!("the shell was still busy after a minute");
+}
+
+/// Frames at the idle rate (ten a second): once the background work is done, a warm-up that
+/// fills the caches, then the measured stretch, which is long enough to contain every
+/// once-a-second pass.
 fn idle_allocations(s: &mut Shell<NullBackend>) -> u64 {
-    for i in 0..30 {
-        s.frame_at(f64::from(i) * 0.1);
+    let mut at = settle(s, 0.0, 0.1);
+    for _ in 0..30 {
+        at += 0.1;
+        s.frame_at(at);
     }
     let (_, n) = atomik_testkit::no_alloc::allocations_of(|| {
-        for i in 30..60 {
-            s.frame_at(f64::from(i) * 0.1);
+        for _ in 0..30 {
+            at += 0.1;
+            s.frame_at(at);
         }
     });
     n
@@ -277,7 +304,7 @@ fn playhead_allocations(frames: u32) -> (u64, i64) {
     open_fx_demo(&mut s);
     assert!(s.core().sink().is_running(), "the engine runs");
     let per_frame = (48_000.0 / FPS) as usize;
-    let mut at = 0.0;
+    let mut at = settle(&mut s, 0.0, 1.0 / FPS);
     let mut step = |s: &mut Shell<Bench>| {
         bench.render(per_frame);
         at += 1.0 / FPS;
