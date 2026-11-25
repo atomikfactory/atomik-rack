@@ -7,7 +7,7 @@
 use super::*;
 use crate::clock::now;
 use crate::fake::{Action, fake_layout, fake_transport, make_ports, start_with, test_timeouts};
-use crate::link::{LiveGuard, Timeouts};
+use crate::link::{ALIVE_WINDOW, LiveGuard, Timeouts};
 use atomik_plugin_host::{
     InstanceId, NativeParent, PendingInstance, PluginInstance, plugin_channel,
 };
@@ -181,7 +181,10 @@ fn an_editor_that_takes_long_to_open_is_waited_for_and_other_calls_do_not_distur
 #[test]
 fn an_editor_that_never_opens_is_stopped_after_the_load_timeout() {
     let mut timeouts = slow_load_timeouts();
-    timeouts.load = Duration::from_millis(300);
+    // Longer than the sign-of-life window: a beat seen before the fake went silent (it takes a
+    // moment to receive the request, longer on a loaded machine) must be too old to count when
+    // the load timeout ends, or the child is spared instead of stopped.
+    timeouts.load = ALIVE_WINDOW * 3;
     let started = start_with(
         FakeOptions::default()
             .script(|req, _| matches!(req, ToChild::OpenGui { .. }).then_some(Action::Silent)),

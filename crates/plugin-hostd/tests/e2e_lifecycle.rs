@@ -630,8 +630,11 @@ fn a_large_state_that_fits_the_frame_travels_whole() {
 
 #[test]
 fn a_plugin_whose_main_thread_sleeps_past_the_timeout_is_not_stopped_and_answers_afterwards() {
-    let mut cfg = config_with_env("ATOMIK_NULL_CAPTURE_DELAY_MS", "2500");
-    cfg.create_timeout = Duration::from_millis(500);
+    // The wait is long enough for the child's audio thread to beat several times in the window
+    // the sign of life is judged on (half a second at most), also on a slow, loaded machine, and
+    // the sleep outlasts it by seconds.
+    let mut cfg = config_with_env("ATOMIK_NULL_CAPTURE_DELAY_MS", "6000");
+    cfg.create_timeout = Duration::from_millis(2000);
     let mut sb = Sandbox::null(cfg);
     let handle = instantiate_null(&mut sb, "null.gain", RunMode::Realtime);
     let id = handle.id;
