@@ -2365,3 +2365,27 @@ outcome would depend on the machine's speed); stopping on the UI thread and only
 as long as a hung open).
 
 **Status.** Decided by the owner on 2026-11-25.
+
+## BX. A loudness target for stems is one gain from the mix by default, with no limiter
+
+**Decision.** Export Stems takes the same loudness choices as the song (a fixed target, a custom target, a guide) with
+a true-peak ceiling of -1 dBTP, -2 dBTP or the user's. By default every stem is multiplied by the same gain, the one
+that brings the mix the stems add up to onto the target: the master's stem when the export has one (it is rendered
+first, so the gain is known before any file is written and no stem is held in memory), else the sum of the stems (a
+dry export has no master; a first pass measures the sum, so that export renders twice). The gain is held back where the
+mix's true peak would pass the ceiling and no limiter runs; the toast says how far short of the target that left it,
+and a stem whose peaks pass full scale is flagged. The other choice is each stem brought to the target on its own with
+the same limiter as the song export. A guide only measures, in both. With the loudness off nothing changes.
+
+**Why.** Stems are delivered to be summed again (for a mix, a remix, a stem player): a common gain keeps them summing
+to the mix, which is what a mixing delivery usually asks for. A limiter works on the signal it sees, so stems
+limited one at a time would not add up to the limited mix; holding the gain at the ceiling gives up some loudness
+instead, and says so. Each stem on its own is still offered because a set of
+separate files (samples, loops) wants every file at the same level.
+
+**Rejected.** A limiter on the master's stem with the same gain reduction applied to the others (it needs the whole
+reduction curve of the master kept and followed sample for sample, and the stems would still not sum when a stem has
+peaks the master does not); holding every stem in memory until the master is known (a long song with many strips would
+cost memory in proportion to both); rendering twice for every together export (the master first order needs one pass).
+
+**Status.** Default (not yet confirmed): chosen in the implementation, to be confirmed by the owner.

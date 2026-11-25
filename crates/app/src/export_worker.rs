@@ -22,7 +22,9 @@ use atomik_render::normalise::{Finish, NormaliseReport, finish_render};
 use atomik_render::plugin_pass::RenderControl;
 use atomik_render::plugins::MissingPlugins;
 use atomik_render::project::{PluginBounce, ProjectOptions};
-use atomik_render::stems::{StemRequest, StemStrip, StemsReport, export_stems};
+use atomik_render::stems::{
+    StemRequest, StemStrip, StemsLevel, StemsOutput, StemsReport, export_stems_with,
+};
 use atomik_video::{
     EncodeJob, EncodeSpec, FilmCut, FilmJob, FilmPicture, FilmSound, FilmSpec, LossyCodec,
     LossyQuality, PictureChoice, Tags, VideoError, VideoTool, encode_audio, export_film,
@@ -34,7 +36,7 @@ use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::mpsc::Sender;
 
 /// What an export writes.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) enum Target {
     /// One file: the mix of the document's outputs.
     File(PathBuf),
@@ -44,6 +46,8 @@ pub(crate) enum Target {
         folder: PathBuf,
         /// Which signal of the channels.
         strip: StemStrip,
+        /// What is done to the level of the stems.
+        level: StemsLevel,
     },
 }
 
@@ -119,6 +123,108 @@ pub(crate) struct Work {
     /// Also encode the finished render to a second file next to the first (a file the program
     /// writes itself plus an MP3): the encoding and the path of that file.
     pub also: Option<(Lossy, PathBuf)>,
+}
+
+/// The compressed stems: every stem is written to a temporary WAV file as its pass of the render
+/// ends and FFmpeg encodes it to the stem's file, with progress and cancel across all the stems.
+/// Each file's tags are the stem's name as the title, the song's title as the album and the
+/// song's author as the artist. A cancel or a failure removes every file written so far, the
+/// folder when this export made it, and the temporary files.
+fn export_stems_lossy(
+    docs: (&RackDoc, &atomik_device_sdk::Registry),
+    project: (&ProjectOptions, Option<&Path>),
+    bounce: &mut PluginBounce<'_>,
+    (stems, level, format): (&StemRequest, StemsLevel, &ExportFormat),
+    (folder, lossy): (&Path, &Lossy),
+    control: RenderControl<'_>,
+) -> Result<Option<StemsReport>, RenderError> {
+    let failed = |e: &dyn std::fmt::Display| RenderError::Project(e.to_string());
+    let status = crate::video_worker::search(&*lossy.tool, lossy.folder.as_deref());
+    let Some(ffmpeg) = status.tools() else {
+        return Err(failed(&status.message()));
+    };
+    let temp = TempFolder(temp_folder());
+    std::fs::create_dir_all(&temp.0).map_err(|e| failed(&e))?;
+    let wav = temp.0.join("stem.wav");
+    let total = stems
+        .sources
+        .iter()
+        .filter(|s| stems.strip == StemStrip::Full || s.dry.is_some())
+        .count()
+        .max(1);
+    // The render and the encoding take turns, so the bar is the two shares together: each only
+    // ever grows, so the sum does too.
+    let (rendered, encoded) = (AtomicU32::new(0), AtomicU32::new(0));
+    let outer = control.progress;
+    let publish = || {
+        if let Some(outer) = outer {
+            let part = |a: &AtomicU32| f32::from_bits(a.load(Ordering::Relaxed));
+            outer(RENDER_SHARE * part(&rendered) + (1.0 - RENDER_SHARE) * part(&encoded));
+        }
+    };
+    let render_progress = |p: f32| {
+        rendered.store(p.to_bits(), Ordering::Relaxed);
+        publish();
+    };
+    let rendering = RenderControl {
+        cancel: control.cancel,
+        progress: outer.map(|_| &render_progress as &(dyn Fn(f32) + Sync)),
+    };
+    let done = std::cell::Cell::new(0usize);
+    let never = AtomicBool::new(false);
+    let cancel = control.cancel.unwrap_or(&never);
+    let extension = lossy.codec.extension();
+    let output = StemsOutput {
+        folder,
+        extension,
+        level,
+    };
+    export_stems_with(
+        docs,
+        project,
+        bounce,
+        stems,
+        (&output, rendering),
+        &mut |path, source, render| {
+            if control.cancelled() {
+                return Ok(None);
+            }
+            let mut report = write_export(&wav, render, format)?;
+            let tags = Tags {
+                title: source.name.clone(),
+                author: lossy.tags.author.clone(),
+                album: lossy.tags.title.clone(),
+            };
+            let job = EncodeJob {
+                source: &wav,
+                out: path,
+                spec: EncodeSpec {
+                    codec: lossy.codec,
+                    quality: lossy.quality,
+                    rate: report.sample_rate,
+                    channels: render.audio.channels.len(),
+                },
+                tags: &tags,
+                duration_s: report.frames as f64 / f64::from(report.sample_rate),
+            };
+            let n = done.get();
+            let encoding = |p: f32| {
+                let q = (n as f32 + p) / total as f32;
+                encoded.store(q.min(1.0).to_bits(), Ordering::Relaxed);
+                publish();
+            };
+            let result = encode_audio(&*lossy.tool, ffmpeg, &job, cancel, &encoding);
+            let _ = std::fs::remove_file(&wav);
+            match result {
+                Ok(()) => {}
+                Err(VideoError::Cancelled) => return Ok(None),
+                Err(e) => return Err(failed(&e)),
+            }
+            done.set(n + 1);
+            path.clone_into(&mut report.path);
+            Ok(Some(report))
+        },
+    )
 }
 
 /// The share of an export's progress that is the render; the encoding is the rest.
@@ -498,21 +604,43 @@ pub(crate) fn run(work: Work, control: RenderControl<'_>) -> Result<Option<Done>
             )
             .map(|r| r.map(Done::File)),
         },
-        Target::Stems { folder, strip } => {
+        Target::Stems {
+            folder,
+            strip,
+            level,
+        } => {
             let stems = StemRequest {
                 span: request.span,
                 tail_seconds: request.tail_seconds,
                 strip,
                 sources: atomik_model::stem_sources(&doc, &registry),
             };
-            export_stems(
-                &doc,
-                &registry,
-                (&options, bundle_root.as_deref()),
-                &mut bounce,
-                (&stems, &format),
-                (&folder, control),
-            )
+            let project = (&options, bundle_root.as_deref());
+            match &lossy {
+                Some(lossy) => export_stems_lossy(
+                    (&doc, &registry),
+                    project,
+                    &mut bounce,
+                    (&stems, level, &format),
+                    (&folder, lossy),
+                    control,
+                ),
+                None => {
+                    let output = StemsOutput {
+                        folder: &folder,
+                        extension: format.container.extension(),
+                        level,
+                    };
+                    export_stems_with(
+                        (&doc, &registry),
+                        project,
+                        &mut bounce,
+                        &stems,
+                        (&output, control),
+                        &mut |path, _, render| write_export(path, render, &format).map(Some),
+                    )
+                }
+            }
             .map(|r| r.map(Done::Stems))
         }
     }

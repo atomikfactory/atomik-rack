@@ -361,6 +361,7 @@ fn a_generated_wav_is_encoded_to_each_compressed_format_with_its_tags() {
     let tags = Tags {
         title: "A \"quoted\"; title".to_owned(),
         author: "Zoe".to_owned(),
+        ..Tags::default()
     };
     for (codec, quality, rate) in [
         (LossyCodec::Mp3, LossyQuality::Cbr(192), 44_100),
@@ -561,6 +562,7 @@ fn a_generated_film_gets_the_mix_in_every_mode() {
     let tags = Tags {
         title: "Film".to_owned(),
         author: "Zoe".to_owned(),
+        ..Tags::default()
     };
     let s = 1_000_000u64;
     let run = |name: &str, spec: FilmSpec, cut: FilmCut| -> PathBuf {
