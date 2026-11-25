@@ -19,6 +19,11 @@ may break APIs and the patch and project formats.
   recovery copies are neither read nor written), no audio device, no plugins loaded or scanned and no project
   reopened, so a setting, a device or a plugin that stops a normal start cannot. The window title ends in
   `[Safe mode]` and a message says so. It cannot be combined with `--settings`.
+- **A paced callback timing test over a project.** `cargo test --release -p atomik-render --test callback_timing --
+  --ignored --nocapture` builds a project's live engine and drives it on an audio callback's absolute-deadline
+  schedule at 64, 128, 256 and 512 frames with 0 and 2 workers, without an audio device, and prints the p50, p99 and
+  max of the render time, the callbacks that ran over their period and the share of the period the p99 uses. The
+  scheduled performance workflow prints it and keeps it as an artifact, and never fails on a timing.
 
 ### Changed
 - **The rack builds the automation values it shows once, not on every paint.** While an automation lane has points,

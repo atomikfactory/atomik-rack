@@ -327,6 +327,40 @@ You can also measure by hand:
 cargo run --release -p atomik-render -- examples/patches/slice-demo.json -o demo.wav --stats
 ```
 
+## Callback timing over a project (ignored by default)
+
+[crates/render/tests/callback_timing.rs](../crates/render/tests/callback_timing.rs) answers a question the
+real-time factor cannot: how long does one audio callback take, and how often does it take longer than its
+period. It builds the engine of a project the way a bounce does (`fx-demo`, the factory demo with the most work
+per second of audio, and the generated `stress_song_doc` the benches use), as a live engine
+(`EngineOptions::realtime`), and plays the song in a loop from a thread that follows an absolute-deadline schedule:
+callback `k` starts at the start plus `k` periods, the period being the buffer over 48 kHz, so a callback that runs
+over does not push the next one back. The time of every `Engine::render` call goes into the histogram of
+`atomik_audio_io` that `atomik-play --stats` reads. Rows cover buffers of 64, 128, 256 and 512 frames and 0 and 2
+workers. No audio device is opened and the thread is not promoted; between callbacks it spins, so its caches and
+clock are warmer than a driver's thread, and a number is for comparing builds on one machine.
+
+```sh
+cargo test --release -p atomik-render --test callback_timing -- --ignored --nocapture
+```
+
+`ATOMIK_TIMING_SECONDS` sets the audio of each row (30 by default, after one second of warm-up) and
+`ATOMIK_TIMING_OUT` names a file the table is also written to. A row of the table:
+
+| Column | Meaning |
+|---|---|
+| callbacks | Timed callbacks (the warm-up is not counted) |
+| p50, p99 | Median and 99th percentile of the render time in microseconds: the top of the histogram bucket, exact to 25 % |
+| max | The slowest callback, exact |
+| misses | Callbacks whose render took longer than the period (an audible dropout when it is a real device) |
+| p99 / period | The share of the callback budget the p99 uses |
+
+An ordinary test of the same file runs a fraction of a second of one row to check that every callback is recorded.
+The scheduled performance workflow runs the table with 10 s a row after `realtime_factor_release`, uploads it as the
+`callback-timing` artifact and never fails on a timing. The numbers of the reference machine, also with the process
+pinned to two cores and four threads, are in
+[perf/BASELINE.md](../perf/BASELINE.md#callback-timing-over-a-project-2026-11-24).
+
 The file browser has three more timing tests with the same rule (`#[ignore]`, release only):
 
 ```sh

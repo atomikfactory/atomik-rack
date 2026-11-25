@@ -585,6 +585,7 @@ name = "atomik-render"
 version = "0.5.0-rc.2"
 dependencies = [
  "atomik-audio-file",
+ "atomik-audio-io",
  "atomik-core",
  "atomik-device-sdk",
  "atomik-devices",

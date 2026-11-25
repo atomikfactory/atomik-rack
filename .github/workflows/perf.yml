@@ -126,6 +126,19 @@ jobs:
         with:
           cache-key: perf-realtime
       - run: cargo test --release -p atomik-render --test e2e -- --ignored --nocapture realtime_factor_release
+      # Informational: CI runners are noisy, so the callback timing table is printed and kept but
+      # no timing can fail the job (the step only fails if the harness itself cannot run).
+      - name: Callback timing over a project
+        env:
+          ATOMIK_TIMING_SECONDS: "10"
+          ATOMIK_TIMING_OUT: ${{ github.workspace }}/perf-out/callback-timing.md
+        run: |
+          mkdir -p perf-out
+          cargo test --release -p atomik-render --test callback_timing -- --ignored --nocapture
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: callback-timing
+          path: perf-out
 
   # Where the compile time of a build goes: the HTML report of `cargo build --timings` for the
   # test profile (what a pull request builds first), kept for reading.

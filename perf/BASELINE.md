@@ -1125,3 +1125,68 @@ Note on the audio row: with the listing worker started before the audio stream, 
 of 46 ms (the driver's first look at the machine slows the opening of the audio device). The shipped change therefore
 starts the worker after the audio stream runs. That placement was not measured (the app was not started again); the
 owner's check: start time with the change, and the audio row.
+
+## Callback timing over a project (2026-11-24)
+
+`cargo test --release -p atomik-render --test callback_timing -- --ignored --nocapture`
+([docs/TESTING.md](../docs/TESTING.md#callback-timing-over-a-project-ignored-by-default)): the engine of a project as a
+bounce builds it, live (`EngineOptions::realtime`), driven from a plain thread on an absolute-deadline schedule at
+48 kHz, 30 s of audio per row after one second of warm-up, no audio device, no thread promotion. The time of each
+`Engine::render` call goes into the callback histogram (p50 and p99 are the top of a bucket, exact to 25 %; max is
+exact). `misses` counts callbacks that took longer than their period. `fx-demo` is the factory demo with the lowest
+offline real-time factor (16.5x, against 18.9x for `character-demo` and 37x or more for the others); `stress-song`
+is the generated 8-track song of the benches. The desktop session was in use during both runs.
+
+**Normal (all 32 threads).**
+
+| project | buffer | workers | callbacks | p50 us | p99 us | max us | misses | p99 / period |
+|---|---|---|---|---|---|---|---|---|
+| fx-demo | 64 | 0 | 22500 | 81.9 | 131.1 | 203.1 | 0 | 9.8 % |
+| fx-demo | 64 | 2 | 22500 | 81.9 | 163.8 | 773.9 | 0 | 12.3 % |
+| fx-demo | 128 | 0 | 11250 | 163.8 | 327.7 | 363.1 | 0 | 12.3 % |
+| fx-demo | 128 | 2 | 11250 | 163.8 | 327.7 | 673.2 | 0 | 12.3 % |
+| fx-demo | 256 | 0 | 5625 | 327.7 | 524.3 | 579.0 | 0 | 9.8 % |
+| fx-demo | 256 | 2 | 5625 | 327.7 | 655.4 | 851.8 | 0 | 12.3 % |
+| fx-demo | 512 | 0 | 2813 | 655.4 | 1048.6 | 1134.1 | 0 | 9.8 % |
+| fx-demo | 512 | 2 | 2813 | 655.4 | 1164.6 | 1164.6 | 0 | 10.9 % |
+| stress-song | 64 | 0 | 22500 | 41.0 | 81.9 | 148.5 | 0 | 6.1 % |
+| stress-song | 64 | 2 | 22500 | 49.2 | 81.9 | 458.2 | 0 | 6.1 % |
+| stress-song | 128 | 0 | 11250 | 81.9 | 163.8 | 325.3 | 0 | 6.1 % |
+| stress-song | 128 | 2 | 11250 | 98.3 | 163.8 | 551.4 | 0 | 6.1 % |
+| stress-song | 256 | 0 | 5625 | 163.8 | 327.7 | 362.7 | 0 | 6.1 % |
+| stress-song | 256 | 2 | 5625 | 196.6 | 327.7 | 498.0 | 0 | 6.1 % |
+| stress-song | 512 | 0 | 2813 | 327.7 | 603.2 | 603.2 | 0 | 5.7 % |
+| stress-song | 512 | 2 | 2813 | 393.2 | 655.4 | 926.6 | 0 | 6.1 % |
+
+**LP4: process affinity 0xF set right after launch (two cores, four threads); the workers are the rows' own.**
+
+| project | buffer | workers | callbacks | p50 us | p99 us | max us | misses | p99 / period |
+|---|---|---|---|---|---|---|---|---|
+| fx-demo | 64 | 0 | 22500 | 81.9 | 131.1 | 187.6 | 0 | 9.8 % |
+| fx-demo | 64 | 2 | 22500 | 81.9 | 163.8 | 295.3 | 0 | 12.3 % |
+| fx-demo | 128 | 0 | 11250 | 163.8 | 262.1 | 405.8 | 0 | 9.8 % |
+| fx-demo | 128 | 2 | 11250 | 163.8 | 327.7 | 2954.3 | 1 | 12.3 % |
+| fx-demo | 256 | 0 | 5625 | 327.7 | 524.3 | 596.0 | 0 | 9.8 % |
+| fx-demo | 256 | 2 | 5625 | 327.7 | 655.4 | 666.6 | 0 | 12.3 % |
+| fx-demo | 512 | 0 | 2813 | 655.4 | 1048.6 | 1103.3 | 0 | 9.8 % |
+| fx-demo | 512 | 2 | 2813 | 655.4 | 1146.4 | 1146.4 | 0 | 10.7 % |
+| stress-song | 64 | 0 | 22500 | 41.0 | 81.9 | 152.5 | 0 | 6.1 % |
+| stress-song | 64 | 2 | 22500 | 49.2 | 81.9 | 1804.1 | 3 | 6.1 % |
+| stress-song | 128 | 0 | 11250 | 81.9 | 163.8 | 208.5 | 0 | 6.1 % |
+| stress-song | 128 | 2 | 11250 | 98.3 | 196.6 | 1934.0 | 0 | 7.4 % |
+| stress-song | 256 | 0 | 5625 | 163.8 | 327.7 | 676.8 | 0 | 6.1 % |
+| stress-song | 256 | 2 | 5625 | 196.6 | 327.7 | 2526.9 | 0 | 6.1 % |
+| stress-song | 512 | 0 | 2813 | 327.7 | 655.4 | 727.0 | 0 | 6.1 % |
+| stress-song | 512 | 2 | 2813 | 393.2 | 655.4 | 1842.0 | 0 | 6.1 % |
+
+What the tables say. Both projects stay far inside the budget: the p99 uses 6 to 12 % of the period at every buffer
+size, and the only callbacks that ran late are four outliers of the LP4 run. The cost per frame is flat across 64 to
+512 (a callback of 64 frames takes about 82 us at the median for `fx-demo`, one of 512 about 655 us), so a smaller
+buffer does not cost more per second of audio here. Two workers do not help these callbacks: the load rule
+(`load_gate.rs`) keeps the levels on the audio thread until it needs help, and with two workers the p99 and the max
+are a little higher (`fx-demo` 164 us against 131 us at 64 frames). The slowest callbacks (max) are single outliers of
+one to three milliseconds on a machine in use at the same time, mostly with workers 2; the four misses (one at 128
+frames of `fx-demo`, three at 64 frames of `stress-song`, all with two workers on the pinned process) are such
+outliers and do not repeat in the other rows. The harness thread spins between callbacks, so the numbers are lower
+bounds of a driver's thread (caches and clock stay warm); only a comparison between builds on this machine means
+something.
