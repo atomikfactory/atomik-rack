@@ -301,6 +301,10 @@ keeps the version) and `file.versions` opens it on the list (`Enter` restores th
 A song with no project file says to save it first. In the list, `session_key` `c` compares the chosen version with the
 song now and the panel then shows the lines of the comparison (`session_texts` lists them: `SONG`, `TRACKS`, `DEVICES`,
 `MIXER` and their `+`, `-` and `~` lines); `Escape` returns to the list.
+In the list, `F2` puts the chosen version's name in the name field (`session_key` with `text` edits it, `Enter` renames,
+an empty name clears it, `Escape` cancels) and `Delete` asks "Delete version ... ? This cannot be undone." (`Enter`
+deletes, `Escape` keeps it); a protected automatic version is not asked about until it is unprotected. A right-click on
+a row (`session_pointer` with the secondary button) opens a menu with the same actions.
 
 ### Recipe: templates, song information and archives
 

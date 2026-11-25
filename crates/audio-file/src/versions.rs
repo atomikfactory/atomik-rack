@@ -18,8 +18,9 @@
 //!
 //! Nothing outside the versions folder is ever removed, and inside it only what the index
 //! lists. [`VersionStore::prune`] removes the oldest *automatic* versions that are not
-//! protected, beyond the number to keep; a named version and a protected one are never touched,
-//! and neither is a file the index does not list. A name in the index that is not a plain file
+//! protected, beyond the number to keep; a named version and a protected one are never touched
+//! by it, and neither is a file the index does not list. [`VersionStore::delete`] removes the
+//! one version the user asks for (a protected one is refused). A name in the index that is not a plain file
 //! name of this folder is dropped when the index is read, so it can never reach a delete.
 //! [`retire_versions`] (the end of a Move Project) removes the listed files, the index and the
 //! folder, and only when [`carry_versions`] has copied them to the new place and checked the
@@ -371,6 +372,62 @@ impl VersionStore {
         v.protected = protected;
         self.write_index()?;
         Ok(true)
+    }
+
+    /// Gives the version `id` a new name, cleaned like the name of a new version; an empty name
+    /// clears it (the version is shown by its time again). Returns false for a number the index
+    /// does not list.
+    ///
+    /// # Errors
+    /// I/O errors of writing the index; the version keeps its old name then.
+    pub fn rename(&mut self, id: u32, name: &str) -> Result<bool> {
+        let Some(v) = self.entries.iter_mut().find(|v| v.id == id) else {
+            return Ok(false);
+        };
+        let old = std::mem::replace(&mut v.name, clean_name(name));
+        if let Err(e) = self.write_index() {
+            if let Some(v) = self.entries.iter_mut().find(|v| v.id == id) {
+                v.name = old;
+            }
+            return Err(e);
+        }
+        Ok(true)
+    }
+
+    /// Deletes the version `id`: its entry leaves the index and its file is removed. Only a file
+    /// the index lists is removed. Returns false, and changes nothing, for a number the index
+    /// does not list and for a protected version.
+    ///
+    /// The index is written without the entry first, then the file is removed; when either step
+    /// fails the entry is back in the store and in the index and the error is returned, so a
+    /// version is never listed without its file nor left behind unlisted.
+    ///
+    /// # Errors
+    /// I/O errors of writing the index or removing the file.
+    pub fn delete(&mut self, id: u32) -> Result<bool> {
+        let Some(at) = self.entries.iter().position(|v| v.id == id) else {
+            return Ok(false);
+        };
+        if self.entries[at].protected || !plain_version_file(&self.entries[at].file) {
+            return Ok(false);
+        }
+        let version = self.entries.remove(at);
+        if let Err(e) = self.write_index() {
+            self.entries.insert(at, version);
+            return Err(e);
+        }
+        match fs::remove_file(self.dir.join(&version.file)) {
+            Ok(()) => Ok(true),
+            // Already gone: the entry was all that was left of it.
+            Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(true),
+            Err(e) => {
+                // The file stays, so the entry goes back; the index is written again (a failed
+                // write is lost: the store lists the version and the next write records it).
+                self.entries.insert(at, version);
+                let _ = self.write_index();
+                Err(e.into())
+            }
+        }
     }
 
     /// Removes the oldest automatic versions that are not protected, so that `keep` of them
