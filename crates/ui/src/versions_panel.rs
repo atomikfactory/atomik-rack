@@ -7,7 +7,8 @@
 //! 2026-11-06 14:03     Before the mix                                     NAMED
 //! 2026-11-06 13:40                                                    PROTECTED
 //! 2026-11-06 13:12
-//! [ RESTORE ]  [ PROTECT ]  [ COMPARE ]   Up and Down choose; Enter restores; C compares
+//! [ RESTORE ] [ PROTECT ] [ COMPARE ] [ RENAME ] [ DELETE ]
+//! Up and Down choose; Enter restores; C compares; F2 renames; Delete deletes
 //! ```
 //!
 //! A modal view the app places over the window like the song information panel. The app opens it
@@ -22,20 +23,31 @@
 //!   choice leaves), or against the song now when none is marked. The app answers with
 //!   [`VersionsView::show_report`]: the list gives way to a scrollable text of what differs, and
 //!   BACK (or Esc, see [`VersionsView::close_report`]) returns to the list.
-//! * `CLOSE` emits [`VersionsAction::Close`]; the app also closes the panel on Esc.
+//! * `RENAME` (F2) puts the chosen version's name in the name field, whose button becomes RENAME;
+//!   Enter or that button emits [`VersionsAction::Rename`] (an empty name clears the name), Esc
+//!   cancels. Any version can be renamed.
+//! * `DELETE` (the Delete key on the list) asks "Delete version <label>? This cannot be undone." in
+//!   place of the name and the buttons (DELETE or Enter confirms, KEEP or Esc cancels); the answer
+//!   emits [`VersionsAction::Delete`]. An automatic version that is protected is not deleted until
+//!   it is unprotected: the button is off and its tooltip says why.
+//! * A right-click on a row chooses it and opens a menu of the same actions.
+//! * `CLOSE` emits [`VersionsAction::Close`]; the app also closes the panel on Esc (which first
+//!   leaves the menu, the question, the rename or the comparison, see [`VersionsView::back`]).
 //!
 //! One of the name and the list has the keys at a time (click it, or Tab). The app replaces the
 //! rows after every action with [`VersionsView::set_items`]; the chosen row stays where it is.
 
 use crate::action::UiAction;
 use crate::canvas::{Align, Canvas};
+use crate::context_menu::{ContextMenu, Entry, MenuItemDef, MenuOutcome};
 use crate::event::{Key, PointerButton, UiEvent};
+use crate::i18n::tf;
 use crate::paint::fit_label;
 use crate::seq_paint::{self as sp, SeqTheme};
 use crate::text_field::{FieldColors, TextField};
 use crate::theme::{Theme, mix};
 use crate::tooltip::Help;
-use vello::kurbo::{Affine, Point, Rect};
+use vello::kurbo::{Affine, Point, Rect, Size};
 
 const PAD: f64 = 14.0;
 const HEADER_H: f64 = 34.0;
@@ -43,7 +55,7 @@ const NAME_H: f64 = 34.0;
 const ROW_H: f64 = 24.0;
 /// How many rows the list shows.
 pub const VISIBLE_ROWS: usize = 10;
-const FOOT_H: f64 = 44.0;
+const FOOT_H: f64 = 62.0;
 const MARGIN: f64 = 16.0;
 const MAX_WIDTH: f64 = 600.0;
 const BTN_H: f64 = 22.0;
@@ -95,9 +107,28 @@ pub enum VersionsAction {
         /// The marked version, if any.
         with: Option<u32>,
     },
+    /// Give the version a new name (empty clears it).
+    Rename {
+        /// The version.
+        id: u32,
+        /// The new name.
+        name: String,
+    },
+    /// Delete the version (the panel has asked already).
+    Delete(u32),
     /// Close the panel.
     Close,
 }
+
+/// The commands of the row menu.
+const MENU_RESTORE: &str = "versions.restore";
+const MENU_COMPARE: &str = "versions.compare";
+const MENU_RENAME: &str = "versions.rename";
+const MENU_PROTECT: &str = "versions.protect";
+const MENU_DELETE: &str = "versions.delete";
+
+/// Why an automatic version that is protected cannot be deleted.
+const PROTECTED_HELP: &str = "A protected version cannot be deleted: unprotect it first";
 
 /// A comparison the panel shows in place of the list.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -130,6 +161,12 @@ pub struct VersionsView {
     scroll: usize,
     name: TextField,
     focus: Focus,
+    /// The version whose name the name field is changing.
+    renaming: Option<u32>,
+    /// The version the panel asks about deleting.
+    confirm: Option<u32>,
+    /// The menu of a row, while it is open.
+    menu: Option<ContextMenu>,
     /// Opened by File > Save Version: titled for naming, and closed once the version is kept.
     save_only: bool,
     dragging_name: bool,
@@ -159,6 +196,9 @@ impl VersionsView {
             scroll: 0,
             name: TextField::new("", MAX_NAME_CHARS, false),
             focus: Focus::Name,
+            renaming: None,
+            confirm: None,
+            menu: None,
             save_only: false,
             dragging_name: false,
             hover: None,
@@ -197,7 +237,23 @@ impl VersionsView {
         }
         if clear_name {
             self.name.set_text("");
+            self.renaming = None;
         }
+        if self
+            .renaming
+            .is_some_and(|id| !self.items.iter().any(|v| v.id == id))
+        {
+            self.renaming = None;
+            self.name.set_text("");
+        }
+        // A question about a version that is gone (or a menu over rows that changed) ends.
+        if self
+            .confirm
+            .is_some_and(|id| !self.items.iter().any(|v| v.id == id))
+        {
+            self.confirm = None;
+        }
+        self.menu = None;
         if let Some(m) = self.mark
             && !self.items.iter().any(|v| v.id == m)
         {
@@ -256,6 +312,100 @@ impl VersionsView {
         let was = self.report.take().is_some();
         self.repaint |= was;
         was
+    }
+
+    /// What Esc leaves first: the open menu, else the question about a delete, else the rename,
+    /// else the comparison. False when none of them was open (the app then closes the panel).
+    pub fn back(&mut self) -> bool {
+        if self.menu.take().is_some() {
+            self.repaint = true;
+            return true;
+        }
+        if self.confirm.take().is_some() {
+            self.repaint = true;
+            return true;
+        }
+        if self.renaming.is_some() {
+            self.cancel_rename();
+            return true;
+        }
+        self.close_report()
+    }
+
+    /// The version whose name the name field is changing.
+    pub fn renaming_id(&self) -> Option<u32> {
+        self.renaming
+    }
+
+    /// The version the panel asks about deleting.
+    pub fn confirming_id(&self) -> Option<u32> {
+        self.confirm
+    }
+
+    /// Whether the menu of a row is open.
+    pub fn menu_open(&self) -> bool {
+        self.menu.is_some()
+    }
+
+    /// The menu of a row, while it is open (for tests).
+    pub fn menu(&self) -> Option<&ContextMenu> {
+        self.menu.as_ref()
+    }
+
+    /// Puts the name of the chosen version in the name field and gives it the keys; Enter or
+    /// RENAME then emits [`VersionsAction::Rename`]. Does nothing without a chosen version.
+    pub fn begin_rename(&mut self) {
+        let Some(v) = self.chosen() else { return };
+        let (id, name) = (v.id, v.name.clone());
+        self.menu = None;
+        self.confirm = None;
+        self.name.set_text(&name);
+        self.renaming = Some(id);
+        self.focus = Focus::Name;
+        self.repaint = true;
+    }
+
+    /// Leaves the rename without changing anything and empties the name field.
+    pub fn cancel_rename(&mut self) {
+        if self.renaming.take().is_some() {
+            self.name.set_text("");
+            self.repaint = true;
+        }
+    }
+
+    /// Asks whether to delete the chosen version, unless it is protected (see
+    /// [`Self::can_delete`]).
+    pub fn ask_delete(&mut self) {
+        self.menu = None;
+        if self.can_delete() {
+            self.confirm = self.selected_id();
+            self.repaint = true;
+        }
+    }
+
+    /// Whether DELETE applies to the chosen version: there is one and it is not a protected
+    /// automatic version (a named version is deleted on request).
+    pub fn can_delete(&self) -> bool {
+        self.chosen().is_some_and(|v| !(v.automatic && v.protected))
+    }
+
+    /// The question about deleting the version `id`.
+    fn delete_question(&self, id: u32) -> String {
+        let label = self
+            .items
+            .iter()
+            .find(|v| v.id == id)
+            .map_or_else(String::new, |v| {
+                if v.name.is_empty() {
+                    v.when.clone()
+                } else {
+                    format!("{} {}", v.when, v.name)
+                }
+            });
+        tf(
+            "Delete version {label}? This cannot be undone.",
+            &[("label", &label)],
+        )
     }
 
     /// The lines of the comparison shown, if any.
@@ -332,6 +482,10 @@ impl VersionsView {
             self.selected = Some(at);
             self.keep_selection_visible();
             self.repaint = true;
+            // A rename belongs to the version it started on.
+            if self.renaming.is_some() && self.renaming != self.selected_id() {
+                self.cancel_rename();
+            }
         }
     }
 
@@ -402,7 +556,7 @@ impl VersionsView {
     /// The RESTORE button.
     pub fn restore_rect(&self) -> Rect {
         let l = self.list_rect();
-        let y = l.y1 + (FOOT_H - BTN_H) / 2.0;
+        let y = l.y1 + 8.0;
         Rect::new(l.x0, y, l.x0 + 100.0, y + BTN_H)
     }
 
@@ -416,6 +570,18 @@ impl VersionsView {
     pub fn compare_rect(&self) -> Rect {
         let r = self.protect_rect();
         Rect::new(r.x1 + 8.0, r.y0, r.x1 + 8.0 + 100.0, r.y1)
+    }
+
+    /// The RENAME button.
+    pub fn rename_rect(&self) -> Rect {
+        let r = self.compare_rect();
+        Rect::new(r.x1 + 8.0, r.y0, r.x1 + 8.0 + 90.0, r.y1)
+    }
+
+    /// The DELETE button.
+    pub fn delete_rect(&self) -> Rect {
+        let r = self.rename_rect();
+        Rect::new(r.x1 + 8.0, r.y0, r.x1 + 8.0 + 90.0, r.y1)
     }
 
     /// The BACK button of a comparison.
@@ -463,11 +629,41 @@ impl VersionsView {
             }
             return None;
         }
+        if self.confirm.is_some() {
+            if self.restore_rect().contains(pos) {
+                return help(self.restore_rect(), "Delete the version for good");
+            }
+            if self.protect_rect().contains(pos) {
+                return help(self.protect_rect(), "Keep the version");
+            }
+            return None;
+        }
         if self.save_rect().contains(pos) {
+            return if self.renaming.is_some() {
+                help(
+                    self.save_rect(),
+                    "Give the version this name; an empty name clears it",
+                )
+            } else {
+                help(
+                    self.save_rect(),
+                    "Keep the song as it is now under this name; it is never pruned",
+                )
+            };
+        }
+        if self.rename_rect().contains(pos) {
             return help(
-                self.save_rect(),
-                "Keep the song as it is now under this name; it is never pruned",
+                self.rename_rect(),
+                "Change the name of the chosen version (F2); an empty name clears it",
             );
+        }
+        if self.delete_rect().contains(pos) {
+            let text = if self.chosen().is_some_and(|v| v.automatic && v.protected) {
+                PROTECTED_HELP
+            } else {
+                "Delete the chosen version for good (Delete)"
+            };
+            return help(self.delete_rect(), text);
         }
         if self.restore_rect().contains(pos) {
             return help(
@@ -521,13 +717,120 @@ impl VersionsView {
         }
     }
 
-    fn save(&self) -> UiAction {
-        UiAction::Versions(VersionsAction::Save(self.name.text().to_owned()))
+    /// SAVE VERSION, or RENAME while a name is being changed.
+    fn save(&mut self) -> UiAction {
+        let name = self.name.text().to_owned();
+        match self.renaming {
+            Some(id) => UiAction::Versions(VersionsAction::Rename { id, name }),
+            None => UiAction::Versions(VersionsAction::Save(name)),
+        }
+    }
+
+    /// Opens the menu of the chosen version at `at`.
+    fn open_menu(&mut self, at: Point) {
+        let Some(v) = self.chosen() else { return };
+        let (automatic, protected) = (v.automatic, v.protected);
+        let item = |command: &str, label: &str, enabled: bool| {
+            Entry::Item(MenuItemDef {
+                command: command.to_owned(),
+                arg: None,
+                label: label.to_owned(),
+                shortcut: None,
+                enabled,
+                checked: None,
+                swatch: None,
+            })
+        };
+        let entries = vec![
+            item(MENU_RESTORE, "Restore", true),
+            item(MENU_COMPARE, "Compare", true),
+            item(MENU_RENAME, "Rename", true),
+            item(
+                MENU_PROTECT,
+                if automatic && protected {
+                    "Unprotect"
+                } else {
+                    "Protect"
+                },
+                automatic,
+            ),
+            Entry::Separator,
+            item(MENU_DELETE, "Delete", self.can_delete()),
+        ];
+        let size = Size::new(self.bounds.x1, self.bounds.y1);
+        self.menu = Some(ContextMenu::from_entries(entries, at, size));
+        self.repaint = true;
+    }
+
+    /// The action of a menu command.
+    fn run_menu(&mut self, command: &str, out: &mut Vec<UiAction>) {
+        match command {
+            MENU_RESTORE => out.extend(self.restore()),
+            MENU_COMPARE => out.extend(self.compare()),
+            MENU_RENAME => self.begin_rename(),
+            MENU_PROTECT => out.extend(self.protect()),
+            MENU_DELETE => self.ask_delete(),
+            _ => {}
+        }
+    }
+
+    /// What the panel does with an event while it asks about a delete: DELETE (or Enter) answers
+    /// yes, KEEP (or Esc, see [`Self::back`]) no, and nothing else acts.
+    fn handle_confirm(&mut self, id: u32, event: &UiEvent, out: &mut Vec<UiAction>) {
+        self.repaint = true;
+        match event {
+            UiEvent::ScaleChanged(s) => self.set_scale(*s),
+            UiEvent::PointerMove { pos, .. } => self.hover = Some(*pos),
+            UiEvent::PointerLeave => self.hover = None,
+            UiEvent::PointerDown {
+                pos,
+                button: PointerButton::Primary,
+                ..
+            } => {
+                if self.close_rect().contains(*pos) {
+                    out.push(UiAction::Versions(VersionsAction::Close));
+                } else if self.restore_rect().contains(*pos) {
+                    self.confirm = None;
+                    out.push(UiAction::Versions(VersionsAction::Delete(id)));
+                } else if self.protect_rect().contains(*pos) {
+                    self.confirm = None;
+                }
+            }
+            UiEvent::Key {
+                key: Key::Enter,
+                pressed: true,
+                ..
+            } => {
+                self.confirm = None;
+                out.push(UiAction::Versions(VersionsAction::Delete(id)));
+            }
+            _ => {}
+        }
     }
 
     /// Handles one event and returns what the app must do.
     pub fn handle(&mut self, event: &UiEvent) -> Vec<UiAction> {
         let mut out = Vec::new();
+        if let Some(id) = self.confirm {
+            self.handle_confirm(id, event, &mut out);
+            return out;
+        }
+        if let Some(menu) = &mut self.menu {
+            self.repaint = true;
+            if menu.wants_close(event) {
+                self.menu = None;
+                // A press outside also lands on what is under it.
+                if !matches!(event, UiEvent::PointerDown { .. }) {
+                    return out;
+                }
+            } else {
+                if let MenuOutcome::Run { command, .. } = menu.handle(event) {
+                    self.menu = None;
+                    self.run_menu(&command, &mut out);
+                }
+                return out;
+            }
+        }
         match event {
             UiEvent::ScaleChanged(s) => self.set_scale(*s),
             UiEvent::PointerMove { pos, .. } => {
@@ -568,6 +871,20 @@ impl VersionsView {
             }
             UiEvent::PointerDown {
                 pos,
+                button: PointerButton::Secondary,
+                ..
+            } => {
+                self.repaint = true;
+                if self.report.is_none()
+                    && let Some(at) = self.row_at(*pos)
+                {
+                    self.focus = Focus::List;
+                    self.choose(at);
+                    self.open_menu(*pos);
+                }
+            }
+            UiEvent::PointerDown {
+                pos,
                 button: PointerButton::Primary,
                 modifiers,
                 clicks,
@@ -581,6 +898,10 @@ impl VersionsView {
                     }
                 } else if self.save_rect().contains(*pos) {
                     out.push(self.save());
+                } else if self.rename_rect().contains(*pos) {
+                    self.begin_rename();
+                } else if self.delete_rect().contains(*pos) {
+                    self.ask_delete();
                 } else if self.restore_rect().contains(*pos) {
                     out.extend(self.restore());
                 } else if self.protect_rect().contains(*pos) {
@@ -650,6 +971,8 @@ impl VersionsView {
                         {
                             out.extend(self.compare());
                         }
+                        Key::F(2) => self.begin_rename(),
+                        Key::Delete => self.ask_delete(),
                         Key::Home => self.choose(0),
                         Key::End => self.choose(self.items.len().saturating_sub(1)),
                         Key::PageUp => self.choose(at.saturating_sub(VISIBLE_ROWS)),
@@ -780,25 +1103,48 @@ impl VersionsView {
         }
 
         let name = self.name_rect();
-        sp::label(
-            c,
-            "Name",
-            p.x0 + PAD,
-            name.y0 + 14.0,
-            FONT,
-            t.text,
-            Align::Start,
-        );
         let in_name = self.focus == Focus::Name;
-        sp::lcd(c, st, name, in_name.then_some(t.focus));
-        let colors = FieldColors {
-            text: t.text,
-            caret: t.text,
-            selection: mix(t.lcd, t.focus, 0.5),
-        };
-        self.name.paint(c, name, FONT, LINE_H, colors, in_name);
-        let save = self.save_rect();
-        sp::button(c, st, save, "SAVE VERSION", Some(st.loop_on), hovered(save));
+        if let Some(id) = self.confirm {
+            // The question takes the place of the name.
+            let head = Rect::new(p.x0 + PAD, name.y0, p.x1 - PAD, name.y1);
+            sp::label(
+                c,
+                &fit_label(&self.delete_question(id), head.width(), FONT),
+                head.x0,
+                head.y0 + 14.0,
+                FONT,
+                t.text,
+                Align::Start,
+            );
+        } else {
+            sp::label(
+                c,
+                if self.renaming.is_some() {
+                    "Rename"
+                } else {
+                    "Name"
+                },
+                p.x0 + PAD,
+                name.y0 + 14.0,
+                FONT,
+                t.text,
+                Align::Start,
+            );
+            sp::lcd(c, st, name, in_name.then_some(t.focus));
+            let colors = FieldColors {
+                text: t.text,
+                caret: t.text,
+                selection: mix(t.lcd, t.focus, 0.5),
+            };
+            self.name.paint(c, name, FONT, LINE_H, colors, in_name);
+            let save = self.save_rect();
+            let label = if self.renaming.is_some() {
+                "RENAME"
+            } else {
+                "SAVE VERSION"
+            };
+            sp::button(c, st, save, label, Some(st.loop_on), hovered(save));
+        }
 
         let list = self.list_rect();
         sp::lcd(c, st, list, (!in_name).then_some(t.focus));
@@ -861,6 +1207,19 @@ impl VersionsView {
         c.pop_clip();
 
         let restore = self.restore_rect();
+        let protect = self.protect_rect();
+        if self.confirm.is_some() {
+            // The answers to the question take the place of the buttons.
+            sp::button(c, st, restore, "DELETE", Some(st.loop_on), hovered(restore));
+            sp::button(c, st, protect, "KEEP", None, hovered(protect));
+            self.paint_hint(c, "Enter deletes; Esc keeps the version");
+            c.pop_clip();
+            if let Some(menu) = &self.menu {
+                menu.paint(c, t);
+            }
+            c.pop_transform();
+            return;
+        }
         let has = self.selected.is_some();
         sp::button(
             c,
@@ -870,38 +1229,59 @@ impl VersionsView {
             has.then_some(st.loop_on),
             has && hovered(restore),
         );
-        let protect = self.protect_rect();
         if self.can_protect() {
             sp::button(c, st, protect, self.protect_label(), None, hovered(protect));
         } else {
             // Nothing to protect (no version, or a named one that is always kept).
-            sp::button(c, st, protect, "", None, false);
-            sp::label(
-                c,
-                self.protect_label(),
-                protect.center().x,
-                protect.center().y + 3.5,
-                9.5,
-                t.text_muted,
-                Align::Center,
-            );
+            self.paint_off(c, protect, self.protect_label());
         }
         let compare = self.compare_rect();
         sp::button(c, st, compare, "COMPARE", None, has && hovered(compare));
-        sp::label(
+        let rename = self.rename_rect();
+        sp::button(c, st, rename, "RENAME", None, has && hovered(rename));
+        let delete = self.delete_rect();
+        if self.can_delete() {
+            sp::button(c, st, delete, "DELETE", None, hovered(delete));
+        } else {
+            self.paint_off(c, delete, "DELETE");
+        }
+        self.paint_hint(
             c,
-            &fit_label(
-                "C compares; Shift marks a second version",
-                p.x1 - PAD - compare.x1 - 12.0,
-                9.5,
-            ),
-            compare.x1 + 12.0,
-            compare.y0 + 15.0,
-            9.5,
-            t.text_muted,
-            Align::Start,
+            "C compares (Shift marks a second version); F2 renames; Delete deletes",
         );
         c.pop_clip();
+        if let Some(menu) = &self.menu {
+            menu.paint(c, t);
+        }
         c.pop_transform();
+    }
+
+    /// A button that does nothing now: drawn flat with a muted label.
+    fn paint_off(&self, c: &mut dyn Canvas, r: Rect, label: &str) {
+        sp::button(c, &self.st, r, "", None, false);
+        sp::label(
+            c,
+            label,
+            r.center().x,
+            r.center().y + 3.5,
+            9.5,
+            self.st.base.text_muted,
+            Align::Center,
+        );
+    }
+
+    /// The line of hints under the buttons.
+    fn paint_hint(&self, c: &mut dyn Canvas, text: &str) {
+        let p = self.panel();
+        let r = self.restore_rect();
+        sp::label(
+            c,
+            &fit_label(text, p.x1 - 2.0 * PAD, 9.5),
+            r.x0,
+            r.y1 + 16.0,
+            9.5,
+            self.st.base.text_muted,
+            Align::Start,
+        );
     }
 }

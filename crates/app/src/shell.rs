@@ -2769,6 +2769,21 @@ impl<B: AudioBackend> Shell<B> {
                     Err(e) => self.notify(e.to_string()),
                 }
             }
+            VersionsAction::Rename { id, name } => {
+                match self.core.rename_version(id, &name) {
+                    // The name field is emptied and the rename ends.
+                    Ok(()) => self.refresh_versions(true),
+                    Err(e) => self.notify(e.to_string()),
+                }
+            }
+            VersionsAction::Delete(id) => {
+                match self.core.delete_version(id) {
+                    Ok(()) => {}
+                    Err(e) => self.notify(e.to_string()),
+                }
+                // Whatever happened, the list shows what the folder holds now.
+                self.refresh_versions(false);
+            }
             VersionsAction::Restore(id) => {
                 // A save that is still writing decides whether there is anything unsaved.
                 self.core.settle_save();
@@ -6726,8 +6741,9 @@ impl<B: AudioBackend> Shell<B> {
                 ..
             } = event
             {
-                // Esc leaves a comparison for the list first, then closes the panel.
-                if !self.versions.as_mut().is_some_and(|v| v.close_report()) {
+                // Esc leaves a menu, a question, a rename or a comparison first, then closes the
+                // panel.
+                if !self.versions.as_mut().is_some_and(|v| v.back()) {
                     self.versions = None;
                 }
                 return Vec::new();

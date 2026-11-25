@@ -659,3 +659,100 @@ fn comparing_refuses_a_missing_version_the_same_version_twice_and_a_song_without
     assert!(c.compare_version(id, Some(id)).is_err());
     assert!(core().compare_version(1, None).is_err());
 }
+
+#[test]
+fn renaming_a_version_sets_changes_and_clears_its_name() {
+    let t = Tmp::new("rename");
+    let mut c = saved_song(&t);
+    tune(&mut c, 2.0);
+    c.save().unwrap();
+    let id = c.versions().unwrap()[0].id;
+    assert_eq!(c.versions().unwrap()[0].name, "");
+    c.rename_version(id, " Before the chorus ").unwrap();
+    let rows = c.versions().unwrap();
+    assert_eq!(rows[0].name, "Before the chorus");
+    assert!(rows[0].automatic, "renaming does not change the kind");
+    c.rename_version(id, "After").unwrap();
+    assert_eq!(c.versions().unwrap()[0].name, "After");
+    c.rename_version(id, "").unwrap();
+    assert_eq!(c.versions().unwrap()[0].name, "");
+    // A named version too; the project file and the version's text are not touched.
+    let on_disk = std::fs::read(t.path("song.atomik")).unwrap();
+    let named = c.save_version("Idea").unwrap();
+    let text = store(&c).read(named).unwrap();
+    c.rename_version(named, "Idea 2").unwrap();
+    assert_eq!(c.versions().unwrap()[0].name, "Idea 2");
+    assert_eq!(store(&c).read(named).unwrap(), text);
+    assert_eq!(std::fs::read(t.path("song.atomik")).unwrap(), on_disk);
+    // Errors.
+    assert!(c.rename_version(999, "x").is_err());
+    assert!(matches!(
+        core().rename_version(1, "x"),
+        Err(AppError::NoPath)
+    ));
+}
+
+#[test]
+fn deleting_a_version_removes_its_file_and_entry_and_leaves_the_song_alone() {
+    let t = Tmp::new("delete");
+    let mut c = saved_song(&t);
+    tune(&mut c, 2.0);
+    c.save().unwrap();
+    tune(&mut c, 3.0);
+    c.save().unwrap();
+    let rows = c.versions().unwrap();
+    assert_eq!(rows.len(), 2);
+    let (newest, oldest) = (rows[0].id, rows[1].id);
+    let file = store(&c).path_of(oldest).unwrap();
+    let song = std::fs::read(t.path("song.atomik")).unwrap();
+    c.delete_version(oldest).unwrap();
+    assert!(!file.exists());
+    let rows = c.versions().unwrap();
+    assert_eq!(rows.iter().map(|r| r.id).collect::<Vec<_>>(), [newest]);
+    assert_eq!(std::fs::read(t.path("song.atomik")).unwrap(), song);
+    assert!(!c.is_dirty(), "the song is not touched");
+    // A named version is deleted on request.
+    let named = c.save_version("Idea").unwrap();
+    c.delete_version(named).unwrap();
+    assert!(c.versions().unwrap().iter().all(|r| r.id != named));
+    // The next save still keeps the file it replaces.
+    tune(&mut c, 4.0);
+    c.save().unwrap();
+    assert_eq!(c.versions().unwrap().len(), 2);
+}
+
+#[test]
+fn a_protected_version_is_not_deleted_until_it_is_unprotected() {
+    let t = Tmp::new("delete-protected");
+    let mut c = saved_song(&t);
+    tune(&mut c, 2.0);
+    c.save().unwrap();
+    let id = c.versions().unwrap()[0].id;
+    c.set_version_protected(id, true).unwrap();
+    let file = store(&c).path_of(id).unwrap();
+    let err = c.delete_version(id).unwrap_err().to_string();
+    assert!(err.contains("protected"), "{err}");
+    assert!(file.exists());
+    assert_eq!(c.versions().unwrap().len(), 1);
+    c.set_version_protected(id, false).unwrap();
+    c.delete_version(id).unwrap();
+    assert!(c.versions().unwrap().is_empty());
+    assert!(!file.exists());
+}
+
+#[test]
+fn a_delete_that_fails_leaves_the_version_listed_and_deleting_needs_a_version() {
+    let t = Tmp::new("delete-fails");
+    let mut c = saved_song(&t);
+    tune(&mut c, 2.0);
+    c.save().unwrap();
+    let id = c.versions().unwrap()[0].id;
+    let file = store(&c).path_of(id).unwrap();
+    // A folder in the place of the version's file: it cannot be removed as a file.
+    std::fs::remove_file(&file).unwrap();
+    std::fs::create_dir(&file).unwrap();
+    assert!(c.delete_version(id).is_err());
+    assert_eq!(c.versions().unwrap().len(), 1, "still listed");
+    assert!(c.delete_version(999).is_err());
+    assert!(matches!(core().delete_version(1), Err(AppError::NoPath)));
+}
