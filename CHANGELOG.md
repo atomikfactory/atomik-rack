@@ -14,6 +14,14 @@ may break APIs and the patch and project formats.
   bar. The section already lists audio and the file browser previews it (Space, or on selection with auto-preview), so
   a saved audio clip is previewed like any audio file. A clip longer than two minutes is refused. No library format
   changes.
+- **Library previews follow the keyboard.** While a patch, container or effect item is the one selected row of the file
+  browser, the notes of a MIDI keyboard and of the Piano Keys strip play through it (an effect through a built-in
+  synth) instead of through the selected track, and go back to the track when the selection leaves it. It starts after
+  the selection has rested, plays about 30 ms behind the keys, never records and changes nothing in the song. Space
+  still plays the item's built-in phrase.
+- **Previews of plugin presets.** Selecting a preset in the preset list of a plugin of the rack plays it from the
+  keyboard through a preview instance of the plugin (loaded in the background with `Loading` in the status line, kept
+  while you browse the presets of that plugin, never in the rack or the document).
 
 ## [0.5.0-rc.3] - 2026-11-25
 

@@ -3152,6 +3152,7 @@ edit is an ordinary `UiAction::Command` (`SetModSlot`, `SetParam` on `modN_amoun
 | `atomik-browse` | file browser: folder listings, the tree's sub-folders, the recursive walk, favourite and tag places, the drives | Yes (disk) |
 | `atomik-probe` | file browser: audio header reads (`probe_file`), visible rows first | Yes (disk) |
 | `atomik-preview` | file browser: decodes the previewed file and fills the preview ring | Yes (disk) |
+| `atomik-live-preview` | file browser: a library patch or a plugin preset that follows the keyboard: builds the scratch project after the selection rested, then renders it block by block with the notes of the keyboard into the preview ring, about 30 ms ahead of the voice (rests after three silent seconds) | Yes (CPU, a plugin instance in its sandbox) |
 | `atomik-detail` | file browser: the tempo a file states and its loudness picture for the info pane (newest request only) | Yes (disk) |
 | `atomik-thumbs` | file browser: the 48-bar waveform thumbnail of each visible audio row (first thirty seconds, newest request first) | Yes (disk) |
 | `atomik-library-save` | file browser: writes `library.json` from the newest snapshot | Yes (disk) |
@@ -6936,6 +6937,24 @@ items are ordinary project texts, plus one small new file type.
   and the file browser previews it, so no item format is involved. It is not an edit: the
   document, the undo history and the dirty flag stay as they are. The browser lists the section,
   selects the new row and opens its rename entry.
+- **Previews that follow the keyboard**
+  ([app_core_live_preview.rs](../crates/app/src/app_core_live_preview.rs),
+  [app_core_plugin_preview.rs](../crates/app/src/app_core_plugin_preview.rs)). While the panel shows and
+  the one selected row is a patch, a container or a plugin preset, the notes of a MIDI keyboard and of the
+  Piano Keys strip play through that item and go back to the track when the selection leaves it (no take is
+  recording, no other preview owns the voice, audio runs). The notes target of the app becomes
+  `PREVIEW_TARGET` (a device id no engine holds); `MidiLink::push` queues events for it in
+  `NoteTarget::preview()` ([preview_notes.rs](../crates/app/src/preview_notes.rs)) instead of in the
+  engine, so a note-off follows its note-on and nothing is recorded. The `atomik-live-preview` worker builds
+  the scratch project the phrase preview builds (`preview_doc`) into an engine of its own
+  ([live_preview.rs](../crates/render/src/live_preview.rs): no song, no workers, notes sent to the first
+  track's device, blocks rendered by the caller) and feeds the preview voice (`PreviewFeed`), keeping about
+  30 ms in the ring, so the audio thread sees only a stream of samples. An item the phrase preview refuses
+  is skipped without a message. A plugin preset gets a preview instance of the plugin (`begin_create`
+  polled on the frame, `Loading '...'` in the status line meanwhile, never in the rack or the document)
+  whose device the worker owns, in a scratch project of its own (`plugin_doc`: an instrument on its channel,
+  an effect in the insert chain of a built-in synth); presets load with `begin_load_preset`, one instance
+  serves every preset of that plugin, and it is destroyed with the worker. A bounce never hears any of it.
 - **Load** ([`AppCore::load_library_item`](../crates/app/src/app_core_library.rs) with a
   `LoadTarget`): a device row is added the way the rack's browser adds it (the creation chain at the
   top level, `AddInner` inside a container); a patch or container is pasted (`PasteDevices`,
