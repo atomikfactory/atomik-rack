@@ -249,7 +249,7 @@ fn a_reversed_warped_clip_round_trips_the_format() {
 
 #[test]
 fn the_format_round_trips_warp_and_omits_the_default() {
-    assert_eq!(PROJECT_VERSION, 45);
+    assert_eq!(PROJECT_VERSION, 46);
     let (reg, mut d) = setup();
     let plain = put(&mut d, &reg, 0, PPQ, audio(1));
     let text = save_project(d.doc());

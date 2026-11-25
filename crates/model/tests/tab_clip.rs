@@ -121,7 +121,7 @@ fn a_plain_clip_writes_no_tab_and_a_tab_clip_round_trips_exactly() {
     let tab = &v["song"]["tracks"][0]["lanes"][0]["clips"][0]["tab"];
     assert_eq!(tab["instrument"], "guitar6");
     assert_eq!(tab["capo"]["strings"], 15);
-    assert_eq!(v["version"], 45, "no format bump");
+    assert_eq!(v["version"], 46, "no format bump");
     assert_eq!(v["compat"], 44);
     assert_eq!(v["ignorable"]["song.tracks[].lanes[].clips[].tab"], 45);
     assert_eq!(v["ignorable"]["song.sheets"], 45);

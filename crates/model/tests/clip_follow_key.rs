@@ -130,7 +130,7 @@ fn the_field_is_written_only_when_off_and_round_trips() {
     let v: Value = serde_json::from_str(&text).unwrap();
     let clip = &v["song"]["tracks"][0]["lanes"][0]["clips"][0];
     assert_eq!(clip["follow_song_key"], Value::Bool(false));
-    assert_eq!(v["version"], 45);
+    assert_eq!(v["version"], 46);
     let loaded = load_project(&text, &reg).unwrap();
     assert_eq!(&loaded, d.doc());
     assert_eq!(save_project(&loaded), text, "canonical");

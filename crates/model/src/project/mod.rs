@@ -22,7 +22,8 @@
 //!                                                              (v27; written only when non-empty),
 //!                "master": key | null, "returns": [key | null × 8], "compensation": bool,
 //!                "folder_routes"?: [{ "folder", "bus": key, "members": [key…] }…]
-//!                                       (v44, ignorable; written only when non-empty) },
+//!                                       (v44, ignorable; written only when non-empty),
+//!                "locked"?: [key…]   (v46, ignorable; the locked strips, sorted; written only when non-empty) },
 //!   "midi_maps"?: [{ "id", "source", "target", options… }…]       (v28; written only when non-empty),
 //!   "macros"?: { "assigns"?: [{ "id", "bank", "macro", "device", "param", "min", "max", "invert"?, "curve"?, "smooth_ms"? }…],
 //!                "names"?: [{ "bank", "macro", "name" }…] }
@@ -471,7 +472,11 @@
 //! `[src_start, src_end, cents, drift, vibrato_keep]` per edited note, in asset frames, sorted and
 //! disjoint. It is written only while the clip has some and it is ignorable: a reader that drops it
 //! plays the clip as it was recorded.
-//! Saving always writes version 45, with `"compat": 44` and the `"ignorable"` list (see [`schema`]): a reader of 44 opens the file and drops the launcher, the per-note expression, the tab data, the sheets, the song harmony and the pitch edits, one warning each.
+//! Version 46 adds the console field `"locked"` (see [`crate::console_lock`]): the keys of the locked channels,
+//! buses and master, sorted, written only when a strip is locked and ignorable (a reader that drops it opens the
+//! mix unlocked, which plays and bounces the same). A project without a lock differs from its version 45 file in
+//! the version line and the `"ignorable"` list alone.
+//! Saving always writes version 46, with `"compat": 44` and the `"ignorable"` list (see [`schema`]): a reader of 44 opens the file and drops the launcher, the per-note expression, the tab data, the sheets, the song harmony and the pitch edits, one warning each.
 
 use crate::console::{
     BUS_TYPE, CHANNEL_TYPE, Console, ConsoleBus, ConsoleChannel, FX_SLOTS, MASTER_TYPE,
@@ -583,7 +588,7 @@ pub const PROJECT_FORMAT: &str = "atomik-project";
 /// information) and 39 (no send follow, no parallel channels) and 40 (no master tune) and 41 (no
 /// modulation slots) and 42 (no CV inputs, macro kinds or split pass flags on containers) and 43
 /// (no live track grooves) and 44 (no controller lanes outside note clips).
-pub const PROJECT_VERSION: u32 = 45;
+pub const PROJECT_VERSION: u32 = 46;
 
 fn int(v: &Value, path: &JsonPath) -> Result<i64, ModelError> {
     v.as_i64()

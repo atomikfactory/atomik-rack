@@ -121,6 +121,10 @@ pub(super) fn write_console(w: &mut String, console: &Console) {
             .collect();
         tail.push(format!("\"folder_routes\": [{}]", routes.join(", ")));
     }
+    if !console.locked.is_empty() {
+        let keys: Vec<String> = console.locked.iter().map(|k| json_str(&k.0)).collect();
+        tail.push(format!("\"locked\": [{}]", keys.join(", ")));
+    }
     if tail.is_empty() {
         let _ = writeln!(w, "    \"compensation\": {}", console.compensation);
     } else {

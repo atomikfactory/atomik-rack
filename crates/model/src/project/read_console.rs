@@ -529,6 +529,23 @@ pub(super) fn load_console(
     if let Some(v) = obj.get("folder_routes") {
         load_folder_routes(v, &path.field("folder_routes"), &mut console)?;
     }
+    if let Some(v) = obj.get("locked") {
+        let list_path = path.field("locked");
+        for (i, item) in array(v, &list_path)?.iter().enumerate() {
+            let p = list_path.index(i);
+            let key =
+                device_ref(item, &p)?.ok_or_else(|| p.error("expected a device id, found null"))?;
+            let is_strip = console.channel_index(&key).is_some()
+                || console.bus_index(&key).is_some()
+                || console.master.as_ref() == Some(&key);
+            if !is_strip {
+                return Err(p.error(format!("{:?} is not a console strip", key.0)));
+            }
+            if let Err(at) = console.locked.binary_search(&key) {
+                console.locked.insert(at, key);
+            }
+        }
+    }
     Ok(console)
 }
 
