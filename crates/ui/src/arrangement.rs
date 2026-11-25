@@ -1862,6 +1862,50 @@ impl ArrangementView {
         self.clip_hover.clone()
     }
 
+    /// The marker for clips another song is dragging over this view, at the view position `pos`
+    /// (`None`: the drag left): the same marker files show. `notes` and `audio` say what every
+    /// carried clip is (a mix of both fits no lane). A note lane that takes them shows the lane
+    /// marker, an audio track the track marker, anywhere else in the track area the marker for
+    /// new tracks; outside the track area there is none. The place is the one
+    /// [`Self::drop_spot_at`] gives for the drop itself.
+    pub fn carried_clips_hover(&mut self, pos: Option<Point>, notes: bool, audio: bool) {
+        let spot = pos.and_then(|p| self.drop_spot_at(p));
+        let Some((lane, tick)) = spot else {
+            self.set_clip_hover(None);
+            self.set_drop_hover(None);
+            return;
+        };
+        let lane = lane.filter(|(device, lane)| {
+            self.song
+                .tracks
+                .iter()
+                .find(|t| &t.device == device)
+                .is_some_and(|t| (notes && t.is_note_lane(*lane)) || (audio && t.is_audio()))
+        });
+        match lane {
+            Some((device, lane)) if notes => {
+                self.set_drop_hover(None);
+                self.set_clip_hover(Some((device, lane, tick)));
+            }
+            Some((device, _)) => {
+                self.set_clip_hover(None);
+                self.set_drop_hover(Some(DropHover {
+                    target: ImportTarget::ExistingTrack(device),
+                    tick,
+                    count: 1,
+                }));
+            }
+            None => {
+                self.set_clip_hover(None);
+                self.set_drop_hover(Some(DropHover {
+                    target: ImportTarget::NewTracks,
+                    tick,
+                    count: 1,
+                }));
+            }
+        }
+    }
+
     /// The drop indicator state while files hover over the view: the target and snapped tick.
     pub fn drop_hover(&self) -> Option<(ImportTarget, i64)> {
         self.drop_hover.as_ref().map(|h| (h.target.clone(), h.tick))

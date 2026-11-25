@@ -3626,3 +3626,13 @@ Audio restarted after a fault in {name}; it has no bypass and may fail again => 
 {what}. Audio restarts by itself when playback stops. => {what}. L'audio redémarrera de lui-même à l'arrêt de la lecture.
 {what}. Audio restarts by itself within a minute. => {what}. L'audio redémarrera de lui-même d'ici une minute.
 Starting audio... => Démarrage de l'audio...
+
+# Several open songs: the Play Focus and the Input Focus
+Focus follows the active song => Le focus suit le morceau actif
+Which of the Play Focus (audio) and the Input Focus (MIDI keyboard) go to the song you work in. => Lesquels du focus de lecture (audio) et du focus d'entrée (clavier MIDI) vont au morceau dans lequel vous travaillez.
+Play only => Lecture seulement
+Input only => Entrée seulement
+Play Focus: this song owns the audio stream and plays. Click another song's button to move it => Focus de lecture : ce morceau a le flux audio et joue. Cliquez sur le bouton d'un autre morceau pour le déplacer
+Play Focus: click to give the audio stream to this song (the song that has it stops) => Focus de lecture : cliquez pour donner le flux audio à ce morceau (celui qui l'a s'arrête)
+Input Focus: this song takes the MIDI keyboard and controllers, while it also has the Play Focus => Focus d'entrée : ce morceau reçoit le clavier MIDI et les contrôleurs, tant qu'il a aussi le focus de lecture
+Input Focus: click to give the MIDI keyboard and controllers to this song (they sound while it also has the Play Focus) => Focus d'entrée : cliquez pour donner le clavier MIDI et les contrôleurs à ce morceau (ils sonnent tant qu'il a aussi le focus de lecture)

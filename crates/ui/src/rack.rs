@@ -237,6 +237,8 @@ enum Hit {
     IoClip(usize, usize),
     /// The name plate of the Audio I/O panel (click resets every clip lamp).
     IoHeader(usize),
+    /// A focus button on the plate of the Audio I/O panel (Play Focus or Input Focus).
+    IoFocus(usize, crate::io_panel::SongFocus),
     /// The EDIT button of a master return (device index, slot 0..8).
     ReturnEdit(usize, usize),
     /// The IMPORT button of a Headphone Correction panel.
@@ -313,6 +315,7 @@ impl Hit {
             | Hit::IoCell(i, _)
             | Hit::IoClip(i, _)
             | Hit::IoHeader(i)
+            | Hit::IoFocus(i, _)
             | Hit::ReturnEdit(i, _)
             | Hit::HeadphoneImport(i)
             | Hit::HeadphoneGraph(i)
@@ -2288,12 +2291,15 @@ impl RackView {
                             }
                         }
                         if desc.type_id == crate::interface::INTERFACE_TYPE_ID {
-                            tree.add(
+                            let plate = tree.add(
                                 dn,
                                 paint::plate_rect(d.height, false) + off,
                                 Hit::IoHeader(i),
                                 false,
                             );
+                            for (which, r) in crate::io_panel::focus_rects(d.height) {
+                                tree.add(plate, r + off, Hit::IoFocus(i, which), false);
+                            }
                             for cell in crate::io_panel::cells(&desc) {
                                 let cn = tree.add(
                                     dn,
@@ -3335,9 +3341,9 @@ impl RackView {
             }
             Drag::None => match self.hover {
                 Some(Hit::Socket(i, slot)) => self.jack_tooltip(i, slot),
-                Some(h @ (Hit::IoCell(..) | Hit::IoClip(..) | Hit::IoHeader(_))) => {
-                    self.io_tooltip(h)
-                }
+                Some(
+                    h @ (Hit::IoCell(..) | Hit::IoClip(..) | Hit::IoHeader(_) | Hit::IoFocus(..)),
+                ) => self.io_tooltip(h),
                 Some(h @ Hit::ReturnEdit(..)) if self.button_tips => self.return_edit_tooltip(h),
                 Some(Hit::AreaRow(i)) if self.button_tips => self.area_tip(i),
                 Some(Hit::Preset(i, n)) => self.preset_name(i, n),
@@ -3709,6 +3715,29 @@ impl RackView {
     /// or not; the pointer is still down).
     pub fn carries_devices(&self) -> bool {
         matches!(self.drag, Drag::Move { .. })
+    }
+
+    /// The marker for devices another song is dragging over this rack, with the pointer at the
+    /// view position `pos` (`None`, or a position outside the rack area: the drag left): the
+    /// drop line the rack shows for a library item hovering over it, at the slot
+    /// [`Self::drop_slot_at`] gives for the drop itself.
+    pub fn carried_devices_hover(&mut self, pos: Option<Point>) {
+        match pos.filter(|p| self.rack_area().contains(*p)) {
+            Some(p) => {
+                if self.pointer != p {
+                    self.pointer = p;
+                    self.repaint = true;
+                }
+                self.set_lib_drop(true);
+            }
+            None => self.set_lib_drop(false),
+        }
+    }
+
+    /// Whether the drop line of a hover over the rack (devices of another song, or a library
+    /// item) is shown.
+    pub fn drop_line_shown(&self) -> bool {
+        self.lib_drop
     }
 
     /// Ends the drag of devices without moving them (the pointer is released elsewhere).
@@ -4344,6 +4373,9 @@ impl RackView {
             }
             (Hit::TunerButton(i), PointerButton::Primary) => self.tuner_toggle(i, out),
             (h @ (Hit::IoClip(..) | Hit::IoHeader(_)), PointerButton::Primary) => self.io_down(h),
+            (Hit::IoFocus(_, which), PointerButton::Primary) => {
+                out.push(UiAction::TakeFocus(which));
+            }
             (Hit::ReturnEdit(i, slot), PointerButton::Primary) => {
                 self.return_edit_down(i, slot, out)
             }

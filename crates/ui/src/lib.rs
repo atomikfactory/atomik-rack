@@ -559,7 +559,7 @@ pub use harmony_picker::{HarmonyPickerAction, HarmonyPickerView, HarmonyTarget, 
 pub use help_panel::{HELP_PANEL_HEIGHT, HelpCard};
 pub use history_panel::{HISTORY_PANEL_WIDTH, HistoryRow, HistoryView};
 pub use i18n::{Lang, LanguageChoice};
-pub use io_panel::IoSocketState;
+pub use io_panel::{IoFocus, IoSocketState, SongFocus};
 pub use kick_bass_panel::{
     FixView, KickBassAction, KickBassInfo, KickBassView, RunView, StripHit, StripView,
 };

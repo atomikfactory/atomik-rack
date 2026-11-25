@@ -1941,6 +1941,7 @@ fn interface_front<C: Canvas + ?Sized>(
 ) {
     if desc.type_id == crate::interface::INTERFACE_TYPE_ID {
         crate::io_panel::paint_front(c, theme, desc, &info.io);
+        crate::io_panel::paint_focus(c, theme, info.height, info.io.focus, info.accent);
         return;
     }
     let y = info.height / 2.0;
