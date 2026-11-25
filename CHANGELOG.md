@@ -25,6 +25,12 @@ may break APIs and the patch and project formats.
   processes per instance and the idle CPU of the instances processing silence. An ordinary test of the same file
   asserts the counts that do not depend on the machine (children per mode, threads of a shared child, nothing left
   behind). No behaviour of the app changes.
+- **Allocation counts in the test suite.** `crates/render/tests/stress_alloc.rs` renders ten seconds of the stress song
+  and of the stress rack at 48 kHz in blocks of 256 frames, with no worker and with two, after a warm-up: every block
+  runs under the allocation guard on the audio thread and every worker is marked, so a heap operation on either fails
+  the test (measured: none). `crates/app/tests/idle_frame_alloc.rs` counts the heap operations of a frame of the shell
+  with the fx-demo open, idle and while the playhead moves (a fake audio backend whose engine the test renders block by
+  block), and bounds them so they cannot grow.
 
 ### Changed
 - **The rack builds the automation values it shows once, not on every paint.** While an automation lane has points,
