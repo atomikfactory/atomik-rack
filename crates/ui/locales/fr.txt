@@ -3626,3 +3626,24 @@ Audio restarted after a fault in {name}; it has no bypass and may fail again => 
 {what}. Audio restarts by itself when playback stops. => {what}. L'audio redémarrera de lui-même à l'arrêt de la lecture.
 {what}. Audio restarts by itself within a minute. => {what}. L'audio redémarrera de lui-même d'ici une minute.
 Starting audio... => Démarrage de l'audio...
+
+# Version history: rename and delete
+DELETE => SUPPRIMER
+KEEP => GARDER
+Restore => Restaurer
+Compare => Comparer
+Protect => Protéger
+Unprotect => Déprotéger
+Delete version {label}? This cannot be undone. => Supprimer la version {label} ? Cette action est irréversible.
+Enter deletes; Esc keeps the version => Entrée supprime ; Échap garde la version
+C compares (Shift marks a second version); F2 renames; Delete deletes => C compare (Maj marque une seconde version) ; F2 renomme ; Suppr supprime
+Version deleted => Version supprimée
+this version is protected: unprotect it before deleting it => cette version est protégée : retirez sa protection avant de la supprimer
+
+# Tooltips: version history
+A protected version cannot be deleted: unprotect it first => Une version protégée ne peut pas être supprimée : retirez d'abord sa protection
+Delete the chosen version for good (Delete) => Supprimer définitivement la version choisie (Suppr)
+Delete the version for good => Supprimer définitivement la version
+Keep the version => Garder la version
+Give the version this name; an empty name clears it => Donner ce nom à la version ; un nom vide l'efface
+Change the name of the chosen version (F2); an empty name clears it => Changer le nom de la version choisie (F2) ; un nom vide l'efface

@@ -65,6 +65,13 @@ may break APIs and the patch and project formats.
   schedule at 64, 128, 256 and 512 frames with 0 and 2 workers, without an audio device, and prints the p50, p99 and
   max of the render time, the callbacks that ran over their period and the share of the period the p99 uses. The
   scheduled performance workflow prints it and keeps it as an artifact, and never fails on a timing.
+- **Rename and delete a version in the version history.** In File > Versions, RENAME (or F2 on the list) puts the chosen
+  version's name in the name field and Enter or RENAME keeps it; an empty name clears it, so the version is listed by
+  its time again. DELETE (or the Delete key on the list) asks "Delete version ...? This cannot be undone." and then
+  removes the version's file and its line in the index, one version at a time. A protected version is not deleted until
+  it is unprotected (the button is off and its tooltip says why), and a failure leaves the version listed with its
+  file. A right-click on a row opens a menu with Restore, Compare, Rename, Protect and Delete. The project file and the
+  project format do not change; the song is never a version and is never deleted.
 
 ### Changed
 - **The rack builds the automation values it shows once, not on every paint.** While an automation lane has points,
