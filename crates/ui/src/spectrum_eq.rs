@@ -583,7 +583,13 @@ impl SpectrumEqView {
                 (Rect::new(p.x - 8.0, p.y - 8.0, p.x + 8.0, p.y + 8.0), what)
             }
         };
-        Some(Help::new(rect, text))
+        let id = match hit {
+            Hit::Prev | Hit::Next => "editor.spectrum_eq.strip",
+            Hit::Follow => "editor.spectrum_eq.follow",
+            Hit::Check(_) => "editor.spectrum_eq.check",
+            Hit::Point(_) => "editor.spectrum_eq.point",
+        };
+        Some(Help::new(rect, text).id(id))
     }
 
     // ------------------------------------------------------------------ input

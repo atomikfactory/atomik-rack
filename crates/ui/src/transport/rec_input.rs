@@ -411,19 +411,22 @@ impl TransportBar {
                     "Input gain of {} in dB, applied to the recording and the monitor: drag or scroll to change (Shift: fine), double-click for 0 dB",
                     src.name
                 ),
-            ));
+            )
+            .id("transport.rec_gain"));
         }
         if l.safe.contains(pos) {
             return Some(Help::new(
                 l.safe,
                 "Clip safe: the recording is limited so it never goes above 0 dBFS (the monitor is not)",
-            ));
+            )
+            .id("transport.rec_safe"));
         }
         l.meter.contains(pos).then(|| {
             Help::new(
                 l.meter,
                 "Input level after the gain; the lamp lights when it reaches 0 dBFS and stays lit until you click here",
             )
+            .id("transport.rec_meter")
         })
     }
 

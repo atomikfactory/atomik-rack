@@ -366,32 +366,41 @@ impl PluginLearnStrip {
     /// What the control under `pos` does, for its tooltip.
     pub fn help_at(&self, pos: Point) -> Option<Help> {
         if self.automation_rect().contains(pos) {
-            return Some(Help::new(
-                self.automation_rect(),
-                "Touch a control in the plugin to show its automation lane",
-            ));
+            return Some(
+                Help::new(
+                    self.automation_rect(),
+                    "Touch a control in the plugin to show its automation lane",
+                )
+                .id("modal.plugin_learn.automation"),
+            );
         }
         if self.midi_rect().contains(pos) {
-            return Some(Help::new(
-                self.midi_rect(),
-                "Touch a control in the plugin, then move a hardware control to map it",
-            ));
+            return Some(
+                Help::new(
+                    self.midi_rect(),
+                    "Touch a control in the plugin, then move a hardware control to map it",
+                )
+                .id("modal.plugin_learn.midi"),
+            );
         }
         if self.close_rect().contains(pos) {
-            return Some(Help::new(self.close_rect(), "Stop learning (Esc)"));
+            return Some(Help::new(self.close_rect(), "Stop learning (Esc)").id("modal.close"));
         }
         if let Some(r) = self.dock_rect().filter(|r| r.contains(pos)) {
-            return Some(Help::new(
-                r,
-                if self.dock == PluginDockUi::CanDock {
-                    "Move this editor into the Atomik window"
-                } else {
-                    "Move this editor out into a window of its own"
-                },
-            ));
+            return Some(
+                Help::new(
+                    r,
+                    if self.dock == PluginDockUi::CanDock {
+                        "Move this editor into the Atomik window"
+                    } else {
+                        "Move this editor out into a window of its own"
+                    },
+                )
+                .id("modal.plugin_learn.dock"),
+            );
         }
         if let Some(r) = self.shut_rect().filter(|r| r.contains(pos)) {
-            return Some(Help::new(r, "Close this editor"));
+            return Some(Help::new(r, "Close this editor").id("modal.plugin_learn.shut"));
         }
         None
     }

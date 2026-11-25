@@ -344,6 +344,32 @@ enum Hit {
     Cancel,
 }
 
+impl Hit {
+    /// The id of the control in Help Mode.
+    fn help_id(self) -> &'static str {
+        match self {
+            Hit::Depth(_) => "modal.export.depth",
+            Hit::Dither(_) => "modal.export.dither",
+            Hit::Rate(_) => "modal.export.rate",
+            Hit::File(_) => "modal.export.file",
+            Hit::Quality(_) => "modal.export.quality",
+            Hit::Tail => "modal.export.tail",
+            Hit::Dry(_) => "modal.export.dry",
+            Hit::Range(_) => "modal.export.range",
+            Hit::Mono(_) => "modal.export.mono",
+            Hit::Loudness(_) => "modal.export.loudness",
+            Hit::Extra(_) => "modal.export.extra",
+            Hit::PresetList => "modal.export.preset",
+            Hit::PresetSave => "modal.export.preset_save",
+            Hit::PresetDelete => "modal.export.preset_delete",
+            Hit::NameOk => "modal.export.name_ok",
+            Hit::NameCancel => "modal.export.name_cancel",
+            Hit::Start => "modal.export.start",
+            Hit::Cancel => "modal.export.cancel",
+        }
+    }
+}
+
 /// The panel mode.
 #[derive(Debug, Clone, PartialEq)]
 enum Mode {
@@ -1271,7 +1297,7 @@ impl ExportView {
             && file.is_lossy()
             && self.scope != ExportScope::Stems
         {
-            return Some(Help::new(rect, why.clone()));
+            return Some(Help::new(rect, why.clone()).id(hit.help_id()));
         }
         let text = match hit {
             Hit::Depth(_) | Hit::Dither(_) if self.values.file.is_lossy() => {
@@ -1365,7 +1391,7 @@ impl ExportView {
             Hit::Cancel if self.in_progress() => "Stop the render and write nothing",
             Hit::Cancel => "Close without exporting",
         };
-        Some(Help::new(rect, text))
+        Some(Help::new(rect, text).id(hit.help_id()))
     }
 
     // ------------------------------------------------------------------ painting

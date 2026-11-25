@@ -4285,6 +4285,8 @@ impl<B: AudioBackend> Shell<B> {
         let now = atomik_ui::i18n::language();
         if now != self.shown_language {
             self.shown_language = now;
+            // The card of Help Mode was worded in the old language.
+            self.help_mode.clear_shown();
             self.apply_theme_with(true);
             self.layout_view();
         }

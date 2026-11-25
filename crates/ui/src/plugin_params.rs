@@ -780,36 +780,71 @@ impl PluginParamsView {
         if !matches!(self.drag, Drag::None) {
             return None;
         }
-        let help = |rect: Option<Rect>, text: &'static str| Some(Help::new(rect?, text));
+        let help = |rect: Option<Rect>, text: &'static str, id: &'static str| {
+            Some(Help::new(rect?, text).id(id))
+        };
         match self.hit(pos) {
-            Hit::Close => help(Some(self.close_rect()), "Close the parameter pane"),
+            Hit::Close => help(
+                Some(self.close_rect()),
+                "Close the parameter pane",
+                "modal.close",
+            ),
             Hit::LearnAutomation => help(
                 Some(self.learn_automation_rect()),
                 "Touch a control in the plugin to show its automation lane",
+                "modal.plugin_learn.automation",
             ),
             Hit::LearnMidi => help(
                 Some(self.learn_midi_rect()),
                 "Touch a control in the plugin, then move a hardware control to map it",
+                "modal.plugin_learn.midi",
             ),
-            Hit::StepDec(id) => help(self.dec_rect(id), "Previous value"),
-            Hit::StepInc(id) => help(self.inc_rect(id), "Next value"),
-            Hit::Toggle(id) => help(self.toggle_rect(id), "Switch this parameter on or off"),
+            Hit::StepDec(id) => help(
+                self.dec_rect(id),
+                "Previous value",
+                "modal.plugin_params.dec",
+            ),
+            Hit::StepInc(id) => help(self.inc_rect(id), "Next value", "modal.plugin_params.inc"),
+            Hit::Toggle(id) => help(
+                self.toggle_rect(id),
+                "Switch this parameter on or off",
+                "modal.plugin_params.toggle",
+            ),
             Hit::Pin(id) => help(
                 self.pin_rect(id),
                 "Pin this parameter to the device panel in the rack",
+                "modal.plugin_params.pin",
             ),
             Hit::Auto(id) => help(
                 self.auto_rect(id),
                 "Show this parameter's automation lane in the arrangement",
+                "modal.plugin_params.auto",
             ),
-            Hit::Map(id) => help(self.map_rect(id), "Drive this parameter from a macro"),
+            Hit::Map(id) => help(
+                self.map_rect(id),
+                "Drive this parameter from a macro",
+                "modal.plugin_params.map",
+            ),
             Hit::Cv(id) => help(
                 self.cv_rect(id),
                 "Drive this parameter from one of the device's CV inputs",
+                "modal.plugin_params.cv",
             ),
-            Hit::PresetPrev => help(self.preset_prev_rect(), "Load the previous preset"),
-            Hit::PresetNext => help(self.preset_next_rect(), "Load the next preset"),
-            Hit::PresetName => help(self.preset_name_rect(), "Choose a preset of this plugin"),
+            Hit::PresetPrev => help(
+                self.preset_prev_rect(),
+                "Load the previous preset",
+                "modal.plugin_params.preset_prev",
+            ),
+            Hit::PresetNext => help(
+                self.preset_next_rect(),
+                "Load the next preset",
+                "modal.plugin_params.preset_next",
+            ),
+            Hit::PresetName => help(
+                self.preset_name_rect(),
+                "Choose a preset of this plugin",
+                "modal.plugin_params.preset_name",
+            ),
             Hit::None
             | Hit::Search
             | Hit::Slider(_)

@@ -364,15 +364,18 @@ impl VideoView {
             Hit::Size(s) => Help::new(
                 self.size_rects().into_iter().find(|(k, _)| *k == s)?.1,
                 s.help(),
-            ),
+            )
+            .id("modal.video.size"),
             Hit::Timecode => Help::new(
                 self.overlay_rects()[0].2,
                 "Show the timecode of the picture over it",
-            ),
+            )
+            .id("modal.video.timecode"),
             Hit::FrameNumber => Help::new(
                 self.overlay_rects()[1].2,
                 "Show the frame number of the picture over it",
-            ),
+            )
+            .id("modal.video.frame_number"),
         })
     }
 

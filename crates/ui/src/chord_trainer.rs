@@ -1317,7 +1317,8 @@ impl ChordTrainerView {
                     paint::reset_rect(f.scores),
                     "Forget the best scores of every chord pair",
                 )
-                .with_command("editor.trainer_reset_scores"),
+                .with_command("editor.trainer_reset_scores")
+                .id("editor.trainer.reset_scores"),
             );
         }
         let item = f
@@ -1419,7 +1420,24 @@ impl ChordTrainerView {
             B::ApplyList => ("Make the text the list of chords (Enter)", None, None),
             B::CancelList => ("Leave the list as it was (Esc)", None, None),
         };
-        let h = Help::new(item.rect, text);
+        let h = Help::new(item.rect, text).id(match btn {
+            B::Instrument | B::Tuning => "editor.trainer.instrument",
+            B::CapoDown | B::CapoUp => "editor.trainer.capo",
+            B::Source => "editor.trainer.source",
+            B::KeyDown | B::KeyUp | B::KeyMode => "editor.trainer.key",
+            B::Sevenths => "editor.trainer.sevenths",
+            B::EditList | B::ApplyList | B::CancelList => "editor.trainer.list",
+            B::Mode => "editor.trainer.mode",
+            B::Order => "editor.trainer.order",
+            B::BeatsDown | B::BeatsUp => "editor.trainer.beats",
+            B::BpmDown | B::BpmUp => "editor.trainer.tempo",
+            B::PairA | B::PairB => "editor.trainer.pair",
+            B::Start => "editor.trainer.start",
+            B::Skip => "editor.trainer.skip",
+            B::Input => "editor.trainer.input",
+            B::ResetScores => "editor.trainer.reset_scores",
+            B::VoicingPrev | B::VoicingNext => "editor.trainer.voicing",
+        });
         Some(match (cmd, arg) {
             (Some(c), Some(a)) => h.with_arg(c, a),
             (Some(c), None) => h.with_command(c),

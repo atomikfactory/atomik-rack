@@ -300,14 +300,16 @@ impl RepetitionView {
 
     /// What the control under `pos` does, for its tooltip.
     pub fn help_at(&self, pos: Point) -> Option<Help> {
-        let help = |rect: Rect, text: &'static str| Some(Help::new(rect, text));
+        let help =
+            |rect: Rect, text: &'static str, id: &'static str| Some(Help::new(rect, text).id(id));
         if self.close_rect().contains(pos) {
-            return help(self.close_rect(), "Close the panel");
+            return help(self.close_rect(), "Close the panel", "modal.close");
         }
         if self.find_rect().contains(pos) {
             return help(
                 self.find_rect(),
                 "Search the song again for ideas that repeat three times or more unchanged",
+                "modal.repetition.find",
             );
         }
         if let Some((i, k)) = self.choice_at(pos) {
@@ -315,17 +317,26 @@ impl RepetitionView {
             let choice = row.choices.get(k)?;
             let rect = self.choice_rect(i, k);
             return if choice.done {
-                help(rect, "Already made")
+                help(rect, "Already made", "modal.repetition.choice")
             } else if choice.can_apply {
-                help(rect, "Make this variation (one undo step)")
+                help(
+                    rect,
+                    "Make this variation (one undo step)",
+                    "modal.repetition.choice",
+                )
             } else {
-                help(rect, "This one is advice: click to read it below")
+                help(
+                    rect,
+                    "This one is advice: click to read it below",
+                    "modal.repetition.choice",
+                )
             };
         }
         if self.list_rect().contains(pos) && self.count() > 0 {
             return help(
                 self.list_rect(),
                 "Click an idea to choose it and move the playhead to where it starts",
+                "modal.repetition.list",
             );
         }
         None

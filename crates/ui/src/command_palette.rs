@@ -248,6 +248,7 @@ impl CommandPaletteView {
                 self.row_rect(row).unwrap_or(self.panel()),
                 "Not available right now: running it says why",
             )
+            .id("modal.command_palette.row")
         })
     }
 

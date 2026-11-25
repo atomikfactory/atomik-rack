@@ -272,17 +272,23 @@ impl BassReadView {
 
     /// What the control under `pos` does, for its tooltip.
     pub fn help_at(&self, pos: Point) -> Option<Help> {
-        let help = |rect: Rect, text: &'static str| Some(Help::new(rect, text));
+        let help =
+            |rect: Rect, text: &'static str, id: &'static str| Some(Help::new(rect, text).id(id));
         if self.close_rect().contains(pos) {
-            return help(self.close_rect(), "Close the panel");
+            return help(self.close_rect(), "Close the panel", "modal.close");
         }
         if self.measure_rect().contains(pos) {
             return if self.data.running.is_some() {
-                help(self.measure_rect(), "Stop the measurement")
+                help(
+                    self.measure_rect(),
+                    "Stop the measurement",
+                    "modal.bass_read.measure",
+                )
             } else {
                 help(
                     self.measure_rect(),
                     "Render the chosen strip and read how much of its bass a small speaker keeps",
+                    "modal.bass_read.measure",
                 )
             };
         }
@@ -290,12 +296,14 @@ impl BassReadView {
             return help(
                 self.list_rect(),
                 "Choose the master or a track: the meter reads the strip as it sounds in the mix",
+                "modal.bass_read.list",
             );
         }
         if self.meter_rect().inflate(0.0, 6.0).contains(pos) {
             return help(
                 self.meter_rect(),
                 "How much of the bass note's energy a small speaker plays in its harmonics",
+                "modal.bass_read.meter",
             );
         }
         None

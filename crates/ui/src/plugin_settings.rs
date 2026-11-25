@@ -411,8 +411,9 @@ impl PluginSettingsView {
 
     /// What the button under `pos` does, for its tooltip.
     pub fn help_at(&self, pos: Point) -> Option<Help> {
-        let at = |r: Option<Rect>, text: &'static str| {
-            r.filter(|r| r.contains(pos)).map(|r| Help::new(r, text))
+        let at = |r: Option<Rect>, text: &'static str, id: &'static str| {
+            r.filter(|r| r.contains(pos))
+                .map(|r| Help::new(r, text).id(id))
         };
         let visible = self.visible();
         let shown = |item: Item| {
@@ -424,6 +425,7 @@ impl PluginSettingsView {
         if let Some(h) = at(
             Some(self.enable_rect()),
             "Turn third-party plugins on or off",
+            "modal.plugin_settings.enable",
         ) {
             return Some(h);
         }
@@ -433,7 +435,11 @@ impl PluginSettingsView {
             } else {
                 "Not available here: a window of another program cannot be put inside this one on macOS or Wayland, so editors open in their own window"
             };
-            if let Some(h) = at(self.editors_button_rect(), text) {
+            if let Some(h) = at(
+                self.editors_button_rect(),
+                text,
+                "modal.plugin_settings.editors",
+            ) {
                 return Some(h);
             }
         }
@@ -442,47 +448,60 @@ impl PluginSettingsView {
                 Item::Sandbox,
                 self.sandbox_toggle_rect(),
                 "Run each plugin in its own process so a crash cannot take Atomik down",
+                "modal.plugin_settings.sandbox_toggle",
             ),
             (
                 Item::Sandbox,
                 self.process_button_rect(),
                 "How plugins share processes: a crash stops every plugin in the same one",
+                "modal.plugin_settings.process_button",
             ),
             (
                 Item::AddFolder,
                 self.add_folder_rect(),
                 "Add a folder to search for plugins",
+                "modal.plugin_settings.add_folder",
             ),
             (
                 Item::ScanButtons,
                 self.scan_rect(),
                 "Scan the folders for new and changed plugins",
+                "modal.plugin_settings.scan",
             ),
             (
                 Item::ScanButtons,
                 self.full_rescan_rect(),
                 "Scan every plugin again",
+                "modal.plugin_settings.full_rescan",
             ),
             (
                 Item::ScanButtons,
                 self.rescan_failed_rect(),
                 "Try the files that failed again",
+                "modal.plugin_settings.rescan_failed",
             ),
             (
                 Item::Timeout,
                 self.timeout_dec_rect(),
                 "Shorter time allowed per plugin",
+                "modal.plugin_settings.timeout_dec",
             ),
             (
                 Item::Timeout,
                 self.timeout_inc_rect(),
                 "Longer time allowed per plugin",
+                "modal.plugin_settings.timeout_inc",
             ),
-            (Item::Progress, self.cancel_scan_rect(), "Stop the scan"),
+            (
+                Item::Progress,
+                self.cancel_scan_rect(),
+                "Stop the scan",
+                "modal.plugin_settings.cancel_scan",
+            ),
         ];
-        for (item, rect, text) in fixed {
+        for (item, rect, text, id) in fixed {
             if shown(item)
-                && let Some(h) = at(rect, text)
+                && let Some(h) = at(rect, text, id)
             {
                 return Some(h);
             }
@@ -492,21 +511,33 @@ impl PluginSettingsView {
                 continue;
             }
             let found = match *item {
-                Item::Folder(i) => at(self.folder_remove_rect(i), "Remove this search folder"),
+                Item::Folder(i) => at(
+                    self.folder_remove_rect(i),
+                    "Remove this search folder",
+                    "modal.plugin_settings.folder_remove",
+                ),
                 Item::Plugin(i) => at(
                     self.crash_retry_rect(i),
                     "Use this plugin again after it crashed",
+                    "modal.plugin_settings.crash_retry",
                 )
                 .or_else(|| {
                     at(
                         self.plugin_toggle_rect(i),
                         "Disable this plugin: it stays installed but is not offered",
+                        "modal.plugin_settings.plugin_toggle",
                     )
                 }),
-                Item::Failed(i) => at(self.retry_rect(i), "Try this file again").or_else(|| {
+                Item::Failed(i) => at(
+                    self.retry_rect(i),
+                    "Try this file again",
+                    "modal.plugin_settings.retry",
+                )
+                .or_else(|| {
                     at(
                         self.retry_no_limit_rect(i),
                         "Scan again with no time limit: a slow plugin gets as long as it needs",
+                        "modal.plugin_settings.retry_no_limit",
                     )
                 }),
                 _ => None,

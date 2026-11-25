@@ -466,15 +466,21 @@ impl HarmonyPickerView {
 
     /// What the control under `pos` does, for its tooltip.
     pub fn help_at(&self, pos: Point) -> Option<Help> {
-        let help = |rect: Rect, text: &'static str| Some(Help::new(rect, text));
+        let help =
+            |rect: Rect, text: &'static str, id: &'static str| Some(Help::new(rect, text).id(id));
         if self.close_rect().contains(pos) {
             return help(
                 self.close_rect(),
                 "Close the picker without changing anything",
+                "modal.close",
             );
         }
         if self.apply_rect().contains(pos) {
-            return help(self.apply_rect(), "Set this (one undo step)");
+            return help(
+                self.apply_rect(),
+                "Set this (one undo step)",
+                "modal.harmony_picker.apply",
+            );
         }
         if self.existing && self.remove_rect().contains(pos) {
             let text = match self.target {
@@ -482,12 +488,13 @@ impl HarmonyPickerView {
                 HarmonyTarget::KeyChange { .. } => "Delete this key change (one undo step)",
                 HarmonyTarget::Chord { .. } => "Delete this chord (one undo step)",
             };
-            return help(self.remove_rect(), text);
+            return help(self.remove_rect(), text, "modal.harmony_picker.remove");
         }
         if self.is_chord() && self.field_rect().contains(pos) {
             return help(
                 self.field_rect(),
                 "Type a chord: Am7, F#m7b5, C/G, Bbmaj7, Dsus4",
+                "modal.harmony_picker.field",
             );
         }
         None

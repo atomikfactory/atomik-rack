@@ -320,28 +320,33 @@ impl ParamSearchView {
 
     /// What the button or value under `pos` does, for its tooltip.
     pub fn help_at(&self, pos: Point) -> Option<Help> {
-        let help = |r: Rect, text: &'static str| Some(Help::new(r, text));
+        let help = |r: Rect, text: &'static str, id: &'static str| Some(Help::new(r, text).id(id));
         match self.hit(pos)? {
-            Hit::Close => help(self.close_rect(), "Close the search"),
+            Hit::Close => help(self.close_rect(), "Close the search", "modal.close"),
             Hit::Reveal => help(
                 self.foot_button(0),
                 "Show the selected parameter in the rack",
+                "modal.param_search.reveal",
             ),
             Hit::Lane => help(
                 self.foot_button(1),
                 "Show the selected parameter's automation lane in the arrangement",
+                "modal.param_search.lane",
             ),
             Hit::Macro => help(
                 self.foot_button(2),
                 "Drive the selected parameter from a macro",
+                "modal.param_search.macro_assign",
             ),
             Hit::Learn => help(
                 self.foot_button(3),
                 "Learn: move a knob or key to control the selected parameter",
+                "modal.param_search.learn",
             ),
             Hit::Value(i) => help(
                 self.value_cell(self.row_rect(i)?),
                 "Value: scroll to change (Shift: fine)",
+                "modal.param_search.value_cell",
             ),
             Hit::Row(_) => None,
         }

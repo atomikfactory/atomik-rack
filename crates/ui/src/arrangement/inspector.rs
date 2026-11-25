@@ -695,7 +695,8 @@ impl ArrangementView {
             return Some(crate::tooltip::Help::new(
                 r,
                 "Match Values: give every selected clip the first clip's length, loop offset and loop length",
-            ));
+            )
+            .id("arrangement.clip_match"));
         }
         let (field, _) = self.insp_field_at(pos)?;
         let r = self.inspector_field_rect(field)?;
@@ -713,6 +714,12 @@ impl ArrangementView {
                 "Length of the loop that repeats inside the clip; zero turns the loop off (an audio clip that plays backwards cannot loop)"
             }
         };
-        Some(crate::tooltip::Help::new(r, text))
+        let id = match field {
+            ClipField::Position => "arrangement.clip_position",
+            ClipField::Length => "arrangement.clip_length",
+            ClipField::Offset => "arrangement.clip_offset",
+            ClipField::Loop => "arrangement.clip_loop",
+        };
+        Some(crate::tooltip::Help::new(r, text).id(id))
     }
 }

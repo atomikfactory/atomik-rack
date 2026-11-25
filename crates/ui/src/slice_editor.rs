@@ -796,6 +796,27 @@ impl SliceEditorView {
     /// What the button or field under `pos` does, for its tooltip (`None` during a gesture and
     /// away from a button).
     pub fn help_at(&self, pos: Point) -> Option<Help> {
+        let help = self.help_text_at(pos)?;
+        let id = match self.hit(pos) {
+            Hit::Close => Some("editor.close"),
+            Hit::Load | Hit::EmptyLoad => Some("editor.slice.load"),
+            Hit::ModeTransients | Hit::ModeGrid => Some("editor.slice.mode"),
+            Hit::Sens => Some("editor.slice.sensitivity"),
+            Hit::Div(_) => Some("editor.slice.division"),
+            Hit::Beats => Some("editor.slice.beats"),
+            Hit::SliceButton => Some("editor.slice.slice"),
+            Hit::ToTrack => Some("editor.slice.to_track"),
+            Hit::Field(_) => Some("editor.slice.field"),
+            Hit::Reverse => Some("editor.slice.reverse"),
+            _ => None,
+        };
+        Some(match id {
+            Some(id) => help.id(id),
+            None => help,
+        })
+    }
+
+    fn help_text_at(&self, pos: Point) -> Option<Help> {
         if !matches!(self.drag, Drag::None) {
             return None;
         }

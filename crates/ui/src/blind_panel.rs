@@ -212,30 +212,34 @@ impl BlindView {
 
     /// What the button under `pos` does, for its tooltip.
     pub fn help_at(&self, pos: Point) -> Option<Help> {
-        let help = |rect: Rect, text: &'static str| Some(Help::new(rect, text));
+        let help =
+            |rect: Rect, text: &'static str, id: &'static str| Some(Help::new(rect, text).id(id));
         if self.close_rect().contains(pos) {
             return help(
                 self.close_rect(),
                 "End the test; the device is left as it was",
+                "modal.close",
             );
         }
         if self.info.result.is_some() {
-            return self
-                .again_rect()
-                .contains(pos)
-                .then(|| Help::new(self.again_rect(), "Run the test again with a new order"));
+            return self.again_rect().contains(pos).then(|| {
+                Help::new(self.again_rect(), "Run the test again with a new order")
+                    .id("modal.blind.again")
+            });
         }
         for slot in 0..2 {
             if self.listen_rect(slot).contains(pos) {
                 return help(
                     self.listen_rect(slot),
                     "Play this sound; which one it is stays hidden",
+                    "modal.blind.listen",
                 );
             }
             if self.pick_rect(slot).contains(pos) {
                 return help(
                     self.pick_rect(slot),
                     "Choose this sound for the trial (hear both first)",
+                    "modal.blind.pick",
                 );
             }
         }
@@ -243,6 +247,7 @@ impl BlindView {
             return help(
                 self.match_rect(),
                 "Level both sounds to the same loudness for the test",
+                "modal.blind.match",
             );
         }
         None

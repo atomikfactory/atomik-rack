@@ -13,12 +13,17 @@
 //! - anything else falls back to the tooltip text, split at its first colon into a title and a
 //!   line, so a control without an entry still answers (the coverage test lists these).
 //!
+//! Every text of a card is translated here, before the panel wraps it into lines: the entries
+//! and the about lines are looked up whole in the language, the sentences a parameter card
+//! builds are looked up one by one, and the name of a device stays as it is.
+//!
 //! The manual sections are the headings of `docs/README.md`, and the "More" link of a card opens
 //! the built-in manual ([`crate::manual`]) at that heading ([`Resolved::manual`]). A section the
 //! manual does not hold falls back to [`section_url`], the address of the page in the browser.
 
 use atomik_core::{ParamDescriptor, Unit};
 use atomik_device_sdk::Registry as Devices;
+use atomik_ui::i18n;
 use atomik_ui::keymap::Keymap;
 use atomik_ui::{Help, HelpCard};
 use serde::Deserialize;
@@ -112,13 +117,25 @@ macro_rules! docs {
 /// The manual sections the help text links to, with the address that opens each in the browser
 /// (the same way Help > Documentation opens the project page). The built-in manual holds all of
 /// them; the address is where a section would open if it did not.
-const SECTIONS: [(&str, &str); 6] = [
+const SECTIONS: [(&str, &str); 18] = [
     ("The main window", docs!("README.md#the-main-window")),
     ("CPU use", docs!("README.md#cpu-use")),
     ("Launcher", docs!("README.md#launcher")),
     ("Webcam control", docs!("README.md#webcam-control")),
     ("Help Mode", docs!("README.md#help-mode")),
     ("Devices", docs!("DEVICES.md")),
+    ("Key and chords", docs!("README.md#key-and-chords")),
+    ("Audio to notes", docs!("README.md#audio-to-notes")),
+    ("Stem separation", docs!("README.md#stem-separation")),
+    ("Vocal mode", docs!("README.md#vocal-mode")),
+    ("Comp mode", docs!("README.md#comp-mode")),
+    ("Keep formants", docs!("README.md#keep-formants")),
+    ("Reference tracks", docs!("README.md#reference-tracks")),
+    ("Controllers", docs!("README.md#controllers")),
+    ("Share a project", docs!("README.md#share-a-project")),
+    ("Backup copies", docs!("README.md#backup-copies")),
+    ("Plugins", docs!("README.md#plugins")),
+    ("Meter panels", docs!("README.md#meter-panels")),
 ];
 
 /// The address of manual section `section` (`None` for a section the manual does not have).
@@ -175,7 +192,8 @@ pub fn resolve(help: &Help, keymap: &Keymap, devices: &Devices) -> Resolved {
 }
 
 fn entry_card(entry: &Entry, shortcut: Option<String>) -> Resolved {
-    let mut card = HelpCard::new(entry.title.clone(), entry.text.clone()).with_shortcut(shortcut);
+    let mut card =
+        HelpCard::new(i18n::tr(&entry.title), i18n::tr(&entry.text)).with_shortcut(shortcut);
     let mut link = (None, None);
     if let Some(section) = &entry.more {
         link = link_of(section);
@@ -193,15 +211,29 @@ fn entry_card(entry: &Entry, shortcut: Option<String>) -> Resolved {
 /// The card of a control without an entry: the tooltip text, split at its first colon into a
 /// title and a line.
 fn fallback_card(help: &Help, shortcut: Option<String>) -> Resolved {
-    let text = help.text.lines().next().unwrap_or_default().trim();
-    let (title, line) = match text.split_once(": ") {
+    let text = i18n::tr(help.text.lines().next().unwrap_or_default().trim());
+    let (title, line) = match split_colon(&text) {
         Some((title, rest)) => (title.to_owned(), sentence(rest)),
-        None => (text.to_owned(), String::new()),
+        None => (text.into_owned(), String::new()),
     };
     Resolved {
         card: HelpCard::new(title, line).with_shortcut(shortcut),
         url: None,
         manual: None,
+    }
+}
+
+/// `text` split at its first colon, the French one with its space before it too.
+fn split_colon(text: &str) -> Option<(&str, &str)> {
+    text.split_once(" : ").or_else(|| text.split_once(": "))
+}
+
+/// `"{name}: {text}"`, written the way the language spaces its colon.
+fn labelled(name: &str, text: &str) -> String {
+    if i18n::language() == atomik_ui::Lang::French {
+        format!("{name} : {text}")
+    } else {
+        format!("{name}: {text}")
     }
 }
 
@@ -228,14 +260,14 @@ fn param_card(
     let param = desc.params.iter().find(|p| p.key == key)?;
     let mut sentences = Vec::new();
     // A toggle or a choice says how it is operated ("Bypass: click to switch on or off").
-    if let Some((_, how)) = help.text.split_once(": ") {
+    if let Some((_, how)) = split_colon(&i18n::tr(&help.text)) {
         sentences.push(sentence(how));
     }
     sentences.push(range_text(param));
     if let Some(about) = book.about(type_id) {
-        sentences.push(format!("{}: {about}", desc.name));
+        sentences.push(labelled(desc.name, &i18n::tr(about)));
     }
-    let mut card = HelpCard::new(param.name, sentences.join(" "));
+    let mut card = HelpCard::new(i18n::tr(param.name), sentences.join(" "));
     let (url, manual) = link_of("Devices");
     if url.is_some() || manual.is_some() {
         card = card.with_more("Devices");
@@ -247,25 +279,30 @@ fn param_card(
 pub fn range_text(p: &ParamDescriptor) -> String {
     const SHOWN: usize = 6;
     match p.unit {
-        Unit::Toggle => "It is either on or off.".to_owned(),
+        Unit::Toggle => i18n::t("It is either on or off.").to_owned(),
         Unit::Choice(names) => {
             let list = names
                 .iter()
                 .take(SHOWN)
-                .copied()
+                .map(|n| i18n::tr(n))
                 .collect::<Vec<_>>()
                 .join(", ");
             if names.len() > SHOWN {
-                format!("{} choices, among them {list}.", names.len())
+                i18n::tf(
+                    "{count} choices, among them {list}.",
+                    &[("count", &names.len().to_string()), ("list", &list)],
+                )
             } else {
-                format!("Choices: {list}.")
+                i18n::tf("Choices: {list}.", &[("list", &list)])
             }
         }
-        _ => format!(
-            "From {} to {}, default {}.",
-            atomik_ui::widget::format_value(p, p.min),
-            atomik_ui::widget::format_value(p, p.max),
-            atomik_ui::widget::format_value(p, p.default),
+        _ => i18n::tf(
+            "From {min} to {max}, default {default}.",
+            &[
+                ("min", &atomik_ui::widget::format_value(p, p.min)),
+                ("max", &atomik_ui::widget::format_value(p, p.max)),
+                ("default", &atomik_ui::widget::format_value(p, p.default)),
+            ],
         ),
     }
 }

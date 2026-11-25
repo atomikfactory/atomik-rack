@@ -211,14 +211,20 @@ impl BackupView {
 
     /// What the control under `pos` does, for its tooltip.
     pub fn help_at(&self, pos: Point) -> Option<Help> {
-        let help = |rect: Rect, text: &'static str| Some(Help::new(rect, text));
+        let help =
+            |rect: Rect, text: &'static str, id: &'static str| Some(Help::new(rect, text).id(id));
         if self.close_rect().contains(pos) {
-            return help(self.close_rect(), "Close the list without opening a copy");
+            return help(
+                self.close_rect(),
+                "Close the list without opening a copy",
+                "modal.close",
+            );
         }
         if self.restore_rect().contains(pos) {
             return help(
                 self.restore_rect(),
                 "Open the chosen copy as a new song; the copy itself is never changed",
+                "modal.backup.restore",
             );
         }
         None

@@ -733,5 +733,1647 @@
     "title": "Engine load",
     "text": "The share of the time for each audio block that the engine uses, with its peak and the devices that use the most. When it nears 100 % the sound can drop out; freezing a heavy track lowers it.",
     "more": "CPU use"
+  },
+  "modal.close": {
+    "title": "Close",
+    "text": "Closes the panel and goes back to the song. Nothing in the song changes unless the panel said it would."
+  },
+  "modal.cancel": {
+    "title": "Cancel",
+    "text": "Leaves the panel without making the change it was offering. Everything stays as it was."
+  },
+  "modal.export.preset": {
+    "title": "Export preset",
+    "text": "Fills in the options of the panel for a purpose: streaming, podcast, video, stems, club, or a preset of your own. You can still change any option afterwards."
+  },
+  "modal.export.preset_save": {
+    "title": "Save preset",
+    "text": "Keeps the current options as a preset of your own under a name you type. It then shows in the preset list."
+  },
+  "modal.export.preset_delete": {
+    "title": "Delete preset",
+    "text": "Deletes the preset shown in the list. Only presets you saved can be deleted, not the built-in ones."
+  },
+  "modal.export.name_ok": {
+    "title": "Save under this name",
+    "text": "Saves the options as a preset under the name in the field. A name that already exists is replaced."
+  },
+  "modal.export.name_cancel": {
+    "title": "Do not save the preset",
+    "text": "Goes back to the options without saving a preset."
+  },
+  "modal.export.file": {
+    "title": "File type",
+    "text": "Chooses the kind of file to write: WAV, AIFF or FLAC without loss, or MP3, AAC and Opus when FFmpeg is installed. The compressed types are smaller but lossy."
+  },
+  "modal.export.depth": {
+    "title": "Bit depth",
+    "text": "Sets the precision of the file: 16-bit like a compact disc, 24-bit, or 32-bit float that keeps the mix untouched. A compressed file ignores it, because the encoder decides."
+  },
+  "modal.export.dither": {
+    "title": "Dither",
+    "text": "Adds a little noise before rounding to 16 bits so quiet detail does not turn into distortion. Triangular is the usual choice; Shaped moves the noise towards the high frequencies."
+  },
+  "modal.export.rate": {
+    "title": "Sample rate",
+    "text": "Writes the file at the sample rate of the project, or converts the render to the rate you pick."
+  },
+  "modal.export.quality": {
+    "title": "Quality",
+    "text": "Sets how a compressed file is encoded: a variable bitrate that follows the music, or a constant bitrate in kilobits per second. Higher is clearer and bigger."
+  },
+  "modal.export.tail": {
+    "title": "Tail",
+    "text": "Keeps what still rings out after the End marker, such as a reverb or a delay, while it is audible. Turn it off to cut the file exactly at the End marker."
+  },
+  "modal.export.dry": {
+    "title": "Stem source",
+    "text": "Writes each stem as it sounds in the mix, with fader, pan and inserts, or as the dry source before its strip. Buses, returns and the master are left out of the dry stems."
+  },
+  "modal.export.range": {
+    "title": "Range",
+    "text": "Chooses what to render: the whole song from the start to the End marker, only the range between the locators, or the time range selected on the lanes."
+  },
+  "modal.export.mono": {
+    "title": "Channels",
+    "text": "Keeps the channels of the project's output, or mixes every channel into one before the file is written."
+  },
+  "modal.export.loudness": {
+    "title": "Loudness",
+    "text": "Leaves the level as the song has it, brings it to a loudness target with a limiter that keeps the peaks under -1 dBTP, or only reports the distance to a target without changing anything."
+  },
+  "modal.export.extra": {
+    "title": "Also write an MP3",
+    "text": "Writes an MP3 from the same render next to the main file. It needs FFmpeg."
+  },
+  "modal.export.start": {
+    "title": "Export",
+    "text": "Renders the song and writes the file, or the files for stems. You can follow the progress and stop it."
+  },
+  "modal.export.cancel": {
+    "title": "Cancel",
+    "text": "Closes the panel without exporting. While a render runs, it stops the render and writes nothing."
+  },
+  "modal.film.cover": {
+    "title": "Film range",
+    "text": "Chooses what the film covers: only the part of the song under the film, after its trim and start, or the whole song with black pictures where the film is not playing."
+  },
+  "modal.film.picture": {
+    "title": "Film picture",
+    "text": "Copies the picture untouched, which is fast but cuts snap to keyframes, or re-encodes it to H.264 so every cut is exact. Auto copies when the cut is at the film's start."
+  },
+  "modal.film.quality": {
+    "title": "Picture quality",
+    "text": "Sets the quality of the H.264 picture: high for a big file that looks like the source, standard for a moderate size, or small for a softer picture. It is not used while the picture is copied."
+  },
+  "modal.film.sound": {
+    "title": "Sound",
+    "text": "Writes the mix as AAC in an MP4 file, or as 24-bit PCM, untouched, in a MOV file."
+  },
+  "modal.film.bitrate": {
+    "title": "AAC bitrate",
+    "text": "Sets the AAC bitrate in kilobits per second: higher is clearer and bigger. It is not used for PCM sound."
+  },
+  "modal.film.own_audio": {
+    "title": "Keep the film's sound",
+    "text": "Keeps the film's own sound as a second audio track after the mix. It is not available when the film has no sound."
+  },
+  "modal.film.start": {
+    "title": "Export film",
+    "text": "Renders the mix and writes the film. It needs FFmpeg."
+  },
+  "modal.film.cancel": {
+    "title": "Cancel",
+    "text": "Closes the panel without exporting. While the job runs, it stops the job and writes nothing."
+  },
+  "modal.song_info.apply": {
+    "title": "Apply",
+    "text": "Makes the texts of the panel the song information: title, artist, notes and the rest. It is one undo step."
+  },
+  "modal.versions.save": {
+    "title": "Save version",
+    "text": "Keeps the song as it is now under the name you type. A named version is never pruned. While a version is being renamed, it gives the version that name instead."
+  },
+  "modal.versions.rename": {
+    "title": "Rename",
+    "text": "Changes the name of the chosen version. An empty name clears it."
+  },
+  "modal.versions.delete": {
+    "title": "Delete",
+    "text": "Deletes the chosen version for good. A protected automatic version must be unprotected first."
+  },
+  "modal.versions.restore": {
+    "title": "Restore",
+    "text": "Opens the chosen version as the song. The song as it is now is kept as a version first, so nothing is lost. While a deletion is being confirmed, it confirms it."
+  },
+  "modal.versions.protect": {
+    "title": "Protect",
+    "text": "Protects an automatic version so that pruning never removes it. While a deletion is being confirmed, it keeps the version instead."
+  },
+  "modal.versions.compare": {
+    "title": "Compare",
+    "text": "Lists what differs between the chosen version and the song now: tracks, devices, clips, tempo, meter, length and mixer strips. Shift-click marks a second version to compare with."
+  },
+  "modal.versions.back": {
+    "title": "Back",
+    "text": "Goes back from the comparison to the list of versions."
+  },
+  "modal.backup.restore": {
+    "title": "Open copy",
+    "text": "Opens the chosen backup copy as a new song. The copy itself is never changed.",
+    "more": "Backup copies"
+  },
+  "modal.share.share": {
+    "title": "Share",
+    "text": "Chooses a file and writes the project, its audio and the credits into it, ready to send.",
+    "more": "Share a project"
+  },
+  "modal.share.box": {
+    "title": "Share options",
+    "text": "Adds a listening copy at -14 LUFS, one WAV file for each mixer strip, or the list of plugins the song uses to the share. Stems make the share bigger.",
+    "more": "Share a project"
+  },
+  "modal.relink.search": {
+    "title": "Search a folder",
+    "text": "Searches a folder for the missing files and relinks what it finds in one undo step."
+  },
+  "modal.relink.project": {
+    "title": "Choose the project folder",
+    "text": "Picks the folder of the original project, the one with its Audio folder, to get its files back."
+  },
+  "modal.relink.locate": {
+    "title": "Locate",
+    "text": "Chooses the file that replaces this missing audio. All the clips that used it are relinked."
+  },
+  "modal.history.row": {
+    "title": "Undo history step",
+    "text": "A step of the song's history. Click it to go back or forward to the song as it was after this step; the step you are on is highlighted."
+  },
+  "modal.command_palette.row": {
+    "title": "Unavailable command",
+    "text": "A command that cannot run right now. Running it tells you why."
+  },
+  "modal.param_search.reveal": {
+    "title": "Show in the rack",
+    "text": "Shows the selected parameter in the rack, on the device that holds it."
+  },
+  "modal.param_search.lane": {
+    "title": "Show automation",
+    "text": "Shows the automation lane of the selected parameter in the arrangement, and makes it if the track has none."
+  },
+  "modal.param_search.macro_assign": {
+    "title": "Assign to a macro",
+    "text": "Drives the selected parameter from a macro, with a range you can set in the Macros panel."
+  },
+  "modal.param_search.learn": {
+    "title": "Learn",
+    "text": "Waits for you to move a knob or press a key on a controller and maps the selected parameter to it."
+  },
+  "modal.param_search.value_cell": {
+    "title": "Parameter value",
+    "text": "Shows the current value of the parameter. Scroll over it to change it; hold Shift for fine steps."
+  },
+  "modal.macros.new_bank": {
+    "title": "New bank",
+    "text": "Starts a new bank of eight macros."
+  },
+  "modal.macros.bank": {
+    "title": "Macro bank",
+    "text": "Shows this bank of eight macros."
+  },
+  "modal.macros.name": {
+    "title": "Macro name",
+    "text": "The name of the macro. Click it to rename the macro."
+  },
+  "modal.macros.bar": {
+    "title": "Macro value",
+    "text": "The value of the macro. Click to set it; every parameter assigned to the macro follows."
+  },
+  "modal.macros.learn": {
+    "title": "Learn",
+    "text": "Waits for you to move a knob or press a key on a controller and maps the macro to it."
+  },
+  "modal.macros.clear": {
+    "title": "Clear the macro",
+    "text": "Removes every parameter this macro drives."
+  },
+  "modal.macros.target": {
+    "title": "Target parameter",
+    "text": "The parameter the macro drives. Click to show it in the rack."
+  },
+  "modal.macros.min": {
+    "title": "Value at minimum",
+    "text": "The value of the parameter when the macro is at its minimum. Drag it, click to raise it, right-click to lower it, or middle-click to type a value."
+  },
+  "modal.macros.max": {
+    "title": "Value at maximum",
+    "text": "The value of the parameter when the macro is at its maximum. Drag it, click to raise it, right-click to lower it, or middle-click to type a value."
+  },
+  "modal.macros.curve": {
+    "title": "Curve",
+    "text": "The shape of the travel between the two values: linear, exponential with a slow start, or logarithmic with a fast start."
+  },
+  "modal.macros.smooth": {
+    "title": "Smoothing",
+    "text": "The glide time of a live move of the macro. Click for a longer time, right-click or use the wheel to step."
+  },
+  "modal.macros.invert": {
+    "title": "Invert direction",
+    "text": "Reverses the direction of the parameter, so it falls while the macro rises."
+  },
+  "modal.macros.remove": {
+    "title": "Remove",
+    "text": "Stops the macro driving this parameter."
+  },
+  "modal.mod_matrix.picker": {
+    "title": "Source and target",
+    "text": "Chooses what moves what: the source of the device, the parameter it moves, or a second source that scales the amount.",
+    "more": "Devices"
+  },
+  "modal.mod_matrix.amount": {
+    "title": "Amount",
+    "text": "How far the source moves the target, from -100 to +100 percent. Right-click sets it to zero.",
+    "more": "Devices"
+  },
+  "modal.mod_matrix.clear": {
+    "title": "Clear slot",
+    "text": "Clears this slot of the matrix.",
+    "more": "Devices"
+  },
+  "modal.midi_maps.clear": {
+    "title": "Clear all",
+    "text": "Removes every MIDI mapping of the project.",
+    "more": "Controllers"
+  },
+  "modal.midi_maps.import": {
+    "title": "Import",
+    "text": "Applies a mapping preset file to this project.",
+    "more": "Controllers"
+  },
+  "modal.midi_maps.export": {
+    "title": "Export",
+    "text": "Saves these mappings as a preset file.",
+    "more": "Controllers"
+  },
+  "modal.midi_maps.export_device": {
+    "title": "Export for a device",
+    "text": "Saves the mappings of the selected device as a preset that fits any device of its type.",
+    "more": "Controllers"
+  },
+  "modal.midi_maps.port": {
+    "title": "Input port",
+    "text": "The input port the control must come from. Click for the next port, right-click for the previous one.",
+    "more": "Controllers"
+  },
+  "modal.midi_maps.channel": {
+    "title": "MIDI channel",
+    "text": "The MIDI channel the control must be on. Click for the next channel, right-click for the previous one.",
+    "more": "Controllers"
+  },
+  "modal.midi_maps.remove": {
+    "title": "Remove mapping",
+    "text": "Removes this mapping.",
+    "more": "Controllers"
+  },
+  "modal.midi_maps.learn": {
+    "title": "Learn",
+    "text": "Waits for you to move a knob or press a key and uses it as the new source of this control.",
+    "more": "Controllers"
+  },
+  "modal.midi_maps.consume": {
+    "title": "Consume",
+    "text": "When on, the message is not passed on to other mappings.",
+    "more": "Controllers"
+  },
+  "modal.midi_maps.pickup": {
+    "title": "Pickup",
+    "text": "When on, the control waits until the source passes its current value, so it does not jump.",
+    "more": "Controllers"
+  },
+  "modal.midi_maps.invert": {
+    "title": "Invert direction",
+    "text": "Reverses the direction of the control.",
+    "more": "Controllers"
+  },
+  "modal.midi_maps.mode": {
+    "title": "Mode",
+    "text": "How the source is read: absolute, or one of the relative encoder modes. Click for the next mode, right-click for the previous one.",
+    "more": "Controllers"
+  },
+  "modal.midi_maps.max": {
+    "title": "Highest value",
+    "text": "The highest value the control reaches. Click to raise it, right-click to lower it.",
+    "more": "Controllers"
+  },
+  "modal.midi_maps.min": {
+    "title": "Lowest value",
+    "text": "The lowest value the control reaches. Click to raise it, right-click to lower it.",
+    "more": "Controllers"
+  },
+  "modal.bass_read.measure": {
+    "title": "Measure the bass",
+    "text": "Renders the chosen strip and reads how much of its bass a small speaker keeps. While it runs, the same button stops the measurement."
+  },
+  "modal.bass_read.list": {
+    "title": "Strip to read",
+    "text": "Chooses the master or a track. The meter reads the strip as it sounds in the mix."
+  },
+  "modal.bass_read.meter": {
+    "title": "Bass kept",
+    "text": "Shows how much of the energy of the bass note a small speaker plays through its harmonics. A low figure means the bass vanishes on a small speaker."
+  },
+  "modal.blind.again": {
+    "title": "Run again",
+    "text": "Runs the test again with the two sounds in a new order."
+  },
+  "modal.blind.listen": {
+    "title": "Listen",
+    "text": "Plays one of the two sounds without saying which it is."
+  },
+  "modal.blind.pick": {
+    "title": "Choose this sound",
+    "text": "Chooses this sound for the trial. Hear both first."
+  },
+  "modal.blind.match": {
+    "title": "Match level",
+    "text": "Levels both sounds to the same loudness, so the test is about the sound and not the volume."
+  },
+  "modal.chords.replace": {
+    "title": "Replace",
+    "text": "Puts these chords in the chord lane over the span, replacing the chords it has there. It is one undo step."
+  },
+  "modal.chords.merge": {
+    "title": "Merge",
+    "text": "Puts these chords in the lane only where it has none. It is one undo step."
+  },
+  "modal.chords.key": {
+    "title": "Set the key too",
+    "text": "Also sets the song key the audio points to, in the same undo step."
+  },
+  "modal.chords.strip": {
+    "title": "Chords found",
+    "text": "The chords found in the audio. A dimmed chord is a less sure guess."
+  },
+  "modal.color_picker.apply": {
+    "title": "Use this colour",
+    "text": "Uses the colour you picked. It is one undo step."
+  },
+  "modal.color_picker.square": {
+    "title": "Saturation and brightness",
+    "text": "Picks the saturation across and the brightness down for the hue chosen on the strip."
+  },
+  "modal.color_picker.strip": {
+    "title": "Hue",
+    "text": "Picks the hue of the colour."
+  },
+  "modal.color_picker.swatches": {
+    "title": "Colours of the menu",
+    "text": "The colours of the colour menu. Click one to use it as it is."
+  },
+  "modal.delivery.tab": {
+    "title": "Delivery page",
+    "text": "Switches between the loudness targets of the master and the trimming of the shortest peaks of an audio clip."
+  },
+  "modal.delivery.main": {
+    "title": "Measure or dip",
+    "text": "On the targets page it renders the master and measures its loudness and true peak, and the same button stops the measurement. On the peaks page it dips the chosen peak by one step."
+  },
+  "modal.delivery.action": {
+    "title": "Apply",
+    "text": "On the targets page it sets the master limiter's ceiling and the target of the export report. On the peaks page it dips every peak above the threshold."
+  },
+  "modal.delivery.list": {
+    "title": "Targets and peaks",
+    "text": "On the targets page, choose a target to see the gain it would apply to the measured master. On the peaks page, the list shows the highest peaks of the clip and the headroom you get by trimming down to each."
+  },
+  "modal.delivery.row": {
+    "title": "Target verdict",
+    "text": "What this target would do to the master: the gain it would apply and what that means for the peaks."
+  },
+  "modal.delivery.threshold_down": {
+    "title": "Threshold",
+    "text": "Moves the peak threshold in small steps. Peaks above it are the ones that get dipped."
+  },
+  "modal.delivery.step": {
+    "title": "Dip size",
+    "text": "How much one dip takes off a peak: a few tenths of a decibel."
+  },
+  "modal.delivery.width": {
+    "title": "Dip width",
+    "text": "How many samples each side of a peak a dip spreads over. It is only a few samples, so the change is not heard."
+  },
+  "modal.delivery.rescan": {
+    "title": "Read again",
+    "text": "Reads the selected audio clip again to list its peaks."
+  },
+  "modal.kick_bass.pick": {
+    "title": "Kick and bass tracks",
+    "text": "Picks the track that plays the kick drum and the track that plays the sub bass. The check compares the two."
+  },
+  "modal.kick_bass.run": {
+    "title": "Check the tracks",
+    "text": "Renders the two tracks and checks how they sit together. While it runs, the same button stops the check."
+  },
+  "modal.kick_bass.apply": {
+    "title": "Apply the change",
+    "text": "Makes the suggested change to the song, such as a duck from the kick. It is one undo step."
+  },
+  "modal.masking.analyse": {
+    "title": "Analyse",
+    "text": "Renders the channels and ranks where two of them fight for the same frequencies. While it runs, the same button stops the analysis."
+  },
+  "modal.masking.demask": {
+    "title": "De-mask",
+    "text": "Keys a Dynamic EQ band on the covered track from the other track, so it gives way only when needed. It is one undo step."
+  },
+  "modal.masking.chart": {
+    "title": "Clash chart",
+    "text": "Shows where the tracks clash: shaded bands are the clashes. Click a band to de-mask it, or click a clash in the list to move the playhead to its start."
+  },
+  "modal.mixcheck.run": {
+    "title": "Check the mix",
+    "text": "Renders the song and lists what the mix check finds. While it runs, the same button stops the check."
+  },
+  "modal.mixcheck.fix": {
+    "title": "Apply the fix",
+    "text": "Applies the fix for the chosen finding. It is one undo step."
+  },
+  "modal.mixcheck.tool": {
+    "title": "Open the tool",
+    "text": "Opens the tool that works on the chosen finding, so you can fix it by hand."
+  },
+  "modal.mixcheck.list": {
+    "title": "Findings",
+    "text": "The findings of the check. Click one to choose it; a finding with a time also moves the playhead there."
+  },
+  "modal.repetition.find": {
+    "title": "Find again",
+    "text": "Searches the song again for ideas that repeat three times or more without a change."
+  },
+  "modal.repetition.list": {
+    "title": "Repeated ideas",
+    "text": "The ideas that repeat. Click one to choose it and move the playhead to where it starts."
+  },
+  "modal.repetition.choice": {
+    "title": "Variation",
+    "text": "Makes a variation of the repeated idea, in one undo step. Some entries are only advice: click them to read the advice below."
+  },
+  "modal.reverb_send.add": {
+    "title": "Add",
+    "text": "Adds the send, the return, the EQ and the reverb in one undo step."
+  },
+  "modal.sound_analyst.open": {
+    "title": "Open a file",
+    "text": "Picks an audio file to analyse, or you can drop one on the panel. While it analyses, the same button stops it."
+  },
+  "modal.sound_analyst.match": {
+    "title": "Compare",
+    "text": "Renders the patch as it is now on the same note and compares its curves with those of the file."
+  },
+  "modal.sound_analyst.make": {
+    "title": "Make the patch",
+    "text": "Adds the proposed patch on a new track. It is one undo step."
+  },
+  "modal.sound_analyst.curve": {
+    "title": "Analysis curve",
+    "text": "A curve measured on the file: the loudness over time, the brightness over time, or the pitch over time."
+  },
+  "modal.zone.listen": {
+    "title": "Listen",
+    "text": "Switches between the mix and the selected reference, level matched, so you can compare them by ear.",
+    "more": "Reference tracks"
+  },
+  "modal.zone.refresh": {
+    "title": "Measure again",
+    "text": "Renders the mix again and measures it against the references.",
+    "more": "Reference tracks"
+  },
+  "modal.zone.match": {
+    "title": "Match section",
+    "text": "Matches the reference to the mix over the time selection or the loop. While it runs, the same button stops measuring.",
+    "more": "Reference tracks"
+  },
+  "modal.zone.ref": {
+    "title": "Reference",
+    "text": "Selects this reference track to compare with the mix.",
+    "more": "Reference tracks"
+  },
+  "modal.zone.trim": {
+    "title": "Reference trim",
+    "text": "Raises or lowers the level of the reference in small steps, or takes its trim back to zero.",
+    "more": "Reference tracks"
+  },
+  "modal.quantize.apply": {
+    "title": "Quantize",
+    "text": "Quantizes the selection with these settings. It is one undo step."
+  },
+  "modal.quantize.live": {
+    "title": "Live groove",
+    "text": "Plays the selected clips with the chosen groove at the strength above. Their notes are not changed."
+  },
+  "modal.quantize.clear_live": {
+    "title": "Clear live groove",
+    "text": "Gives the selected clips back to the groove of their track."
+  },
+  "modal.quantize.rename": {
+    "title": "Rename groove",
+    "text": "Renames the chosen groove of this song. Enter does it too."
+  },
+  "modal.quantize.name": {
+    "title": "Groove name",
+    "text": "The name of the chosen groove of this song. Type a new name to change it."
+  },
+  "modal.quantize.extract": {
+    "title": "Extract groove",
+    "text": "Measures the feel of the selected clip and keeps it as a new groove."
+  },
+  "modal.quantize.midi": {
+    "title": "Groove from a file",
+    "text": "Measures the feel of a MIDI file as a new groove. Dropping a MIDI file on the panel does the same."
+  },
+  "modal.quantize.delete": {
+    "title": "Delete groove",
+    "text": "Deletes this groove from the song."
+  },
+  "modal.scale.apply": {
+    "title": "Scale",
+    "text": "Scales the selected clips to this tempo. It is one undo step."
+  },
+  "modal.silence.apply": {
+    "title": "Strip silence",
+    "text": "Cuts the silences out of the selected clips with these settings. It is one undo step."
+  },
+  "modal.warp.apply": {
+    "title": "Apply",
+    "text": "Applies these warp settings to the selected clips. It is one undo step."
+  },
+  "modal.warp.detect": {
+    "title": "Detect tempo",
+    "text": "Estimates the source tempo from the transients of the clip."
+  },
+  "modal.warp.reset": {
+    "title": "Unstretched tempo",
+    "text": "Turns warp off and clears the markers, so the clip plays its audio as it is. It is one undo step."
+  },
+  "modal.warp.factor": {
+    "title": "Halve or double",
+    "text": "Halves or doubles the source tempo, when the detection found half or twice the real tempo."
+  },
+  "modal.notes.apply": {
+    "title": "Extract notes",
+    "text": "Turns the selected audio clips into notes, one undo step each. While it runs, the same button stops it and the notes already added stay.",
+    "more": "Audio to notes"
+  },
+  "modal.harmony_picker.apply": {
+    "title": "Set chord or key",
+    "text": "Sets the chord, key change or song key you typed. It is one undo step.",
+    "more": "Key and chords"
+  },
+  "modal.harmony_picker.field": {
+    "title": "Chord",
+    "text": "Type a chord such as Am7, F#m7b5, C/G, Bbmaj7 or Dsus4.",
+    "more": "Key and chords"
+  },
+  "modal.harmony_picker.remove": {
+    "title": "Remove",
+    "text": "Takes the song key away, or deletes the key change or the chord you are editing. It is one undo step.",
+    "more": "Key and chords"
+  },
+  "modal.stems.stem": {
+    "title": "Stem to make",
+    "text": "Check the stems you want. Each checked stem becomes a track of its own.",
+    "more": "Stem separation"
+  },
+  "modal.stems.mute": {
+    "title": "Mute the source clip",
+    "text": "Mutes the clip that was separated, so that only the stems play.",
+    "more": "Stem separation"
+  },
+  "modal.stems.separate": {
+    "title": "Separate the stems",
+    "text": "Makes a track for each stem that is checked.",
+    "more": "Stem separation"
+  },
+  "modal.stems.cancel": {
+    "title": "Cancel the separation",
+    "text": "Closes the dialog, or stops the separation that is running.",
+    "more": "Stem separation"
+  },
+  "modal.stems.close": {
+    "title": "Close the message",
+    "text": "Closes this message.",
+    "more": "Stem separation"
+  },
+  "modal.camera.download": {
+    "title": "Download",
+    "text": "Downloads the two model files once and turns the camera control on.",
+    "more": "Webcam control"
+  },
+  "modal.camera.cancel": {
+    "title": "Do not download",
+    "text": "Closes the dialog without downloading anything.",
+    "more": "Webcam control"
+  },
+  "modal.camera.retry": {
+    "title": "Try the download again",
+    "text": "Tries the download again.",
+    "more": "Webcam control"
+  },
+  "modal.camera.close": {
+    "title": "Close the message",
+    "text": "Closes this message.",
+    "more": "Webcam control"
+  },
+  "modal.camera.bounds": {
+    "title": "Camera preview",
+    "text": "Shows what the camera sees, with the frame rate and the time the models take for each frame.",
+    "more": "Webcam control"
+  },
+  "modal.video.size": {
+    "title": "Picture size",
+    "text": "Chooses how large the film picture is shown."
+  },
+  "modal.video.timecode": {
+    "title": "Timecode",
+    "text": "Shows the timecode of the picture over it."
+  },
+  "modal.video.frame_number": {
+    "title": "Frame number",
+    "text": "Shows the frame number of the picture over it."
+  },
+  "modal.plugin_manager.search": {
+    "title": "Search",
+    "text": "Finds plugins by name, vendor, path or tag.",
+    "more": "Plugins"
+  },
+  "modal.plugin_manager.format": {
+    "title": "Format filter",
+    "text": "Shows only VST3 or only CLAP plugins. Click to step through the choices.",
+    "more": "Plugins"
+  },
+  "modal.plugin_manager.status": {
+    "title": "Status filter",
+    "text": "Shows the plugins of one status, such as working, failed or disabled. Click to step through them.",
+    "more": "Plugins"
+  },
+  "modal.plugin_manager.category": {
+    "title": "Category filter",
+    "text": "Shows the plugins of one category. Click to step through the categories.",
+    "more": "Plugins"
+  },
+  "modal.plugin_manager.tag_filter": {
+    "title": "Tag filter",
+    "text": "Shows the plugins that carry one tag. Click to step through the tags.",
+    "more": "Plugins"
+  },
+  "modal.plugin_manager.add_tag": {
+    "title": "Add tag",
+    "text": "Tags the chosen plugins with the text in the field.",
+    "more": "Plugins"
+  },
+  "modal.plugin_manager.disable": {
+    "title": "Disable plugins",
+    "text": "Hides the chosen plugins from the browser. Projects that use them still load.",
+    "more": "Plugins"
+  },
+  "modal.plugin_manager.try_again": {
+    "title": "Try again",
+    "text": "Takes the quarantined plugins out of quarantine and scans the failed files again.",
+    "more": "Plugins"
+  },
+  "modal.plugin_manager.folder": {
+    "title": "Show the file",
+    "text": "Opens the file manager at the file of the chosen plugin.",
+    "more": "Plugins"
+  },
+  "modal.plugin_manager.rescan_selected": {
+    "title": "Scan again",
+    "text": "Scans the files of the chosen plugins again.",
+    "more": "Plugins"
+  },
+  "modal.plugin_manager.no_limit": {
+    "title": "Scan with no time limit",
+    "text": "Scans the file again with no time limit, so a slow plugin gets as long as it needs. Cancel stops it.",
+    "more": "Plugins"
+  },
+  "modal.plugin_manager.rescan_all": {
+    "title": "Scan all",
+    "text": "Scans every plugin folder again. While a scan runs, the same button stops it.",
+    "more": "Plugins"
+  },
+  "modal.plugin_manager.tag_chip": {
+    "title": "Tag",
+    "text": "A tag of the plugin. Click it to take the tag off.",
+    "more": "Plugins"
+  },
+  "modal.plugin_manager.column": {
+    "title": "List column",
+    "text": "Sorts the list by this column. Click again to reverse the order. The star column puts the favourites first.",
+    "more": "Plugins"
+  },
+  "modal.plugin_manager.status_cell": {
+    "title": "Plugin status",
+    "text": "The status of the plugin. Point at it to read why a plugin did not load.",
+    "more": "Plugins"
+  },
+  "modal.plugin_manager.process_cell": {
+    "title": "Plugin process",
+    "text": "Where the plugin runs: the default from Settings, its own process, or a process shared with others. Click to step through the choices.",
+    "more": "Plugins"
+  },
+  "modal.plugin_manager.star_cell": {
+    "title": "Favourite",
+    "text": "Marks the plugin as a favourite. Favourites are listed first in the browser.",
+    "more": "Plugins"
+  },
+  "modal.plugin_settings.enable": {
+    "title": "Third-party plugins",
+    "text": "Turns third-party plugins on or off. When off, no plugin is scanned or loaded.",
+    "more": "Plugins"
+  },
+  "modal.plugin_settings.editors": {
+    "title": "Editors",
+    "text": "Chooses where plugin editors open: each in a window of its own, or inside the Atomik window where the system allows it.",
+    "more": "Plugins"
+  },
+  "modal.plugin_settings.sandbox_toggle": {
+    "title": "Sandbox",
+    "text": "Runs each plugin in its own process, so a crash cannot take Atomik down.",
+    "more": "Plugins"
+  },
+  "modal.plugin_settings.process_button": {
+    "title": "Process sharing",
+    "text": "Chooses how plugins share processes. When they share one, a crash stops every plugin in it.",
+    "more": "Plugins"
+  },
+  "modal.plugin_settings.add_folder": {
+    "title": "Add folder",
+    "text": "Adds a folder to search for plugins.",
+    "more": "Plugins"
+  },
+  "modal.plugin_settings.folder_remove": {
+    "title": "Remove folder",
+    "text": "Removes this folder from the places searched for plugins.",
+    "more": "Plugins"
+  },
+  "modal.plugin_settings.scan": {
+    "title": "Scan",
+    "text": "Scans the folders for new and changed plugins.",
+    "more": "Plugins"
+  },
+  "modal.plugin_settings.full_rescan": {
+    "title": "Scan all again",
+    "text": "Scans every plugin again, even the ones that were scanned before.",
+    "more": "Plugins"
+  },
+  "modal.plugin_settings.rescan_failed": {
+    "title": "Retry failed",
+    "text": "Tries the files that failed again.",
+    "more": "Plugins"
+  },
+  "modal.plugin_settings.timeout_dec": {
+    "title": "Shorter time",
+    "text": "Allows less time per plugin during a scan.",
+    "more": "Plugins"
+  },
+  "modal.plugin_settings.timeout_inc": {
+    "title": "Longer time",
+    "text": "Allows more time per plugin during a scan.",
+    "more": "Plugins"
+  },
+  "modal.plugin_settings.cancel_scan": {
+    "title": "Stop the scan",
+    "text": "Stops the scan that is running.",
+    "more": "Plugins"
+  },
+  "modal.plugin_settings.crash_retry": {
+    "title": "Use again",
+    "text": "Uses this plugin again after it crashed.",
+    "more": "Plugins"
+  },
+  "modal.plugin_settings.plugin_toggle": {
+    "title": "Disable plugin",
+    "text": "Disables this plugin: it stays installed but is not offered.",
+    "more": "Plugins"
+  },
+  "modal.plugin_settings.retry": {
+    "title": "Try again",
+    "text": "Tries this file again.",
+    "more": "Plugins"
+  },
+  "modal.plugin_settings.retry_no_limit": {
+    "title": "No time limit",
+    "text": "Scans the file again with no time limit, so a slow plugin gets as long as it needs.",
+    "more": "Plugins"
+  },
+  "modal.plugin_learn.automation": {
+    "title": "Learn automation",
+    "text": "Touch a control in the plugin and its automation lane is shown in the arrangement.",
+    "more": "Plugins"
+  },
+  "modal.plugin_learn.midi": {
+    "title": "Learn MIDI",
+    "text": "Touch a control in the plugin, then move a hardware control to map it.",
+    "more": "Plugins"
+  },
+  "modal.plugin_learn.dock": {
+    "title": "Dock the editor",
+    "text": "Moves the plugin editor into the Atomik window, or out into a window of its own.",
+    "more": "Plugins"
+  },
+  "modal.plugin_learn.shut": {
+    "title": "Close the editor",
+    "text": "Closes the plugin editor. The plugin keeps playing.",
+    "more": "Plugins"
+  },
+  "modal.plugin_params.dec": {
+    "title": "Previous value",
+    "text": "Steps the parameter to its previous value.",
+    "more": "Plugins"
+  },
+  "modal.plugin_params.inc": {
+    "title": "Next value",
+    "text": "Steps the parameter to its next value.",
+    "more": "Plugins"
+  },
+  "modal.plugin_params.toggle": {
+    "title": "Parameter switch",
+    "text": "Switches this parameter on or off.",
+    "more": "Plugins"
+  },
+  "modal.plugin_params.pin": {
+    "title": "Pin parameter",
+    "text": "Pins this parameter to the device panel in the rack.",
+    "more": "Plugins"
+  },
+  "modal.plugin_params.auto": {
+    "title": "Parameter automation",
+    "text": "Shows the automation lane of this parameter in the arrangement.",
+    "more": "Plugins"
+  },
+  "modal.plugin_params.map": {
+    "title": "Macro assignment",
+    "text": "Drives this parameter from a macro.",
+    "more": "Plugins"
+  },
+  "modal.plugin_params.cv": {
+    "title": "CV",
+    "text": "Drives this parameter from one of the CV inputs of the device.",
+    "more": "Plugins"
+  },
+  "modal.plugin_params.preset_prev": {
+    "title": "Previous preset",
+    "text": "Loads the previous preset of the plugin.",
+    "more": "Plugins"
+  },
+  "modal.plugin_params.preset_next": {
+    "title": "Next preset",
+    "text": "Loads the next preset of the plugin.",
+    "more": "Plugins"
+  },
+  "modal.plugin_params.preset_name": {
+    "title": "Preset",
+    "text": "Chooses a preset of this plugin from its list.",
+    "more": "Plugins"
+  },
+  "editor.close": {
+    "title": "Close the editor",
+    "text": "Closes this editor and goes back to the song. Your edits are already in the song and in the undo history."
+  },
+  "editor.audio.title": {
+    "title": "Audio file name",
+    "text": "The name of the audio file of the clip. Double-click it to rename the file."
+  },
+  "editor.audio.mode": {
+    "title": "Editor mode",
+    "text": "Chooses what the editor does: Overview looks at the clip and its markers, Slice edits the warp markers, Vocal edits the pitch and timing of notes, and Comp chooses which take plays where.",
+    "more": "Vocal mode"
+  },
+  "editor.audio.stretch": {
+    "title": "Stretch markers",
+    "text": "Dragging a warp marker stretches the audio around it, so the sound before and after it changes speed."
+  },
+  "editor.audio.slide": {
+    "title": "Slide",
+    "text": "Dragging a warp marker slides it along the audio without changing the sound."
+  },
+  "editor.audio.revert": {
+    "title": "Revert markers",
+    "text": "Removes every warp marker, so the clip plays at its natural speed."
+  },
+  "editor.audio.split": {
+    "title": "Split at markers",
+    "text": "Cuts the clip into separate clips at every marker."
+  },
+  "editor.audio.to_slicer": {
+    "title": "To slicer",
+    "text": "Makes a loop slicer that slices the clip at its markers, so each slice can be played from a key."
+  },
+  "editor.audio.sensitivity": {
+    "title": "Sensitivity",
+    "text": "Sets how readily the editor finds transients, or notes in Vocal mode. A higher setting finds more of them, a lower one finds fewer."
+  },
+  "editor.audio.add_all": {
+    "title": "Add all transients",
+    "text": "Puts a marker on every detected transient."
+  },
+  "editor.audio.speaker": {
+    "title": "Speaker tool",
+    "text": "Press on the clip to hear it exactly as it is in its file, before any warp or edit, and release to stop."
+  },
+  "editor.audio.correct": {
+    "title": "Correct pitch",
+    "text": "Brings the selected notes to the nearest semitone, or to the nearest note of the scale when Scale is on.",
+    "more": "Vocal mode"
+  },
+  "editor.audio.flatten": {
+    "title": "Flatten",
+    "text": "Flattens the pitch drift of the selected notes, so each note holds a steadier pitch.",
+    "more": "Vocal mode"
+  },
+  "editor.audio.flatten_value": {
+    "title": "Flatten amount",
+    "text": "How much Flatten straightens the notes. Drag up or down to change it.",
+    "more": "Vocal mode"
+  },
+  "editor.audio.reset": {
+    "title": "Reset",
+    "text": "Removes the edits of the selected notes, or of every note when none is selected.",
+    "more": "Vocal mode"
+  },
+  "editor.audio.scale": {
+    "title": "Scale",
+    "text": "When on, pitch correction goes to the notes of the song key instead of every semitone.",
+    "more": "Vocal mode"
+  },
+  "editor.audio.cancel": {
+    "title": "Stop analysing",
+    "text": "Stops finding the notes of the clip.",
+    "more": "Vocal mode"
+  },
+  "editor.audio.crossfade": {
+    "title": "Crossfade length",
+    "text": "Sets the length of the crossfade at the cuts of the comp: shorter or longer.",
+    "more": "Comp mode"
+  },
+  "editor.audio.flatten_comp": {
+    "title": "Flatten the comp",
+    "text": "Renders the comp to one new audio file and replaces the takes with it.",
+    "more": "Comp mode"
+  },
+  "editor.audio.keep_formants": {
+    "title": "Keep formants",
+    "text": "Keeps the formants of the sound while it is transposed, so a voice does not turn into a cartoon. It is for the Tonal mode.",
+    "more": "Keep formants"
+  },
+  "editor.audio.formant": {
+    "title": "Formant shift",
+    "text": "Moves the formants down or up in semitones, to change the character of the voice without changing its pitch.",
+    "more": "Keep formants"
+  },
+  "editor.audio.link_stereo": {
+    "title": "Link stereo",
+    "text": "Keeps the phase between left and right while the clip is stretched. It is for the Tonal mode.",
+    "more": "Keep formants"
+  },
+  "editor.sample.load": {
+    "title": "Load a file",
+    "text": "Loads an audio file as a new zone of the sampler."
+  },
+  "editor.sample.loop_mode": {
+    "title": "Loop mode",
+    "text": "Chooses how the sample loops: not at all, forward between the loop markers, or back and forth between them."
+  },
+  "editor.sample.trigger": {
+    "title": "Trigger mode",
+    "text": "Gate plays the sample while the key is held. One shot plays it to its end after a key press."
+  },
+  "editor.sample.page": {
+    "title": "Zone page",
+    "text": "Switches between the zone fields and the page with group, velocity crossfade, round-robin and the zone envelope and filter."
+  },
+  "editor.sample.field": {
+    "title": "Zone field",
+    "text": "A setting of the zone. Drag or scroll to change it; double-click to reset it."
+  },
+  "editor.slice.load": {
+    "title": "Load a file to slice",
+    "text": "Loads an audio file to slice."
+  },
+  "editor.slice.mode": {
+    "title": "Slice mode",
+    "text": "Slices at the transients that the sensitivity finds, or on an even grid."
+  },
+  "editor.slice.sensitivity": {
+    "title": "Sensitivity",
+    "text": "How many transients are found. Drag or scroll to change it; double-click to reset it."
+  },
+  "editor.slice.division": {
+    "title": "Grid division",
+    "text": "How many slices there are for each beat of the grid."
+  },
+  "editor.slice.beats": {
+    "title": "Beats",
+    "text": "The length of the loop in beats. Drag or scroll to change it; double-click to reset it."
+  },
+  "editor.slice.slice": {
+    "title": "Slice the loop",
+    "text": "Slices the loop and maps the slices to keys, so each slice plays from its own key."
+  },
+  "editor.slice.to_track": {
+    "title": "To track",
+    "text": "Lays the slices out as notes on a new track, in their original order."
+  },
+  "editor.slice.field": {
+    "title": "Slice field",
+    "text": "A setting of the selected slice. Drag or scroll to change it; double-click to reset it."
+  },
+  "editor.slice.reverse": {
+    "title": "Reverse",
+    "text": "Plays the selected slice backwards."
+  },
+  "editor.wavetable.safe": {
+    "title": "Align fundamentals",
+    "text": "Aligns the fundamental of every frame when the table is stored, so a morph keeps its level."
+  },
+  "editor.wavetable.add": {
+    "title": "Add a frame",
+    "text": "Adds a frame after this one: the blend of this frame and the next."
+  },
+  "editor.wavetable.dup": {
+    "title": "Duplicate",
+    "text": "Duplicates this frame."
+  },
+  "editor.wavetable.del": {
+    "title": "Delete",
+    "text": "Deletes this frame. The last one stays."
+  },
+  "editor.wavetable.up": {
+    "title": "Move earlier",
+    "text": "Moves this frame earlier in the table."
+  },
+  "editor.wavetable.down": {
+    "title": "Move later",
+    "text": "Moves this frame later in the table."
+  },
+  "editor.wavetable.canvas": {
+    "title": "Draw the frame",
+    "text": "Draw the wave of the frame: the pointer sets the samples it crosses."
+  },
+  "editor.wavetable.level": {
+    "title": "Harmonic levels",
+    "text": "The level of each harmonic of this frame. Drag across the bars to change them."
+  },
+  "editor.wavetable.phase": {
+    "title": "Harmonic phases",
+    "text": "The phase of each harmonic. A full height is half a cycle either way."
+  },
+  "editor.wavetable.norm": {
+    "title": "Normalise",
+    "text": "Scales the frame so it peaks at 1."
+  },
+  "editor.wavetable.dc": {
+    "title": "Remove offset",
+    "text": "Takes the offset out of the frame."
+  },
+  "editor.wavetable.invert": {
+    "title": "Invert",
+    "text": "Flips the polarity of the frame."
+  },
+  "editor.wavetable.reverse": {
+    "title": "Reverse",
+    "text": "Plays the cycle of the frame backwards."
+  },
+  "editor.wavetable.smooth": {
+    "title": "Smooth",
+    "text": "Rounds off the corners of the frame."
+  },
+  "editor.wavetable.all": {
+    "title": "Apply to all",
+    "text": "Applies Normalise, Remove offset, Invert, Reverse and Smooth to every frame."
+  },
+  "editor.wavetable.cut": {
+    "title": "Cut again",
+    "text": "Cuts the sample again with one cycle per frame, at the length that was found."
+  },
+  "editor.wavetable.dedupe": {
+    "title": "Drop copies",
+    "text": "Drops silent frames and frames that are near copies of the one before."
+  },
+  "editor.wavetable.edge": {
+    "title": "Cycle edge",
+    "text": "Makes the end of each cycle meet its start by cross-fading the overlap."
+  },
+  "editor.wavetable.edge_amount": {
+    "title": "Edge overlap",
+    "text": "The overlap of the edge in samples. Click for the next value."
+  },
+  "editor.wavetable.use": {
+    "title": "Use in oscillator 1",
+    "text": "Makes oscillator 1 play this table. Its table choice becomes imported."
+  },
+  "editor.wavetable.frame": {
+    "title": "Table frame",
+    "text": "A key frame of the table. Click it to select it."
+  },
+  "editor.seq.slot": {
+    "title": "Pattern",
+    "text": "Chooses the pattern to edit."
+  },
+  "editor.seq.pattern_button": {
+    "title": "Pattern tools",
+    "text": "Adds an empty pattern, adds a copy of the edited one, removes it, copies or pastes it with its curves, or clears its steps."
+  },
+  "editor.seq.length_step": {
+    "title": "Length step",
+    "text": "Makes the pattern one step shorter or longer."
+  },
+  "editor.seq.length": {
+    "title": "Pattern length",
+    "text": "The length of the pattern in steps. Drag or scroll to change it; double-click to reset it."
+  },
+  "editor.seq.resolution": {
+    "title": "Resolution",
+    "text": "The step length of the pattern."
+  },
+  "editor.seq.swing": {
+    "title": "Swing",
+    "text": "Delays every second step to give the pattern a shuffle. Drag or scroll to change it; double-click to reset it."
+  },
+  "editor.step.new_pattern": {
+    "title": "New pattern",
+    "text": "Creates the first pattern of the drum machine."
+  },
+  "editor.step.resolution": {
+    "title": "Resolution",
+    "text": "The step length of the grid."
+  },
+  "editor.step.steps": {
+    "title": "Number of steps",
+    "text": "The number of steps in the pattern."
+  },
+  "editor.step.swing": {
+    "title": "Swing",
+    "text": "Delays every second step to give the pattern a shuffle. Drag or scroll to change it; double-click to reset it."
+  },
+  "editor.step.tool": {
+    "title": "Pattern tool",
+    "text": "Shifts the pattern left or right, makes a random pattern, alters it, or inverts it."
+  },
+  "editor.step.level": {
+    "title": "Velocity level",
+    "text": "Sets how loud new steps are: soft, medium or hard."
+  },
+  "editor.container.tab": {
+    "title": "Tab",
+    "text": "Switches between the keyboard splits and the macros of the container."
+  },
+  "editor.container.add": {
+    "title": "Add a split",
+    "text": "Adds a note split to the keyboard of the container."
+  },
+  "editor.container.target": {
+    "title": "Split target",
+    "text": "Chooses the device this split plays."
+  },
+  "editor.container.transpose": {
+    "title": "Transpose",
+    "text": "Transposes this split down or up a semitone. Hold Shift to move an octave."
+  },
+  "editor.container.delete": {
+    "title": "Delete split",
+    "text": "Deletes this split."
+  },
+  "editor.container.pass": {
+    "title": "Pass-through",
+    "text": "Chooses whether this split passes pitch bend, controller changes or pressure to its device."
+  },
+  "editor.container.kind": {
+    "title": "Knob or switch",
+    "text": "Makes this macro a knob or an on/off switch for the parameters it drives."
+  },
+  "editor.container.target_delete": {
+    "title": "Remove target",
+    "text": "Stops this macro driving the parameter."
+  },
+  "editor.container.field": {
+    "title": "Range",
+    "text": "The value of the parameter when the macro is at its minimum or at its maximum."
+  },
+  "editor.tab.value": {
+    "title": "Note value",
+    "text": "Sets the length of the next typed note, from a whole note to shorter values."
+  },
+  "editor.tab.dotted": {
+    "title": "Dotted",
+    "text": "Makes the note value dotted, one and a half times longer."
+  },
+  "editor.tab.triplet": {
+    "title": "Triplet",
+    "text": "Makes the note value a triplet, so three fit in the time of two."
+  },
+  "editor.tab.bend_amount": {
+    "title": "Bend amount",
+    "text": "Sets how far a bend goes, in tones. Click to change it."
+  },
+  "editor.tab.instrument": {
+    "title": "Instrument and tuning",
+    "text": "Shows the instrument, its tuning and the capo. Click it to change them."
+  },
+  "editor.tab.technique": {
+    "title": "Technique",
+    "text": "Marks the selected notes with a playing technique, or sets it for the next notes you type."
+  },
+  "editor.sheet.select": {
+    "title": "Chord sheet",
+    "text": "Goes to the previous or the next chord sheet of the song."
+  },
+  "editor.sheet.new": {
+    "title": "New sheet",
+    "text": "Creates a new chord sheet."
+  },
+  "editor.sheet.import": {
+    "title": "Import",
+    "text": "Imports a chord sheet file."
+  },
+  "editor.sheet.rename": {
+    "title": "Rename",
+    "text": "Renames this chord sheet."
+  },
+  "editor.sheet.delete": {
+    "title": "Delete",
+    "text": "Deletes this chord sheet. Undo brings it back."
+  },
+  "editor.sheet.edit": {
+    "title": "Edit as text",
+    "text": "Edits the sheet as text. The text becomes the sheet when you apply it."
+  },
+  "editor.sheet.transpose": {
+    "title": "Transpose",
+    "text": "Shows the chords a semitone lower or higher, or back in the written key. The sheet itself is not changed until you apply the transposition."
+  },
+  "editor.sheet.capo": {
+    "title": "Capo",
+    "text": "Moves the capo one fret down or up and shows the chord shapes to play with it."
+  },
+  "editor.sheet.spelling": {
+    "title": "Sharps or flats",
+    "text": "Cycles the preference for writing the notes with sharps or with flats."
+  },
+  "editor.sheet.font": {
+    "title": "Text size",
+    "text": "Makes the text of the sheet smaller or larger."
+  },
+  "editor.sheet.instrument": {
+    "title": "Instrument and tuning",
+    "text": "Chooses the instrument and the tuning the chord diagrams are drawn for."
+  },
+  "editor.sheet.apply": {
+    "title": "Apply transposition",
+    "text": "Writes the transposition into the sheet itself."
+  },
+  "editor.sheet.autoscroll": {
+    "title": "Scroll the sheet",
+    "text": "Scrolls the sheet by itself, at the speed shown, or follows the transport."
+  },
+  "editor.sheet.text": {
+    "title": "Text editing",
+    "text": "Applies the text as the sheet, or leaves the sheet as it was."
+  },
+  "editor.trainer.instrument": {
+    "title": "Instrument and tuning",
+    "text": "Chooses the instrument, then its tuning, that the chord trainer is played on."
+  },
+  "editor.trainer.capo": {
+    "title": "Capo",
+    "text": "Moves the capo one fret down or up."
+  },
+  "editor.trainer.source": {
+    "title": "Source",
+    "text": "Chooses where the chords come from: a key, a list you type, or the song."
+  },
+  "editor.trainer.key": {
+    "title": "Key of the drill",
+    "text": "Sets the key of the drill: its tonic, and major or minor."
+  },
+  "editor.trainer.sevenths": {
+    "title": "Triads or sevenths",
+    "text": "Chooses between plain triads and seventh chords."
+  },
+  "editor.trainer.list": {
+    "title": "Chord list",
+    "text": "Opens the list of chords as text. Apply makes the text the list; Cancel leaves it as it was."
+  },
+  "editor.trainer.mode": {
+    "title": "Drill mode",
+    "text": "Chooses the kind of drill. Click for the next mode."
+  },
+  "editor.trainer.order": {
+    "title": "Chord order",
+    "text": "Chooses the order the chords come in. Click for the next order."
+  },
+  "editor.trainer.beats": {
+    "title": "Beats per chord",
+    "text": "Sets how many beats each chord lasts."
+  },
+  "editor.trainer.tempo": {
+    "title": "Tempo",
+    "text": "Makes the drill slower or faster."
+  },
+  "editor.trainer.pair": {
+    "title": "Chord pair",
+    "text": "Chooses the first or the second chord of the pair to practise changing between. Click for the next chord."
+  },
+  "editor.trainer.start": {
+    "title": "Start",
+    "text": "Starts the drill, or stops it while it runs."
+  },
+  "editor.trainer.skip": {
+    "title": "Skip",
+    "text": "Gives up this chord and goes on to the next, in the listen drill."
+  },
+  "editor.trainer.input": {
+    "title": "Audio input",
+    "text": "Chooses the audio input the drill listens to. Click for the next input."
+  },
+  "editor.trainer.reset_scores": {
+    "title": "Reset scores",
+    "text": "Forgets the best scores of every chord pair."
+  },
+  "editor.trainer.voicing": {
+    "title": "Fingering",
+    "text": "Shows the previous or the next fingering of the chord."
+  },
+  "editor.fretboard.labels": {
+    "title": "Dot labels",
+    "text": "Chooses what the dots on the neck say: note names, fret numbers or intervals. Click to change."
+  },
+  "editor.fretboard.left_handed": {
+    "title": "Left-handed",
+    "text": "Mirrors the neck for a left-handed player."
+  },
+  "editor.fretboard.voicing": {
+    "title": "Chord fingering",
+    "text": "Shows the fingering of the chord at the playhead on the neck."
+  },
+  "editor.practice.loop": {
+    "title": "Loop selection",
+    "text": "Loops the bars of the selection, or the bar under the cursor when nothing is selected."
+  },
+  "editor.practice.click": {
+    "title": "Metronome",
+    "text": "Plays a click on every beat while the song plays."
+  },
+  "editor.practice.count_in": {
+    "title": "Count-in",
+    "text": "Sets how many bars of count-in play before playback starts. Click to change it."
+  },
+  "editor.practice.speed_chip": {
+    "title": "Speed preset",
+    "text": "Plays at half speed, three quarters, or full speed. Audio clips are muted unless the speed is 100 percent."
+  },
+  "editor.practice.speed_step": {
+    "title": "Speed step",
+    "text": "Makes the practice speed one step slower or faster."
+  },
+  "editor.practice.speed": {
+    "title": "Practice speed",
+    "text": "Sets the practice speed from 25 to 150 percent. Audio clips are muted unless it is 100 percent, and the speed is not saved."
+  },
+  "editor.practice.trainer": {
+    "title": "Speed trainer",
+    "text": "Raises the speed after clean passes of the loop, up to a target. Its values can be set here."
+  },
+  "editor.practice.listen": {
+    "title": "Listen",
+    "text": "Hears the instrument on the audio input and grades each pass of the loop."
+  },
+  "editor.practice.input": {
+    "title": "Listen input",
+    "text": "Chooses the audio input that Listen hears. Click for the next input."
+  },
+  "editor.practice.latency": {
+    "title": "Calibrate",
+    "text": "Play along with the click for a few beats and the offset of your input is measured."
+  },
+  "editor.practice.results": {
+    "title": "Practice results",
+    "text": "The accuracy of the passes: the last pass, the latest passes of this session, and the passes at this speed."
+  },
+  "editor.practice.clear_results": {
+    "title": "Clear results",
+    "text": "Clears the results of this session."
+  },
+  "editor.keys.mode": {
+    "title": "Who plays",
+    "text": "Chooses who plays the strip: the computer keyboard while the strip has the focus, or only the pointer."
+  },
+  "editor.keys.octave": {
+    "title": "Octave",
+    "text": "Moves the keys of the strip one octave down or up."
+  },
+  "editor.keys.velocity": {
+    "title": "Velocity",
+    "text": "Lowers or raises the velocity of the typed keys by one step."
+  },
+  "editor.keys.sustain": {
+    "title": "Sustain",
+    "text": "Keeps released keys sounding, like a sustain pedal. Holding Shift while typing does the same."
+  },
+  "editor.keys.hold": {
+    "title": "Hold",
+    "text": "Latches the keys pressed with the pointer. Press again to release them."
+  },
+  "editor.keys.variation": {
+    "title": "Variation",
+    "text": "Changes each typed velocity a little at random, so repeated notes sound less mechanical."
+  },
+  "editor.track_panel.bypass": {
+    "title": "Bypass device",
+    "text": "Bypasses the device of the track, so the signal passes through it unchanged."
+  },
+  "editor.track_panel.move": {
+    "title": "Move",
+    "text": "Moves the device up or down the chain."
+  },
+  "editor.track_panel.remove": {
+    "title": "Remove",
+    "text": "Takes the device out of the chain."
+  },
+  "editor.track_panel.send": {
+    "title": "Send",
+    "text": "Switches the send on or off."
+  },
+  "editor.track_panel.mute": {
+    "title": "Mute",
+    "text": "Mutes the channel."
+  },
+  "editor.track_panel.fader": {
+    "title": "Fader",
+    "text": "The fader of the channel."
+  },
+  "editor.track_panel.groove": {
+    "title": "Groove",
+    "text": "Chooses the groove of the track: none, the built-in ones, then those of the song. Click for the next or the previous one."
+  },
+  "editor.track_panel.groove_amount": {
+    "title": "Groove amount",
+    "text": "How much of the groove plays. The notes themselves stay as they are."
+  },
+  "editor.spectrum_eq.strip": {
+    "title": "Mixer strip",
+    "text": "Shows the previous or the next strip of the mixer."
+  },
+  "editor.spectrum_eq.follow": {
+    "title": "Follow",
+    "text": "Shows the strip that is selected in the mixer or in the arrangement."
+  },
+  "editor.spectrum_eq.check": {
+    "title": "Band switch",
+    "text": "Switches a part of the EQ on or off: the EQ itself, the high-pass, the low-pass, or one of the two bells."
+  },
+  "editor.spectrum_eq.point": {
+    "title": "EQ point",
+    "text": "Drag it to set the frequency and the gain. Shift keeps one axis, Alt-drag changes Q, and Ctrl-click resets the gain."
+  },
+  "roll.ctl_fold": {
+    "title": "Fold the controller lane",
+    "text": "Folds the controller lane away and keeps the lane chips, or unfolds it again.",
+    "more": "The main window"
+  },
+  "roll.ctl_lane": {
+    "title": "Controller lane",
+    "text": "Shows this controller lane under the velocity lane. The arrows of a CC or poly aftertouch chip step the controller number or the key.",
+    "more": "The main window"
+  },
+  "roll.ctl_curve": {
+    "title": "Curve of new points",
+    "text": "Sets the curve of new points: a ramp or a step. Click to switch.",
+    "more": "The main window"
+  },
+  "roll.ctl_thin": {
+    "title": "Thin points",
+    "text": "Thins the selected points, or the whole lane, by dropping the points that the line through their neighbours reproduces.",
+    "more": "The main window"
+  },
+  "roll.ctl_messages": {
+    "title": "Program and SysEx messages",
+    "text": "Shows the program changes and SysEx messages of the clip, or goes back to the controller lanes.",
+    "more": "The main window"
+  },
+  "roll.ctl_program": {
+    "title": "Program and bank",
+    "text": "Sets the program of the selected program change, and the bank select MSB and LSB sent before it. The arrows step the values.",
+    "more": "The main window"
+  },
+  "roll.ctl_sysex": {
+    "title": "SysEx",
+    "text": "Adds a SysEx message at the playhead, or deletes every program change and SysEx message of the clip.",
+    "more": "The main window"
+  },
+  "roll.note_pitch": {
+    "title": "Note pitch",
+    "text": "The pitch of the selected notes. Drag or scroll, with Shift for an octave, or double-click to type a name like C#3, a number, or plus or minus semitones.",
+    "more": "The main window"
+  },
+  "roll.note_position": {
+    "title": "Note start",
+    "text": "Where the note starts in the clip, as bar, beat, sixteenth and tick. Drag or scroll a part, or double-click to type.",
+    "more": "The main window"
+  },
+  "roll.note_length": {
+    "title": "Note length",
+    "text": "The length of the note in bars, beats, sixteenths and ticks. Drag or scroll a part, or double-click to type.",
+    "more": "The main window"
+  },
+  "roll.note_velocity": {
+    "title": "Note velocity",
+    "text": "The velocity of the selected notes, from 1 to 127. Drag or scroll, or double-click to type. With several notes the change applies to each.",
+    "more": "The main window"
+  },
+  "arrangement.clip_position": {
+    "title": "Clip start",
+    "text": "Where the clip starts, as bar, beat, sixteenth and tick. Drag or scroll a part, or double-click to type. With several clips the change applies to each.",
+    "more": "The main window"
+  },
+  "arrangement.clip_length": {
+    "title": "Clip length",
+    "text": "The length of the clip in bars, beats, sixteenths and ticks. Drag or scroll a part, or double-click to type.",
+    "more": "The main window"
+  },
+  "arrangement.clip_offset": {
+    "title": "Clip offset",
+    "text": "Where in its content the clip starts. It is for note and automation clips; an audio clip keeps its source offset in its content.",
+    "more": "The main window"
+  },
+  "arrangement.clip_loop": {
+    "title": "Clip loop",
+    "text": "The length of the loop that repeats inside the clip. Zero turns the loop off, and an audio clip that plays backwards cannot loop.",
+    "more": "The main window"
+  },
+  "arrangement.clip_match": {
+    "title": "Match values",
+    "text": "Gives every selected clip the length, loop offset and loop length of the first clip.",
+    "more": "The main window"
+  },
+  "arrangement.point_position": {
+    "title": "Point position",
+    "text": "Where the automation point is in the clip. Drag or scroll a part, or double-click to type.",
+    "more": "The main window"
+  },
+  "arrangement.point_value": {
+    "title": "Point value",
+    "text": "The value of the point in the unit of its parameter. Drag or scroll, or double-click to type. With several points the change applies to each.",
+    "more": "The main window"
+  },
+  "transport.insp_name": {
+    "title": "Selected clips",
+    "text": "Says what the inspector edits: the selected audio clips, or the audio track when no clip is selected.",
+    "more": "The main window"
+  },
+  "transport.insp_fade": {
+    "title": "Fade",
+    "text": "The length of the fade, in milliseconds or in ticks. Drag or scroll, or double-click to type; click the unit tag to switch units.",
+    "more": "The main window"
+  },
+  "transport.insp_transpose": {
+    "title": "Transpose",
+    "text": "Transposes the clip in semitones, with the cents after the point. A clip in the Repitch mode is left alone.",
+    "more": "The main window"
+  },
+  "transport.insp_gain": {
+    "title": "Clip gain",
+    "text": "The gain of the clip in dB. Drag or scroll, with Shift for fine steps, or double-click to type.",
+    "more": "The main window"
+  },
+  "transport.insp_reverse": {
+    "title": "Reverse",
+    "text": "Plays the clip backwards. A warped clip keeps its warp: the stretched audio plays backwards.",
+    "more": "The main window"
+  },
+  "transport.insp_warp": {
+    "title": "Warp",
+    "text": "Makes the clip follow the song tempo while keeping its pitch. The mode, tempo and markers stay when it is switched off.",
+    "more": "The main window"
+  },
+  "transport.insp_tempo": {
+    "title": "Clip tempo",
+    "text": "The tempo the audio was recorded at, in BPM. The clip plays faster or slower to follow the song.",
+    "more": "The main window"
+  },
+  "transport.rec_gain": {
+    "title": "Input gain",
+    "text": "The gain of the input in dB, applied to the recording and to the monitor. Drag or scroll, or double-click for 0 dB.",
+    "more": "The main window"
+  },
+  "transport.rec_safe": {
+    "title": "Clip safe",
+    "text": "Limits the recording so it never goes above 0 dBFS. The monitor is not limited.",
+    "more": "The main window"
+  },
+  "transport.rec_meter": {
+    "title": "Input level",
+    "text": "The level of the input after the gain. The lamp lights when it reaches 0 dBFS and stays lit until you click here.",
+    "more": "The main window"
   }
 }

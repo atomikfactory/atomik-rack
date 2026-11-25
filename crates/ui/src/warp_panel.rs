@@ -406,26 +406,34 @@ impl WarpView {
         if self.drag.is_some() {
             return None;
         }
-        let help = |rect: Rect, text: &'static str| Some(Help::new(rect, text));
+        let help =
+            |rect: Rect, text: &'static str, id: &'static str| Some(Help::new(rect, text).id(id));
         if self.close_rect().contains(pos) {
-            return help(self.close_rect(), "Close the panel; the settings are kept");
+            return help(
+                self.close_rect(),
+                "Close the panel; the settings are kept",
+                "modal.close",
+            );
         }
         if self.apply_rect().contains(pos) {
             return help(
                 self.apply_rect(),
                 "Apply these warp settings to the selected clips (one undo step)",
+                "modal.warp.apply",
             );
         }
         if self.detect_rect().contains(pos) {
             return help(
                 self.detect_rect(),
                 "Estimate the source tempo from the transients of the clip",
+                "modal.warp.detect",
             );
         }
         if self.reset_rect().contains(pos) {
             return help(
                 self.reset_rect(),
                 "Reset to Unstretched Tempo: warp off and markers cleared, the clip plays its audio as it is (one undo step)",
+                "modal.warp.reset",
             );
         }
         for (up, text) in [
@@ -433,7 +441,7 @@ impl WarpView {
             (true, "Double the source tempo"),
         ] {
             if self.factor_rect(up).contains(pos) {
-                return help(self.factor_rect(up), text);
+                return help(self.factor_rect(up), text, "modal.warp.factor");
             }
         }
         WarpRow::ALL.into_iter().find_map(|row| {

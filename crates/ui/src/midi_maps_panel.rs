@@ -430,23 +430,36 @@ impl MidiMapsView {
     /// What the button under `pos` does, for its tooltip.
     pub fn help_at(&self, pos: Point) -> Option<Help> {
         let hit = self.hit(pos)?;
-        let header = |r: Rect, text: &'static str| Some(Help::new(r, text));
+        let header =
+            |r: Rect, text: &'static str, id: &'static str| Some(Help::new(r, text).id(id));
         let (i, text) = match hit {
-            Hit::Close => return header(self.close_rect(), "Close the panel"),
-            Hit::Clear => return header(self.clear_rect(), "Remove every mapping of the project"),
+            Hit::Close => return header(self.close_rect(), "Close the panel", "modal.close"),
+            Hit::Clear => {
+                return header(
+                    self.clear_rect(),
+                    "Remove every mapping of the project",
+                    "modal.midi_maps.clear",
+                );
+            }
             Hit::Import => {
                 return header(
                     self.import_rect(),
                     "Apply a mapping preset file to this project",
+                    "modal.midi_maps.import",
                 );
             }
             Hit::Export => {
-                return header(self.export_rect(), "Save these mappings as a preset file");
+                return header(
+                    self.export_rect(),
+                    "Save these mappings as a preset file",
+                    "modal.midi_maps.export",
+                );
             }
             Hit::ExportDevice => {
                 return header(
                     self.device_rect(),
                     "Save the mappings of the selected device as a preset that fits any device of its type",
+                    "modal.midi_maps.export_device",
                 );
             }
             Hit::Port(i) => (
@@ -489,7 +502,19 @@ impl MidiMapsView {
             Hit::Channel(_) => c.channel,
             _ => c.min,
         };
-        Some(Help::new(self.cell(row, x), text))
+        let id = match hit {
+            Hit::Remove(_) => "modal.midi_maps.remove",
+            Hit::Learn(_) => "modal.midi_maps.learn",
+            Hit::Consume(_) => "modal.midi_maps.consume",
+            Hit::Pickup(_) => "modal.midi_maps.pickup",
+            Hit::Invert(_) => "modal.midi_maps.invert",
+            Hit::Mode(_) => "modal.midi_maps.mode",
+            Hit::Max(_) => "modal.midi_maps.max",
+            Hit::Port(_) => "modal.midi_maps.port",
+            Hit::Channel(_) => "modal.midi_maps.channel",
+            _ => "modal.midi_maps.min",
+        };
+        Some(Help::new(self.cell(row, x), text).id(id))
     }
 
     /// Handles one event and returns what the app must do.

@@ -402,20 +402,26 @@ impl ShareView {
 
     /// What the control under `pos` does, for its tooltip.
     pub fn help_at(&self, pos: Point) -> Option<Help> {
-        let help = |rect: Rect, text: &'static str| Some(Help::new(rect, text));
+        let help =
+            |rect: Rect, text: &'static str, id: &'static str| Some(Help::new(rect, text).id(id));
         if self.close_rect().contains(pos) {
-            return help(self.close_rect(), "Close the panel without making a share");
+            return help(
+                self.close_rect(),
+                "Close the panel without making a share",
+                "modal.close",
+            );
         }
         if self.share_rect().contains(pos) {
             return help(
                 self.share_rect(),
                 "Choose the file and write the project, its audio and the credits into it",
+                "modal.share.share",
             );
         }
         ShareBox::ALL
             .into_iter()
             .find(|b| self.box_row(*b).contains(pos))
-            .and_then(|b| help(self.box_row(b), b.help()))
+            .and_then(|b| help(self.box_row(b), b.help(), "modal.share.box"))
     }
 
     /// Handles one event and returns what the app must do.
