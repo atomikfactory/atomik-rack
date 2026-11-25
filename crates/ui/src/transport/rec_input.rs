@@ -491,6 +491,18 @@ impl TransportBar {
             t.bevel_dark.with_alpha(0.55),
         );
         let x_of = |db: f32| bar.x0 + bar.width() * meter_norm(db);
+        if t.glow.active() && level.bar.level_db > METER_FLOOR_DB {
+            // The lit part glows in the colour of the zone the level reaches.
+            let lit = Rect::new(bar.x0, bar.y0, x_of(level.bar.level_db.min(6.0)), bar.y1);
+            let own = if level.bar.level_db >= -0.5 {
+                st.record
+            } else if level.bar.level_db >= -9.0 {
+                st.mute
+            } else {
+                st.solo
+            };
+            t.glow.halo(c, lit, own);
+        }
         for (lo, hi, color) in [
             (METER_FLOOR_DB, -9.0, st.solo),
             (-9.0, -0.5, st.mute),

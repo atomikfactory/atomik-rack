@@ -118,6 +118,71 @@ fn the_editor_lists_every_token_in_its_groups_and_starts_clean() {
     );
 }
 
+/// Scrolls to the end of the list, where the glow controls are.
+fn to_glow(v: &mut ThemeEditorView) {
+    for _ in 0..60 {
+        v.handle(&UiEvent::Wheel {
+            delta: Vec2::new(0.0, -3.0),
+            pos: Point::new(450.0, 300.0),
+            modifiers: Modifiers::NONE,
+        });
+    }
+}
+
+#[test]
+fn the_glow_controls_edit_the_preview_and_undo_takes_them_back() {
+    use atomik_ui::theme_editor::GlowRow;
+    let mut v = ThemeEditorView::new(
+        Theme::dark(),
+        "user:plain".into(),
+        ThemeDoc::new("Plain", Base::Dark),
+    );
+    v.set_bounds(Rect::new(0.0, 0.0, 900.0, 700.0));
+    to_glow(&mut v);
+    assert!(!v.glow().enabled && !v.preview().glow.active());
+    // ON turns it on, and the preview glows at once.
+    let on = v.glow_control_rect(GlowRow::On).unwrap().center();
+    assert_eq!(actions(&click(&mut v, on)), [ThemeEditorAction::Changed]);
+    assert!(v.glow().enabled && v.preview().glow.active() && v.dirty());
+    // A press on the strength track moves the slider; a drag is one step of history.
+    let track = v.glow_control_rect(GlowRow::Strength).unwrap();
+    let steps = v.history_len();
+    v.handle(&UiEvent::PointerDown {
+        pos: Point::new(track.x0 + track.width() * 0.25, track.center().y),
+        button: PointerButton::Primary,
+        modifiers: Modifiers::NONE,
+        clicks: 1,
+    });
+    v.handle(&UiEvent::PointerMove {
+        pos: Point::new(track.x0 + track.width() * 0.75, track.center().y),
+        modifiers: Modifiers::NONE,
+    });
+    v.handle(&UiEvent::PointerUp {
+        pos: Point::new(track.x0 + track.width() * 0.75, track.center().y),
+        button: PointerButton::Primary,
+        modifiers: Modifiers::NONE,
+    });
+    assert!((v.glow().intensity - 0.75).abs() < 0.01);
+    assert_eq!(v.history_len(), steps + 1);
+    // The swatch asks for the picker; the colour comes back as the glow's own, ACCENT drops it.
+    let swatch = v.glow_swatch_rect().unwrap().center();
+    assert_eq!(
+        actions(&click(&mut v, swatch)),
+        [ThemeEditorAction::PickColor(
+            atomik_ui::theme_editor::glow_colour_index()
+        )]
+    );
+    v.set_color(atomik_ui::theme_editor::glow_colour_index(), [9, 8, 7]);
+    assert_eq!(v.preview().glow.colour.map(rgba_of), Some([9, 8, 7, 255]));
+    let accent = v.glow_control_rect(GlowRow::Colour).unwrap().center();
+    click(&mut v, accent);
+    assert_eq!(v.preview().glow.colour, None);
+    // Undo walks back to a theme with no glow section at all.
+    while v.undo() {}
+    assert_eq!(v.doc().glow, None);
+    assert!(!v.dirty());
+}
+
 #[test]
 fn the_editor_matches_its_golden() {
     check("theme_editor_synthwave_1x.json", &list(&editor()));

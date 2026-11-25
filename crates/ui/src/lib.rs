@@ -402,6 +402,7 @@ pub mod fx;
 pub mod fx_layout;
 pub mod fx_paint;
 pub mod gain_panel;
+pub mod glow;
 pub mod grading;
 pub mod granular_panel;
 pub mod harmony_picker;
@@ -555,6 +556,7 @@ pub use film_panel::{
     FilmView,
 };
 pub use fretboard::{FRETBOARD_HEIGHT, FretLabels, FretboardFeed, FretboardOptions, FretboardView};
+pub use glow::Glow;
 pub use grading::{FretGrade, GradeMark};
 pub use harmony_picker::{HarmonyPickerAction, HarmonyPickerView, HarmonyTarget, PickerValue};
 pub use help_panel::{HELP_PANEL_HEIGHT, HelpCard};

@@ -159,6 +159,13 @@ impl<S: EngineSink> AppCore<S> {
         self.video.cache = Some(dir);
     }
 
+    /// The folder the start screen's card pictures are cached in: `cards` beside the video proxy
+    /// folder, in the per-user cache area. `None` while no cache folder was given (a headless
+    /// run or a test): pictures are then made each time and kept nowhere.
+    pub fn card_cache_dir(&self) -> Option<PathBuf> {
+        self.video.cache.as_ref()?.parent().map(|p| p.join("cards"))
+    }
+
     // ------------------------------------------------------------------ queries
 
     /// What the last check found.

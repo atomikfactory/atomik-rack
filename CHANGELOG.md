@@ -9,6 +9,20 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **A glow on the meters and the playhead, as part of a theme.** A theme file can have an optional `glow` section
+  (on or off, the colour of what glows or one colour of its own, a strength from 0 to 1 and a reach in pixels). It
+  draws a soft halo behind the level meters (the mixer channels, the track meters of the arrangement, the recording
+  input meter of the transport bar, the big meter and the level bars of the effect panels) and behind the playhead
+  line (arrangement, piano roll and tab editor), with a few stacked translucent shapes: no blur pass, nothing
+  allocated per frame. Synthwave glows; Light and Dark do not and look exactly as before, and a theme file without
+  the section loads unchanged. The theme editor has a Glow group at the end of its list (ON / OFF, ACCENT or a
+  colour from the picker, strength and reach sliders) that shows at once and has undo. At Low power the glow is not
+  drawn.
+- **A picture of the song on the start screen's cards.** The template card and each example card show the song seen
+  from far away: a row for each track with a block for every clip in the track's colour. The picture is made from the
+  song's file on a background thread, so the box never waits (a quiet placeholder shows meanwhile; a file that cannot
+  be read leaves its card without a picture) and is kept in a `cards` folder in the per-user cache area, named by a
+  hash of the file's content: made once, reused while the file does not change, made again when it does.
 - **Stems as MP3, AAC and Opus.** Export Stems offers the three compressed formats next to WAV, AIFF and FLAC, with
   the same bitrate and quality choices as the song, through the FFmpeg you install (the buttons are greyed with the
   setup line without it). Each stem is encoded as it is rendered and written as `01 Kick.mp3`, `.m4a` or `.opus`;

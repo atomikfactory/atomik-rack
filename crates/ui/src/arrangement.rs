@@ -6646,6 +6646,7 @@ impl ArrangementView {
         let x = self.axis.tick_to_x(self.playhead);
         if x >= tl.x0 - 1.0 && x <= tl.x1 + 1.0 {
             let x = crate::paint::snap_hairline(x, self.scale);
+            st.base.glow.vline(c, x, tl.y0, tl.y1, col);
             c.stroke_with(
                 vello::kurbo::Line::new(pt(x, tl.y0), pt(x, tl.y1)),
                 1.5,

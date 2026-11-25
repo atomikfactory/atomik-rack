@@ -5796,6 +5796,13 @@ creation chain in the **Creation chain** bullet.
   Start Screen opens it at any time. A template under the pointer or the keys has a card with its
   `TemplatePreview` (`AppCore::template_preview` loads the file without opening it, once per
   template while the box is open), and a pin button on a recent row returns `StartOutcome::TogglePin`.
+  The template card and each example card also show a small picture of the song
+  ([card_picture.rs](../crates/app/src/card_picture.rs)): `CardPicture` keeps a row per track with its clips as
+  shares of the song, `PictureStore` caches it as a text file named by a hash of the project file's content in the
+  `cards` folder beside the video proxy folder (`AppCore::card_cache_dir`), and a `PictureWorker` thread makes
+  them, so the interface thread only asks (`Shell::request_card_pictures`, from `StartScreen::pictures_wanted`)
+  and collects (`poll_card_pictures`, a frame step that does nothing while the box is closed). A placeholder
+  shows until a picture arrives, and a file with no picture leaves its card as it was.
   The genre templates of the factory `Templates` folder come first in `AppCore::templates` (then the
   user's own, sixteen in all) and open like any template.
   The headless and MCP sessions never call `start_without_project`, so they never show it. The shell
@@ -5865,7 +5872,11 @@ creation chain in the **Creation chain** bullet.
     `Shell::current_theme` is the editor's preview, else the library's theme of that id, else the choice, and
     `Shell::apply_theme` is unchanged. The Themes tab (`themes_tab.rs`) asks the shell with a `ThemeAction`;
     the theme editor is `ThemeEditorView`, a modal over the settings dialog that edits a `ThemeDoc`, asks for
-    the colour picker through `ColorTarget::ThemeToken`, and is written when it closes.
+    the colour picker through `ColorTarget::ThemeToken`, and is written when it closes. A theme may carry a
+    `glow` (`glow.rs`: enabled, accent or own colour, intensity, radius): a few stacked translucent shapes
+    drawn behind the meters (console, arrangement track meters, transport input meter, big meter, effect level
+    bars) and the playhead line (arrangement, piano roll, tab editor), with no blur pass and no allocation.
+    Synthwave has it on; `Shell::current_theme` takes it out at Low power, so no view ever draws it there.
   - **Application zoom.** The shell draws and lays out in logical units at the scale each window
     was told. The platform tells every window `Shell::ui_scale(display scale)`, the display scale
     times `Shell::app_zoom`, and works the logical size and the pointer positions out with it, so

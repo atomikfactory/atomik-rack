@@ -6057,6 +6057,16 @@ fn stereo_meter(
         let alpha = if silenced { 0.35 } else { 1.0 };
         let peak = m.peak[ch].level_db;
         let rms = m.rms[ch].level_db;
+        if st.base.glow.active() && !silenced && meter_norm(peak) > 0.0 {
+            // The lit part of the bar glows in the colour of the zone it reaches.
+            let lit = Rect::new(
+                inner.x0,
+                inner.y1 - h * meter_norm(peak),
+                inner.x1,
+                inner.y1,
+            );
+            st.base.glow.halo(c, lit, meter_color(st, peak));
+        }
         zone_fill(c, st, inner, peak, 0.38 * alpha);
         zone_fill(c, st, inner, rms, alpha);
         let hold = m.peak[ch].hold_db;

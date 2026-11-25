@@ -598,14 +598,14 @@ pub fn paint<C: Canvas + ?Sized>(
             } else {
                 st.db > -6.0
             };
-            c.fill_with(
-                Rect::new(bar.x0, bar.y0, bar.x0 + bar.width() * fill, bar.y1),
-                if hot {
-                    theme.warning
-                } else {
-                    theme.io_connected
-                },
-            );
+            let lit = Rect::new(bar.x0, bar.y0, bar.x0 + bar.width() * fill, bar.y1);
+            let colour = if hot {
+                theme.warning
+            } else {
+                theme.io_connected
+            };
+            theme.glow.halo(c, lit, colour);
+            c.fill_with(lit, colour);
         }
         if meter.hold != HoldMode::Off && st.hold_db > FLOOR_DB {
             let x = bar.x0 + bar.width() * meter.norm(st.hold_db);
