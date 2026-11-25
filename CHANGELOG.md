@@ -8,6 +8,26 @@ may break APIs and the patch and project formats.
 
 ## [Unreleased]
 
+### Added
+- **Stems as MP3, AAC and Opus.** Export Stems offers the three compressed formats next to WAV, AIFF and FLAC, with
+  the same bitrate and quality choices as the song, through the FFmpeg you install (the buttons are greyed with the
+  setup line without it). Each stem is encoded as it is rendered and written as `01 Kick.mp3`, `.m4a` or `.opus`;
+  its tags are the stem's name as the title, the song's title as the album and the song's author as the artist.
+  One progress bar and one Cancel cover all the stems, and a cancel or a failure leaves no file, no partial file and
+  no temporary file behind.
+- **A loudness target for stems.** The LOUDNESS row of Export Stems brings the stems to a target or measures them
+  against a guide. By default one gain goes to every stem, worked out from the loudness of the mix they add up to
+  (the master's stem, or the sum of the stems for a dry export), so the stems still sum to the mix; no limiter is
+  used, so a target the peaks cannot reach is held at the ceiling and the toast says how far short it stopped, and a
+  stem whose peaks pass full scale is flagged. With EACH STEM on the new STEM GAIN row, every stem is brought to the
+  target on its own with the true-peak limiter, as a song export is. The toast says what was done and the log lists
+  what each stem was and became. With the loudness off, stems are written exactly as before.
+- **A custom loudness target and a choice of ceiling.** The LOUDNESS row has a CUSTOM box that takes a target of your
+  own, from -40 to -5 LUFS with a tenth allowed, and a new CEILING row sets the true-peak ceiling of a target: -1 dBTP,
+  -2 dBTP or a number of your own from -9 to 0. Both are remembered with the other export choices and kept by the
+  export presets you save (`custom-14.5`, `ceiling_dbtp` and `stems_together` in `export.json` and
+  `export_presets.json`; a file written before them loads with -1 dBTP and one gain for all).
+
 ## [0.5.0-rc.3] - 2026-11-25
 
 ### Added

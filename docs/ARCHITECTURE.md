@@ -1138,6 +1138,15 @@ AIFF or FLAC only).
   true-peak limiter of the mastering suite. The panel's bit depth and dither rows are greyed for these
   formats. `export.json` keeps the format, the MP3 quality and the AAC and Opus bitrates. The tests use the
   fake tool; one ignored test runs the real FFmpeg.
+  **Compressed stems** (`export_worker::export_stems_lossy`) are the same encoder run once per stem: the writer
+  that `export_stems_with` calls for each finished stem writes it to a temporary float WAV file at the rate of
+  the format, `encode_audio` turns that into `<NN name>.mp3`, `.m4a` or `.opus` in the folder (the same
+  bitrate choices, no shell), and the temporary file is removed at once. The tags are the stem's name as the
+  title, the song's title as the album (`Tags::album`) and its author as the artist. Progress is two shares that
+  only grow, 80 % the render's passes and 20 % the stems encoded, and one Cancel stops FFmpeg, drops the stem it
+  was on and removes every file written so far, the folder when the export made it, and the temporary folder
+  (a failed stem does the same and says why). Without FFmpeg the three buttons are greyed for stems as for a
+  song.
 - **Not replacing unasked.** The native save dialog confirms an overwrite of the name it picked, but the
   container is chosen afterwards, so the file gets the extension of the format (`export_file`). The dialog
   proposes the extension of the format used last (`Shell::export_audio_extension`), and `export_action` in
@@ -1180,14 +1189,32 @@ AIFF or FLAC only).
   device's look-ahead true-peak `Limiter` offline and raises the gain again until the limited result is within
   0.1 LU of the target (`NormaliseReport` says the loudness before and after, the gain and the limiting;
   `ExportReport::normalise`). `Loudness::Guide` changes nothing and only warns when samples reach full scale.
-  Stems are never finished. `Work::also` encodes an MP3 at 320 kbps from the same finished render next to a
-  lossless file.
+  The true-peak ceiling is a field of the panel (`ExportValues::ceiling`, tenths of a dBTP, -9.0 to 0.0, -1.0 by
+  default; buttons for -1 and -2 and a box for a number of the user's), and the loudness choices have a custom
+  target (`ExportLoudness::Custom`, tenths of a LUFS, -40.0 to -5.0), both typed in a field of the panel
+  (`ExportView::custom_rect`); `finish_for` and `stems_level_for` turn the panel's values into `Finish` and
+  `StemsLevel`. `Work::also` encodes an MP3 at 320 kbps from the same finished render next to a lossless file.
+  **Stems have a level too** (`atomik_render::stems::StemsLevel`, `export_stems_with`): with a target or a guide
+  each stem is either brought to the target on its own (`finish_render` per stem: the same gain and limiter as
+  the mix, `StemsReport::normalise` has each stem's level before and after), or, the default
+  (`ExportValues::stems_together`), every stem gets **one gain computed from the mix they add up to**
+  (`normalise::CommonGain`): the master's stem when the export has one, which is rendered first so the gain is
+  known before the first file is written and no stem is held in memory, else (a dry export has no master) the
+  sum of the stems, which a first pass over the render measures before the second one writes. The gain is the
+  one that brings the mix to the target, held back where the mix's true peak would pass the ceiling: there is no
+  limiter, because stems limited one by one would no longer sum to the limited mix (`held_db` and the toast say
+  how far short of the target the ceiling kept it, and a stem whose peaks pass full scale is flagged). A guide
+  measures and changes nothing in either mode. With the loudness off the stems are written exactly as before
+  (a test compares the bytes with `render_stems` and `write_export`).
+  `export_presets.json` keeps the custom target (`"custom-14.5"`), `ceiling_dbtp` and `stems_together`; the last
+  two are optional (an older file loads with -1 dBTP and one gain for all), and a stems preset keeps its loudness.
 - **Loudness report.** `write_export` measures the audio it writes with
   [render/src/loudness.rs](../crates/render/src/loudness.rs): integrated loudness, loudness range
   (3 s short-term windows, -70 LUFS absolute and -20 LU relative gates, 10th to 95th percentile),
   true peak and sample peak, using the K-weighting, gating and 4x true-peak detector of the
   loudness meter device. `ExportReport::loudness` carries it, `StemsReport::loudness` has one per
-  file; the app puts it in the toast and the log, and `session_export` returns it.
+  file (and `normalise` the level before and after of each stem when a loudness was asked for); the app puts it
+  in the toast and the log, and `session_export` returns it.
 - **Range of stems.** `ExportValues::locators` makes a stems export use `ExportSpan::Loop`
   (the frames between the locators, no tail) instead of the song with its tail.
 - **Time selection.** `ExportSpan::Range(start, end)` is a range in ticks, cut out like a loop with
@@ -1201,7 +1228,8 @@ AIFF or FLAC only).
   output; the render cables every tap to its own pair of extra interface outputs, as a freeze
   taps a track, so one pass reads several strips without changing a sample, at most
   `TAPS_PER_PASS` strips per pass (each stem is written as its pass ends, so memory does not grow
-  with the strip count). `StemStrip::Dry` takes the channels' sources before the strip. The tap sits
+  with the strip count; `export_stems_with` takes a writer for the finished stem, which the compressed stems
+  use, and the level of the stems). `StemStrip::Dry` takes the channels' sources before the strip. The tap sits
   in front of the master's delay compensation, so each stem is **delayed here** by the latency of
   the slowest path to the outputs minus the latency of the path to its own tap (`path_latencies`
   sums the latencies the engine published, along the flat cables, like its compensation does; none
@@ -1229,7 +1257,7 @@ AIFF or FLAC only).
   toast ("Exported mix.wav: 24-bit, 48 kHz, 1:05.3, with 2.4 s of tail"). Opening or creating a
   project cancels a running export. With plugins the worker uses the plugin sandbox when it is on,
   else it loads instances of its own in the app process, as a freeze does. The last choices (depth,
-  dither, rate, tail, container, dry stems, folder) are in
+  dither, rate, tail, container, dry stems, loudness, ceiling, stem gain, folder) are in
   `export.json` next to `settings.json`. The stems dialog picks the folder the `Bounced <song>`
   folder is made in. The QA server has `session_export` (MCP.md): the same render, synchronous,
   with a report of the file, or with `stems` of every file.

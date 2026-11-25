@@ -61,7 +61,7 @@ fn streaming_is_a_24_bit_wav_and_an_mp3_at_minus_14() {
         }
     );
     assert_eq!(atomik_ui::ALSO_MP3_KBPS, 320);
-    assert_eq!(ExportLoudness::CEILING_DBTP, -1.0);
+    assert_eq!(p.values.ceiling, -10, "the ceiling is -1 dBTP");
     assert!(p.needs_ffmpeg(), "its MP3 is encoded by FFmpeg");
 }
 
@@ -226,11 +226,13 @@ fn there_is_a_most_to_the_presets_of_the_user() {
 }
 
 #[test]
-fn a_stems_preset_keeps_no_mix_down_loudness_or_extra_file() {
+fn a_stems_preset_keeps_no_mix_down_or_extra_file_but_keeps_the_loudness() {
     let mut store = PresetStore::default();
     let v = ExportValues {
         mono: true,
         loudness: ExportLoudness::Target(-14),
+        ceiling: -20,
+        stems_together: false,
         also_mp3: true,
         selection: true,
         ..ExportValues::default()
@@ -238,7 +240,16 @@ fn a_stems_preset_keeps_no_mix_down_loudness_or_extra_file() {
     store.add("Stem set", true, v).unwrap();
     let got = store.user()[0].values;
     assert!(!got.mono && !got.also_mp3 && !got.selection);
-    assert_eq!(got.loudness, ExportLoudness::Off);
+    assert_eq!(got.loudness, ExportLoudness::Target(-14));
+    assert_eq!((got.ceiling, got.stems_together), (-20, false));
+    // Compressed stems need FFmpeg, as a compressed mix does.
+    let compressed = ExportValues {
+        file: ExportFile::Opus,
+        ..ExportValues::default()
+    };
+    store.add("Small stems", true, compressed).unwrap();
+    assert!(store.user()[1].needs_ffmpeg());
+    assert!(!store.user()[0].needs_ffmpeg());
     // An extra MP3 next to a compressed file means nothing either.
     store
         .add(
@@ -312,4 +323,67 @@ fn the_values_of_a_preset_survive_the_words_of_the_file() {
         assert_eq!(got.values, store.user()[0].values, "{}", p.name);
         assert_eq!(got.stems, p.stems);
     }
+}
+
+#[test]
+fn a_custom_target_a_ceiling_and_the_stem_gain_are_stored_in_the_file() {
+    let mut store = PresetStore::default();
+    let v = ExportValues {
+        loudness: ExportLoudness::Custom(-125),
+        ceiling: -25,
+        stems_together: false,
+        ..ExportValues::default()
+    };
+    store.add("Loud mix", false, v).unwrap();
+    store.add("Loud stems", true, v).unwrap();
+    let json = store.to_json();
+    assert!(json.contains("\"custom-12.5\""), "{json}");
+    assert!(json.contains("\"ceiling_dbtp\": -2.5"), "{json}");
+    assert!(json.contains("\"stems_together\": false"), "{json}");
+    let back = PresetStore::from_json(&json);
+    assert_eq!(back, store);
+    assert_eq!(back.user()[0].values.loudness, ExportLoudness::Custom(-125));
+    assert_eq!(back.user()[0].values.ceiling, -25);
+    assert!(!back.user()[1].values.stems_together);
+}
+
+#[test]
+fn a_file_written_before_the_new_fields_loads_with_the_old_behaviour() {
+    // What this program wrote before the ceiling, the custom target and the stem gain existed.
+    let old = r#"{ "version": 1, "presets": [
+        { "name": "My master", "stems": false,
+          "values": { "file": "flac", "bit_depth": "24", "loudness": "guide-9" } },
+        { "name": "Stem set", "stems": true,
+          "values": { "file": "wav", "bit_depth": "24", "dither": "none" } },
+        { "name": "Loud", "values": { "loudness": "target-14", "also_mp3": false } }
+    ] }"#;
+    let store = PresetStore::from_json(old);
+    let names: Vec<_> = store.user().iter().map(|p| p.name.as_str()).collect();
+    assert_eq!(names, ["My master", "Stem set", "Loud"]);
+    for p in store.user() {
+        assert_eq!(p.values.ceiling, -10, "{}: -1 dBTP as always", p.name);
+        assert!(p.values.stems_together, "{}: one gain for all", p.name);
+    }
+    assert_eq!(store.user()[0].values.loudness, ExportLoudness::Guide(-9));
+    assert_eq!(store.user()[2].values.loudness, ExportLoudness::Target(-14));
+    // Saved again, the file has the new fields and loads to the same presets.
+    assert_eq!(PresetStore::from_json(&store.to_json()), store);
+}
+
+#[test]
+fn a_ceiling_or_target_out_of_range_in_a_file_is_the_default() {
+    let text = r#"{ "version": 1, "presets": [
+        { "name": "A", "values": { "loudness": "custom-3", "ceiling_dbtp": 4.0 } },
+        { "name": "B", "values": { "loudness": "custom-99", "ceiling_dbtp": -20.0 } },
+        { "name": "C", "values": { "loudness": "custom-14.5", "ceiling_dbtp": -2.5 } }
+    ] }"#;
+    let store = PresetStore::from_json(text);
+    let (a, b, c) = (
+        store.user()[0].values,
+        store.user()[1].values,
+        store.user()[2].values,
+    );
+    assert_eq!((a.loudness, a.ceiling), (ExportLoudness::Off, -10));
+    assert_eq!((b.loudness, b.ceiling), (ExportLoudness::Off, -10));
+    assert_eq!((c.loudness, c.ceiling), (ExportLoudness::Custom(-145), -25));
 }
