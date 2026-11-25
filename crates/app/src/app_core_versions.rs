@@ -9,6 +9,8 @@
 //!   name. A named version is never pruned.
 //! * [`AppCore::versions`] lists them, newest first; [`AppCore::set_version_protected`] marks
 //!   one so that pruning never removes it.
+//! * [`AppCore::rename_version`] changes (or clears) a version's name; [`AppCore::delete_version`]
+//!   removes one version and its entry (a protected one is refused).
 //! * [`AppCore::restore_version`] keeps the song as it is now as an automatic version, then
 //!   opens the chosen one as the current song. The restored song is unsaved: Save writes it over
 //!   the project file (and keeps the file it replaces as a version), and a second restore of the
@@ -150,6 +152,50 @@ impl<S: EngineSink> AppCore<S> {
         let mut store = VersionStore::for_project(&file)?;
         store.set_protected(id, protected)?;
         Ok(())
+    }
+
+    /// Renames the version `id`; an empty name clears it (the version is listed by its time
+    /// again). Only the version index changes: the project and the version's file are not
+    /// touched, and the change is not an undo step (like naming a version).
+    ///
+    /// # Errors
+    /// [`AppError::NoPath`] without a project file; a version that is missing; I/O errors (the
+    /// version keeps its name then).
+    pub fn rename_version(&mut self, id: u32, name: &str) -> Result<(), AppError> {
+        let file = self.versions_file().ok_or(AppError::NoPath)?;
+        let mut store = VersionStore::for_project(&file)?;
+        if !store.rename(id, name)? {
+            return Err(Self::no_version(id));
+        }
+        Ok(())
+    }
+
+    /// Deletes the version `id`: its file and its entry in the index go, nothing else (the song
+    /// is never a version and is not touched; audio files only a deleted version used are
+    /// removed by the next save, as for a pruned one). A protected version is refused until it
+    /// is unprotected. A failure leaves the version listed.
+    ///
+    /// # Errors
+    /// [`AppError::NoPath`] without a project file; a version that is missing or protected; I/O
+    /// errors.
+    pub fn delete_version(&mut self, id: u32) -> Result<(), AppError> {
+        let file = self.versions_file().ok_or(AppError::NoPath)?;
+        let mut store = VersionStore::for_project(&file)?;
+        let protected = store.get(id).ok_or_else(|| Self::no_version(id))?.protected;
+        if protected {
+            return Err(AppError::Model(ModelError::BadScope(
+                "this version is protected: unprotect it before deleting it".to_owned(),
+            )));
+        }
+        if !store.delete(id)? {
+            return Err(Self::no_version(id));
+        }
+        self.reject("Version deleted".to_owned());
+        Ok(())
+    }
+
+    fn no_version(id: u32) -> AppError {
+        AppError::Model(ModelError::BadScope(format!("there is no version {id}")))
     }
 
     /// A version's name, or its time when it has none, for a heading.

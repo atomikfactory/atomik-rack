@@ -107,12 +107,20 @@ pub(crate) struct Node {
     idle_time: Option<TimeInfo>,
     /// The descriptor has a stage above 0: its stages are skipped one by one.
     multi_stage: bool,
-    /// `Device::idle_ignored_inputs()` read at construction.
-    idle_ignored: &'static [SocketId],
     /// Batches skipped so far (test hook, see [`crate::Engine::idle_skipped`]); written by the
     /// thread that runs the node, read by the audio thread between batches. A batch of a
     /// multi-stage device counts when its last stage was skipped.
     pub(crate) skipped: u64,
+    /// Bit `n` is set while the sockets that `gather` zeroes for stage `n` (outputs, uncabled
+    /// inputs, note outputs) are known to hold nothing but `+0.0` and no note: the stage was
+    /// skipped in the batch before and nothing has written the node's buffers since. `gather`
+    /// then leaves them alone. Cleared by every `process`, by a new routing (the cables, so
+    /// which sockets are uncabled, may differ) and by every call that may change the device;
+    /// stages above 63 are never marked.
+    clean: u64,
+    /// The inputs the silence test reads, for every stage: `(stage, socket, is notes)`, less
+    /// the sockets the device ignores. Built at construction so the test does not walk outputs.
+    watched: Vec<(u8, usize, bool)>,
 }
 
 /// The cable routes of one stage of one device in one routing (a single-stage
@@ -217,10 +225,18 @@ impl Node {
     pub(crate) fn new(device: Box<dyn Device>) -> Self {
         let sockets = device.descriptor().sockets;
         let stages = device.descriptor().stages;
+        let idle_ignored = device.idle_ignored_inputs();
+        let watched = sockets
+            .iter()
+            .enumerate()
+            .filter(|(_, s)| {
+                s.direction.is_input() && (is_notes(s.kind) || !idle_ignored.contains(&s.id))
+            })
+            .map(|(i, s)| (stages.get(i).copied().unwrap_or(0), i, is_notes(s.kind)))
+            .collect();
         Self {
             has_meter_values: device.has_meter_values(),
             variable_latency: device.variable_latency(),
-            idle_ignored: device.idle_ignored_inputs(),
             stages,
             device,
             sockets,
@@ -252,6 +268,8 @@ impl Node {
             idle_time: None,
             multi_stage: stages.iter().any(|&s| s > 0),
             skipped: 0,
+            clean: 0,
+            watched,
         }
     }
 }
@@ -268,6 +286,7 @@ impl Node {
     /// its next `process`); a read-only question uses [`Node::ask`].
     pub(crate) fn contain<R>(&mut self, call: impl FnOnce(&mut dyn Device) -> R) -> Option<R> {
         self.idle = false;
+        self.clean = 0;
         self.ask(call)
     }
 
@@ -313,6 +332,11 @@ impl Node {
         push_with_headroom(buf, NoteEvent { offset, kind }).is_ok()
     }
 
+    /// Whether `gather` may leave the sockets of `stage` as they are (see [`Node::clean`]).
+    fn is_clean(&self, stage: u8) -> bool {
+        stage < 64 && self.clean & (1 << stage) != 0
+    }
+
     /// Stage of socket `i` (0 for single-stage devices).
     fn stage_of(&self, i: usize) -> u8 {
         self.stages.get(i).copied().unwrap_or(0)
@@ -332,17 +356,29 @@ impl Node {
         spare: &mut NoteBuffer,
         delays: &mut [DelayLine],
     ) -> u64 {
-        for (i, s) in self.sockets.iter().enumerate() {
-            if self.stage_of(i) != stage {
-                continue;
+        if self.is_clean(stage) {
+            // Skipped in the batch before: every output, uncabled input and note output of the
+            // stage is still empty. Only a summing input needs zeros again (its cables add in).
+            let mut last = usize::MAX;
+            for r in &routes.sum_in {
+                if r.socket != last {
+                    self.signals[r.socket] = [0.0; BATCH];
+                    last = r.socket;
+                }
             }
-            // A cabled single-source input is overwritten below: only outputs, summing inputs
-            // and uncabled inputs need zeros.
-            if !routes.signal_in.iter().any(|&(socket, _)| socket == i) {
-                self.signals[i] = [0.0; BATCH];
-            }
-            if s.direction == Direction::Output {
-                self.notes[i].clear();
+        } else {
+            for (i, s) in self.sockets.iter().enumerate() {
+                if self.stage_of(i) != stage {
+                    continue;
+                }
+                // A cabled single-source input is overwritten below: only outputs, summing
+                // inputs and uncabled inputs need zeros.
+                if !routes.signal_in.iter().any(|&(socket, _)| socket == i) {
+                    self.signals[i] = [0.0; BATCH];
+                }
+                if s.direction == Direction::Output {
+                    self.notes[i].clear();
+                }
             }
         }
         for &(socket, slot) in &routes.signal_in {
@@ -511,6 +547,8 @@ impl Node {
         if self.idle && !last && !self.device.idle_stage_runs(stage) {
             self.idle = false;
         }
+        // The device may write any buffer of the node.
+        self.clean = 0;
         let mut ctx =
             ProcessContext::new(time, &mut self.signals, &mut self.notes, &self.connected)
                 .with_playback(playback);
@@ -556,16 +594,13 @@ impl Node {
     /// No note event in any note input of `stage` and every audio and CV input of it that is
     /// cabled is bitwise `+0.0` (an input that is not cabled was left at zero by `gather`).
     fn inputs_silent(&self, stage: u8) -> bool {
-        self.sockets.iter().enumerate().all(|(i, s)| {
-            if !s.direction.is_input() || self.stage_of(i) != stage {
-                true
-            } else if is_notes(s.kind) {
-                self.notes[i].is_empty()
-            } else {
-                !self.connected[i]
-                    || self.idle_ignored.contains(&s.id)
-                    || self.signals[i].iter().all(|x| x.to_bits() == 0)
-            }
+        self.watched.iter().all(|&(of, i, notes)| {
+            of != stage
+                || if notes {
+                    self.notes[i].is_empty()
+                } else {
+                    !self.connected[i] || self.signals[i].iter().all(|x| x.to_bits() == 0)
+                }
         })
     }
 
@@ -581,6 +616,10 @@ impl Node {
             self.faulted = true;
             self.silence();
             return true;
+        }
+        // `gather` left the stage's sockets at zero and the device wrote nothing.
+        if stage < 64 {
+            self.clean |= 1 << stage;
         }
         // The time of the batch is kept by its last stage: the stages of one batch all compare
         // with the batch before it.
@@ -651,6 +690,7 @@ impl RoutingPlan {
             if let Some(node) = arena.node_mut(d.slot) {
                 node.routed = true;
                 node.idle = false;
+                node.clean = 0;
                 if node.connected.len() == d.connected.len() {
                     node.connected.copy_from_slice(&d.connected);
                 }
@@ -1811,5 +1851,83 @@ mod steady_tests {
         }));
         assert!(!with(&|t| t.ticks_per_frame *= 1.5));
         assert!(!steady(&a, &a), "the same batch twice is no advance");
+    }
+}
+
+#[cfg(test)]
+mod clean_tests {
+    use super::*;
+    use atomik_core::{SampleRate, Tempo};
+    use atomik_testkit::fakes::Passthrough;
+
+    fn time() -> TimeInfo {
+        TimeInfo::at(
+            0,
+            SampleRate::new(48_000.0).unwrap(),
+            Tempo::new(120.0).unwrap(),
+            false,
+        )
+    }
+
+    fn routes() -> Routes {
+        Routes {
+            signal_in: Vec::new(),
+            signal_out: Vec::new(),
+            notes_in: Vec::new(),
+            notes_out: Vec::new(),
+            sum_in: Vec::new(),
+            meters: Vec::new(),
+        }
+    }
+
+    /// Gathers stage 0 of `node` with nothing cabled.
+    fn gather(node: &mut Node) {
+        let mut spare = NoteBuffer::with_capacity(MAX_EVENTS_PER_BATCH);
+        node.gather(&routes(), 0, &[], &[], &mut spare, &mut []);
+    }
+
+    const OUT: usize = 1;
+
+    /// A buffer that the skipped batch left zero is not zeroed again, and every way into the
+    /// node's buffers (a `process`, a call that may change the device; a new routing clears it
+    /// in `RoutingPlan::install`) ends that. A stale value planted in the output shows whether `gather` wrote it.
+    #[test]
+    fn a_node_skipped_before_is_not_zeroed_again_until_something_can_write_it() {
+        let mut node = Node::new(Passthrough::boxed(1.0));
+        node.signals[OUT] = [0.5; BATCH];
+        gather(&mut node);
+        assert_eq!(node.signals[OUT], [0.0; BATCH], "a fresh node is zeroed");
+
+        assert!(!node.idle_batch(time(), 0, true));
+        assert!(node.is_clean(0));
+        node.signals[OUT] = [0.5; BATCH];
+        gather(&mut node);
+        assert_eq!(node.signals[OUT], [0.5; BATCH], "left alone while clean");
+
+        // Each of these may write the node's buffers: the next gather zeroes again.
+        type End = (&'static str, fn(&mut Node));
+        let ends: [End; 2] = [
+            ("a call that may change the device", |n| {
+                let _ = n.contain(|_| ());
+            }),
+            ("a process", |n| n.run_device(time(), 0, true, true)),
+        ];
+        for (what, end) in ends {
+            node.clean = 1;
+            end(&mut node);
+            assert!(!node.is_clean(0), "{what} ends the clean state");
+            gather(&mut node);
+            assert_eq!(node.signals[OUT], [0.0; BATCH], "{what}");
+            node.signals[OUT] = [0.5; BATCH];
+        }
+    }
+
+    /// A read-only question does not end it (it cannot write a buffer).
+    #[test]
+    fn a_read_only_question_keeps_the_clean_state() {
+        let mut node = Node::new(Passthrough::boxed(1.0));
+        assert!(!node.idle_batch(time(), 0, true));
+        let _ = node.ask(|_| ());
+        assert!(node.is_clean(0));
     }
 }

@@ -517,8 +517,10 @@ automatic, unprotected versions beyond the number to keep, and a name in the ind
 folder is dropped when the index is read, so no delete can reach outside it. `Job::run` in `app_core_save.rs` keeps
 the file a save replaces (`keep_replaced_file`: not when it equals the new text or the newest version, failures only
 logged), and the audio the kept versions list (`scan_assets` of the text) joins the set the orphan tidy keeps.
-`AppCore::save_version`, `versions`, `set_version_protected`, `restore_version` and `compare_version` are in
-`app_core_versions.rs`; `compare_version` loads the two songs and hands them to `compare_docs`
+`AppCore::save_version`, `versions`, `set_version_protected`, `rename_version`, `delete_version`, `restore_version` and
+`compare_version` are in `app_core_versions.rs`; `VersionStore::rename` and `delete` write the index without the entry
+(or with the new name) first and remove the file after it, and put the entry back when a step fails, so a version is
+never listed without its file; `compare_version` loads the two songs and hands them to `compare_docs`
 ([`model/src/doc_compare.rs`](../crates/model/src/doc_compare.rs)), a pure diff of two `RackDoc`s into `DocDiff`
 sections (song, tracks, devices, mixer) of short text lines, which the panel shows with `VersionsView::show_report`; the
 panel is [`ui/src/versions_panel.rs`](../crates/ui/src/versions_panel.rs) (`VersionsView`, `UiAction::Versions`), opened by
@@ -8409,7 +8411,10 @@ A bug in a device must cost that device, not the session. The rules:
   (less the sockets `Device::idle_ignored_inputs` names), no note, no playback batch, and the transport only
   advanced since the node's last batch (same tempo, playing state, time signature, loop, tune and harmony, the frame one
   batch on, the position still or one batch of ticks on, no loop wrap); a faulted node and a node on its own preview
-  clock are never skipped. The gather ran, so the outputs are `+0.0` and the node's note outputs are empty; the device
+  clock are never skipped. The gather ran, so the outputs are `+0.0` and the node's note outputs are empty (a node
+  skipped in the batch before is not zeroed again: `Node::clean`, one bit per stage, is set by a skipped stage and
+  cleared by every `process`, every `Node::contain`, and every routing install, so a buffer the device or a cable may
+  have written is always zeroed afresh; summing inputs are zeroed every batch); the device
   only gets `Device::idle_advance_stage(stage, BATCH)` (`idle_advance` for a single-stage device; inside the same
   `catch_unwind`, so a panic there is a fault like any other). The stages of a multi-stage device are decided one by
   one: a stage that runs ends the answer for the stages after it in the batch (they run too, and the device is asked

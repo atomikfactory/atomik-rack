@@ -9,6 +9,27 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Rename and delete a version in the version history.** In File > Versions, RENAME (or F2 on the list) puts the chosen
+  version's name in the name field and Enter or RENAME keeps it; an empty name clears it, so the version is listed by
+  its time again. DELETE (or the Delete key on the list) asks "Delete version ...? This cannot be undone." and then
+  removes the version's file and its line in the index, one version at a time. A protected version is not deleted until
+  it is unprotected (the button is off and its tooltip says why), and a failure leaves the version listed with its
+  file. A right-click on a row opens a menu with Restore, Compare, Rename, Protect and Delete. The project file and the
+  project format do not change; the song is never a version and is never deleted.
+
+### Changed
+- **The device CPU readout no longer allocates in a playing window.** Each pass (about five a second) rebuilt every
+  track's chain, name and owner list. They are now kept and read again only when the project changes; a pass
+  refreshes the percentages and the order in place. A playing frame of the fx-demo project now allocates nothing
+  (it was 800 heap operations over sixty frames). The figures and their order are the same as before.
+- **A device that stays silent costs the engine less.** A skipped device no longer has its outputs and unused inputs
+  zeroed again in every batch (they were left at zero by the batch before), and the test that its inputs are silent
+  reads only the inputs, not every socket. An idle channel strip takes about 0.2 us a batch instead of 0.4 us, an
+  idle bus about 0.3 us instead of 0.5 us. Rendered audio does not change, byte for byte.
+
+## [0.5.0-rc.3] - 2026-11-25
+
+### Added
 - **Performance setting: Auto, Full or Low power.** The Interface tab has a new Performance row. Low power draws every
   window at 30 frames a second instead of 60, renders each main window at three quarters of its size and stretches it
   to fit, and starts at most one render worker when the worker count is automatic (a count you fixed is never

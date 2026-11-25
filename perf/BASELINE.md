@@ -1249,6 +1249,68 @@ outliers and do not repeat in the other rows. The harness thread spins between c
 bounds of a driver's thread (caches and clock stay warm); only a comparison between builds on this machine means
 something.
 
+### Do the render workers help? (2026-11-25)
+
+The same harness, widened: `ATOMIK_TIMING_PROJECTS=all`, buffers 128 and 256, workers 0, 1, 2 and 4, 10 s per row
+after one second of warm-up (the default warm-up is three seconds since this run, see below). New rows:
+`stress-rack` (the bench's 100 devices; nothing plays in it, so it is mostly idle devices) and `console-64`,
+`console-128`, `console-256` (that many channel strips, each with a looping synth track, its gate and its compressor
+on). The new `engaged` column is the share of the timed callbacks in which the workers were woken. The desktop was
+in use during the runs. 32 threads; each cell is p50 / p99 / max in microseconds, then misses:
+
+| project | buffer | w0 | w1 | w2 | w4 | engaged (w1 / w2 / w4) |
+|---|---|---|---|---|---|---|
+| fx-demo | 128 | 328 / 1049 / 3061, 1 | 229 / 655 / 1408, 0 | 229 / 393 / 698, 0 | 229 / 459 / 1031, 0 | 39 / 20 / 20 % |
+| fx-demo | 256 | 459 / 655 / 762, 0 | 459 / 655 / 1465, 0 | 459 / 655 / 743, 0 | 459 / 918 / 1486, 0 | 20 / 20 / 20 % |
+| stress-song | 128 | 164 / 393 / 980, 0 | 164 / 393 / 775, 0 | 197 / 786 / 9689, 1 | 164 / 655 / 3430, 1 | 20 / 41 / 31 % |
+| stress-song | 256 | 393 / 1049 / 2491, 0 | 393 / 1311 / 2012, 0 | 393 / 1049 / 2685, 0 | 393 / 1311 / 2366, 0 | 40 / 24 / 20 % |
+| stress-rack | 128 | 524 / 1573 / 3984, 2 | 459 / 1049 / 1942, 0 | 393 / 1311 / 5359, 1 | 393 / 1311 / 4188, 4 | 100 / 100 / 100 % |
+| stress-rack | 256 | 918 / 1835 / 2663, 0 | 918 / 1835 / 3304, 0 | 918 / 2621 / 3663, 0 | 786 / 2097 / 5384, 1 | 100 / 100 / 100 % |
+| console-64 | 128 | 786 / 2621 / 20106, 23 | 655 / 2097 / 14591, 16 | 655 / 2097 / 3931, 11 | 655 / 3146 / 7081, 36 | 100 / 100 / 100 % |
+| console-64 | 256 | 1311 / 3670 / 7340, 3 | 1311 / 3670 / 6705, 2 | 1311 / 3670 / 8601, 2 | 1311 / 4194 / 20321, 8 | 100 / 100 / 100 % |
+| console-128 | 128 | 1311 / 3670 / 4973, 113 | 1311 / 3670 / 5429, 118 | 1311 / 3670 / 5982, 102 | 918 / 3146 / 5144, 67 | 100 / 100 / 100 % |
+| console-128 | 256 | 2097 / 4194 / 6338, 2 | 1835 / 3670 / 3883, 0 | 1835 / 3584 / 3584, 0 | 1835 / 2621 / 3228, 0 | 100 / 100 / 100 % |
+| console-256 | 128 | 1835 / 5243 / 7016, 432 | 2097 / 3670 / 4546, 192 | 1835 / 3146 / 4589, 84 | 1835 / 2621 / 4178, 18 | 100 / 100 / 100 % |
+| console-256 | 256 | 4194 / 10486 / 12299, 141 | 3670 / 6292 / 8616, 16 | 3670 / 6292 / 8045, 44 | 3146 / 5243 / 6072, 1 | 100 / 100 / 100 % |
+
+What it says. Where the plan is heavy enough that the gate keeps the workers on (the rows at 100 %), the workers help
+exactly when the work per batch is a large share of the period: `console-256` goes from 432 misses (128 frames, no
+worker) to 192, 84 and 18 with 1, 2 and 4 workers, and from 141 to 16, 44 and 1 at 256 frames; `console-128` improves
+at 256 frames and with 4 workers at 128; `console-64` and `stress-rack` are within the noise of this machine (their
+worst single callbacks are tens of milliseconds in rows of every worker count). So workers win on heavy projects.
+
+On the light projects the first run looked as if two workers lost (a higher p99 and max), but those rows are not
+steady state: the load rule holds the workers busy for one second after the transport starts and needs one more
+second under 20 % of the budget before it calms down, and the one-second warm-up left part of that start-up in the
+timed rows (the `engaged` column: 20 % and more, against 0 % in a settled row). With three seconds of warm-up (this
+harness now), the same light projects, 10 s per row, 32 threads:
+
+| project | buffer | w0 | w2 | w4 | engaged (w2 / w4) |
+|---|---|---|---|---|---|
+| fx-demo | 128 | 262 / 655 / 1387, 0 | 262 / 655 / 1320, 0 | 262 / 786 / 1136, 0 | 0 / 0 % |
+| fx-demo | 256 | 524 / 1311 / 2015, 0 | 655 / 1311 / 3227, 0 | 655 / 1573 / 5151, 0 | 20 / 31 % |
+| stress-song | 128 | 164 / 524 / 1987, 0 | 164 / 459 / 1043, 0 | 164 / 655 / 7017, 2 | 0 / 20 % |
+| stress-song | 256 | 328 / 655 / 1646, 0 | 328 / 655 / 1510, 0 | 328 / 655 / 820, 0 | 0 / 0 % |
+
+The workers sleep in most cells and the p99 equals the no-worker row; the cells that still show 20 to 31 % are runs
+where the load of the desktop pushed the cost over the 30 % share for a while, which is when the rule wakes them.
+
+Process affinity 0xF (two cores, four threads), same sweep, one-second warm-up: one worker is as good as none on the
+light projects (`fx-demo` 128 frames: p99 459 against 393 us, no misses), but two or four workers on four threads are
+worse than none as soon as the gate engages them: `fx-demo` 128 frames 157 misses with 2 workers and 1316 with 4,
+`stress-song` 256 frames 213 and 1608 against 0, and the heavy rows are overloaded with any count (`console-128` 128
+frames: 1352 misses with none, 1015 with 1, 1328 with 2, 3378 with 4). The audio thread plus the workers outnumber the
+hardware threads, and a spinning worker takes the audio thread's core. The automatic count already avoids that:
+`auto_workers_for` gives one worker for two cores and `cap_workers` leaves a thread for the audio thread, so two
+workers on four threads is a setting no automatic rule picks.
+
+Decision: no change to the rule. The gate keeps the workers asleep on a light project once it has settled (about two
+seconds after Play), and the workers win on the heavy ones. The two-second start-up window is deliberate (a song that
+starts dense must not take its first batches late). The harness gained the worker, buffer and project lists, the
+heavier generated projects, the `engaged` column and a three-second warm-up. Left to the owner: `stress-rack` stays
+100 % engaged at about 20 % of the budget at the median with no clear worker gain; that is the safe side by design (a
+busy plan does not calm down while the time seen on a worker is over 50 % of the budget).
+
 ### Children with no console host (2026-11-25)
 
 The same sweep, the same machine and build, after the sandbox and the scanner started their children with
@@ -1357,9 +1419,11 @@ and `RackView::set_mix_meters` / `set_device_meter_values` (a key clone each to 
 `tempo_lane::tempo_at`, which built a tempo table for the playhead position. The meter feed now keeps its readings in a buffer
 (`AppCore::console_readings_into`) and hands the console the keys of `meter_points` by reference (`ConsoleView::set_meters_of`),
 the rack looks a device up by the borrowed text of its key (`RackView::local_name`), and the arrangement compiles its tempo
-once per song change (`tempo_lane::TempoCurve`). What remains while playing happens in five of the sixty frames, one per
-window of the device CPU readout (`AppCore::feed_cpu_loads` rebuilding each track's chain summary, about 140 heap operations
-a pass); `crates/app/tests/idle_frame_alloc.rs` bounds both counts (0 idle, 800 playing).
+once per song change (`tempo_lane::TempoCurve`). The device CPU readout used to allocate in five of the sixty playing frames (one per window, `AppCore::feed_cpu_loads`
+rebuilding each track's chain summary, about 140 heap operations a pass: 800 over sixty frames). It now keeps the
+chains, names and owner map and rebuilds them only when the document revision changes; every other pass refreshes the
+percentages and the order in place, so the playing frames allocate nothing either (800 before, 0 now);
+`crates/app/tests/idle_frame_alloc.rs` asserts 0 for both counts (the readout switched off, as it is by default).
 ## A headless edit loop for ten minutes (2026-11-24)
 
 `crates/mcp/tests/soak.rs` (see [docs/TESTING.md](../docs/TESTING.md#the-headless-soak-ignored-by-default)): the
@@ -1492,3 +1556,24 @@ params   before (all built at start)   at start, after   after 5 plugins are rea
 descriptor read is the same one. A catalogue of 132 plugins with 500 parameters each holds 7.3 MiB less until something
 reads a descriptor. What reads one: a plugin placed in a project (or in the rack), a project that names the plugin,
 the stand-in of a missing plugin, a layout change reported by a live plugin. Nothing on the audio thread does.
+
+## A skipped device is not zeroed again (2026-11-25)
+
+The strips of the section above, `cargo bench -p atomik-render --bench render_batch -- "idle/(channel|bus)"`, skip on,
+256 batches of twenty strips, median of 21 samples (the machine was busier than for the earlier rows: the skip-off
+rows read 6.7 to 7.7 ms against 5.1 to 5.6 then, so the before figures are re-measured on the same tree and run).
+Before is the tree this change started from, after has `Node::clean` (a skipped stage's sockets are not zeroed
+again) and the silence test over a list of the inputs.
+
+| row | before, runs | after, runs |
+|---|---|---|
+| 20 idle channel strips | 2.694 ms, 2.703 ms, 2.145 ms, 2.173 ms | 1.058 ms, 1.146 ms, 1.195 ms |
+| 20 idle bus strips | 2.822 ms, 3.497 ms, 2.927 ms, 2.722 ms | 1.521 ms, 1.293 ms, 1.672 ms |
+| silent-strips-64, workers 0 | 433.9 ms, 468.1 ms | 345.9 ms, 385.0 ms |
+| console-64, workers 0 (busy, must not rise) | 1.661 s, 1.617 s | 1.580 s, 1.577 s |
+
+That is 0.21 to 0.23 us a batch per idle channel strip (0.42 to 0.53 before) and 0.25 to 0.33 us per bus strip
+(0.53 to 0.68 before); the busy row did not rise. The
+time went to the engine's gather (forty sockets of 64 samples zeroed, and for every output a scan of the cabled-input
+list to decide whether to zero it) and to the silence test walking all the sockets; the copies of a skipped node's
+outputs to their slots and the meter publication remain.

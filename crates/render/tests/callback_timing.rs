@@ -17,7 +17,11 @@
 //! ```
 //!
 //! `ATOMIK_TIMING_SECONDS` sets the audio per row (default 30), `ATOMIK_TIMING_OUT` a file the
-//! table is also written to. The plain test runs a fraction of a second of one row to keep the
+//! table is also written to. `ATOMIK_TIMING_WARMUP` sets the untimed audio before each row
+//! (default 3). `ATOMIK_TIMING_BUFFERS`, `ATOMIK_TIMING_WORKERS` (comma lists) and
+//! `ATOMIK_TIMING_PROJECTS` (comma list of project names, or `all` to add the heavier generated
+//! ones) narrow or widen the table. The `engaged` column is the share of callbacks in which
+//! the render workers were woken (their parks per callback and worker). The plain test runs a fraction of a second of one row to keep the
 //! harness itself honest.
 #![allow(
     clippy::disallowed_methods,
@@ -32,7 +36,9 @@ use atomik_engine::{
     new_engine_with_options,
 };
 use atomik_model::RackDoc;
-use atomik_model::stress::stress_song_doc;
+use atomik_model::stress::{
+    STRESS_CABLES, STRESS_DEVICES, console_doc, stress_doc, stress_song_doc,
+};
 use atomik_render::build::build_with_devices;
 use atomik_render::project::{
     console_options, expanded_ids, player_data_maps, sampler_maps, song_input_live,
@@ -47,8 +53,10 @@ const BUFFERS: [usize; 4] = [64, 128, 256, 512];
 const WORKERS: [u16; 2] = [0, 2];
 /// Audio per row when `ATOMIK_TIMING_SECONDS` is not set.
 const DEFAULT_SECONDS: f64 = 30.0;
-/// Callbacks before the timed ones: the workers start, the pages the song touches are in.
-const WARM_UP_SECONDS: f64 = 1.0;
+/// Audio before the timed callbacks when `ATOMIK_TIMING_WARMUP` is not set: the workers start, the
+/// pages the song touches are in, and the load rule has left its start-of-play hold (one second)
+/// and its calming time (another second), so a row shows the state the rule settles in.
+const WARM_UP_SECONDS: f64 = 3.0;
 /// The factory demo with the most work per second of audio (see `perf/BASELINE.md`).
 const HEAVY_DEMO: &str = "fx-demo";
 
@@ -145,6 +153,8 @@ struct Row {
     stats: CallbackStats,
     misses: u64,
     period_ns: u64,
+    /// Share of the timed callbacks in which the workers were woken, in percent.
+    engaged: f64,
 }
 
 impl Row {
@@ -155,7 +165,7 @@ impl Row {
     fn line(&self) -> String {
         let us = |ns: u64| ns as f64 / 1_000.0;
         format!(
-            "| {} | {} | {} | {} | {:.1} | {:.1} | {:.1} | {} | {:.1} % |",
+            "| {} | {} | {} | {} | {:.1} | {:.1} | {:.1} | {} | {:.1} % | {:.1} % |",
             self.project,
             self.buffer,
             self.workers,
@@ -164,13 +174,14 @@ impl Row {
             us(self.stats.time_percentile_ns(99.0)),
             us(self.stats.max_ns),
             self.misses,
-            self.p99_share() * 100.0
+            self.p99_share() * 100.0,
+            self.engaged
         )
     }
 }
 
-const HEADER: &str = "| project | buffer | workers | callbacks | p50 us | p99 us | max us | misses | p99 / period |\n\
-                      |---|---|---|---|---|---|---|---|---|";
+const HEADER: &str = "| project | buffer | workers | callbacks | p50 us | p99 us | max us | misses | p99 / period | engaged |\n\
+                      |---|---|---|---|---|---|---|---|---|---|";
 
 /// Drives `engine` for `seconds` of audio in callbacks of `buffer` frames on the absolute
 /// schedule and records each callback's processing time.
@@ -187,11 +198,20 @@ fn run_row(
     let mut out = vec![vec![0.0f32; buffer]; channels];
     let period = Duration::from_secs_f64(buffer as f64 / SAMPLE_RATE);
     let callbacks = ((seconds * SAMPLE_RATE) / buffer as f64).ceil() as u64;
-    let warm_up = ((WARM_UP_SECONDS * SAMPLE_RATE) / buffer as f64).ceil() as u64;
+    let warm_seconds = std::env::var("ATOMIK_TIMING_WARMUP")
+        .ok()
+        .and_then(|v| v.parse::<f64>().ok())
+        .filter(|s| *s >= 0.0)
+        .unwrap_or(WARM_UP_SECONDS);
+    let warm_up = ((warm_seconds * SAMPLE_RATE) / buffer as f64).ceil() as u64;
     let mut stats = CallbackStats::default();
     let mut misses = 0;
     let start = Instant::now() + Duration::from_millis(50);
+    let mut parks_at_warm_up = 0;
     for k in 0..warm_up + callbacks {
+        if k == warm_up {
+            parks_at_warm_up = engine.worker_parks();
+        }
         wait_for(start + period * k as u32);
         let began = Instant::now();
         let mut outs: Vec<&mut [f32]> = out.iter_mut().map(Vec::as_mut_slice).collect();
@@ -209,6 +229,12 @@ fn run_row(
         out.iter().flatten().all(|s| s.is_finite()),
         "the project rendered a non-finite sample"
     );
+    let parks = engine.worker_parks().saturating_sub(parks_at_warm_up);
+    let engaged = if workers == 0 || callbacks == 0 {
+        0.0
+    } else {
+        (parks as f64 / (callbacks as f64 * f64::from(workers))).min(1.0) * 100.0
+    };
     Row {
         project: project.to_string(),
         buffer,
@@ -217,11 +243,25 @@ fn run_row(
         stats,
         misses,
         period_ns: u64::try_from(period.as_nanos()).unwrap_or(u64::MAX),
+        engaged,
+    }
+}
+
+/// A comma list in the environment variable `name`, parsed; `default` when unset or empty.
+fn env_list<T: std::str::FromStr + Clone>(name: &str, default: &[T]) -> Vec<T> {
+    let list: Vec<T> = std::env::var(name)
+        .map(|v| v.split(',').filter_map(|p| p.trim().parse().ok()).collect())
+        .unwrap_or_default();
+    if list.is_empty() {
+        default.to_vec()
+    } else {
+        list
     }
 }
 
 /// The projects of the table: the heaviest factory demo and the generated stress song the
-/// benches use.
+/// benches use; `ATOMIK_TIMING_PROJECTS` names a subset, and `all` adds the stress rack and
+/// consoles of 64, 128 and 256 busy strips.
 fn projects() -> Vec<(String, RackDoc, Option<PathBuf>)> {
     let registry = default_registry();
     let file = examples()
@@ -230,10 +270,28 @@ fn projects() -> Vec<(String, RackDoc, Option<PathBuf>)> {
     let text = atomik_model::read_document_text(&file).expect("the demo reads");
     let demo = atomik_model::load_project(&text, &registry).expect("the demo loads");
     let root = bundle::existing_bundle_root(&file);
-    vec![
+    let wanted: Vec<String> = env_list("ATOMIK_TIMING_PROJECTS", &[]);
+    let all = wanted.iter().any(|w| w == "all");
+    let want = |name: &str| wanted.is_empty() || all || wanted.iter().any(|w| w == name);
+    let mut list = vec![
         (HEAVY_DEMO.to_string(), demo, root),
         ("stress-song".to_string(), stress_song_doc(&registry), None),
-    ]
+    ];
+    if all || wanted.iter().any(|w| w == "stress-rack") {
+        let rack = stress_doc(&registry, STRESS_DEVICES, STRESS_CABLES);
+        list.push(("stress-rack".to_string(), rack, None));
+    }
+    for strips in [64, 128, 256] {
+        if all || wanted.iter().any(|w| *w == format!("console-{strips}")) {
+            list.push((
+                format!("console-{strips}"),
+                console_doc(&registry, strips),
+                None,
+            ));
+        }
+    }
+    list.retain(|(name, _, _)| want(name));
+    list
 }
 
 #[test]
@@ -285,9 +343,11 @@ fn callback_timing_release() {
         "callback timing, {seconds} s of audio per row at 48 kHz, realtime engine\n\n{HEADER}\n"
     );
     println!("{table}");
+    let buffers: Vec<usize> = env_list("ATOMIK_TIMING_BUFFERS", &BUFFERS);
+    let worker_counts: Vec<u16> = env_list("ATOMIK_TIMING_WORKERS", &WORKERS);
     for (name, doc, root) in projects() {
-        for buffer in BUFFERS {
-            for workers in WORKERS {
+        for &buffer in &buffers {
+            for &workers in &worker_counts {
                 let row = run_row(&name, &doc, root.as_deref(), buffer, workers, seconds);
                 let line = row.line();
                 println!("{line}");

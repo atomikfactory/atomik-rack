@@ -407,3 +407,75 @@ fn the_preview_level_is_saved_in_the_settings_and_comes_back_next_time() {
     assert_eq!(again.core().preview_db(), -9.0);
     assert_eq!(again.core().file_browser().preview_db(), -9.0);
 }
+
+#[test]
+fn rename_in_the_panel_changes_the_name_and_an_empty_name_clears_it() {
+    let t = Tmp::new("rename");
+    let mut s = saved(&t);
+    s.execute(AppCommand::Versions);
+    key(&mut s, Key::F(2));
+    assert_eq!(s.versions_view().unwrap().renaming_id(), Some(1));
+    type_text(&mut s, "Early draft");
+    key(&mut s, Key::Enter);
+    assert_eq!(s.core().versions().unwrap()[0].name, "Early draft");
+    let v = s.versions_view().unwrap();
+    assert_eq!(v.renaming_id(), None);
+    assert_eq!(v.name(), "");
+    assert_eq!(v.items()[0].name, "Early draft");
+    // Clear it again: F2 on the list, empty the field, Enter.
+    s.versions.as_mut().unwrap().focus_list();
+    key(&mut s, Key::F(2));
+    for _ in 0.."Early draft".len() {
+        key(&mut s, Key::Backspace);
+    }
+    key(&mut s, Key::Enter);
+    assert_eq!(s.core().versions().unwrap()[0].name, "");
+    assert_eq!(s.versions_view().unwrap().items()[0].name, "");
+}
+
+#[test]
+fn delete_in_the_panel_asks_and_then_removes_the_version() {
+    let t = Tmp::new("delete");
+    let mut s = saved(&t);
+    s.execute(AppCommand::Versions);
+    key(&mut s, Key::Delete);
+    assert_eq!(s.versions_view().unwrap().confirming_id(), Some(1));
+    assert_eq!(
+        s.core().versions().unwrap().len(),
+        1,
+        "nothing is deleted yet"
+    );
+    // Esc leaves the question, not the panel.
+    key(&mut s, Key::Escape);
+    assert!(s.versions_open());
+    assert_eq!(s.versions_view().unwrap().confirming_id(), None);
+    key(&mut s, Key::Delete);
+    key(&mut s, Key::Enter);
+    assert!(s.core().versions().unwrap().is_empty());
+    assert!(s.versions_view().unwrap().items().is_empty());
+    assert!(s.versions_open());
+}
+
+#[test]
+fn a_protected_version_is_not_asked_about_and_a_failed_delete_leaves_it_listed() {
+    let t = Tmp::new("delete-guard");
+    let mut s = saved(&t);
+    s.core_mut().set_version_protected(1, true).unwrap();
+    s.execute(AppCommand::Versions);
+    key(&mut s, Key::Delete);
+    assert_eq!(s.versions_view().unwrap().confirming_id(), None);
+    assert_eq!(s.core().versions().unwrap().len(), 1);
+    // A failure shows a message and the list still has the version.
+    s.core_mut().set_version_protected(1, false).unwrap();
+    s.refresh_versions(false);
+    let file = atomik_audio_file::VersionStore::for_project(&s.core().versions_file().unwrap())
+        .unwrap()
+        .path_of(1)
+        .unwrap();
+    std::fs::remove_file(&file).unwrap();
+    std::fs::create_dir(&file).unwrap();
+    key(&mut s, Key::Delete);
+    key(&mut s, Key::Enter);
+    assert_eq!(s.versions_view().unwrap().items().len(), 1);
+    assert_eq!(s.core().versions().unwrap().len(), 1);
+}

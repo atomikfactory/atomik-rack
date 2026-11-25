@@ -1159,6 +1159,56 @@ fn a_tracks_cpu_is_the_sum_of_its_instrument_channel_and_insert_effects() {
 }
 
 #[test]
+fn the_cpu_chains_follow_a_track_added_removed_or_renamed_between_passes() {
+    let mut c = core_with(1);
+    let lead_chain = atomik_model::track_chain(c.doc(), c.registry(), &key("lead")).unwrap();
+    let mut loads = vec![
+        (key("lead"), 6.0),
+        (lead_chain.channel, 2.0),
+        (key("bass"), 3.0),
+    ];
+    feed_loads(&mut c, &loads, 0);
+    feed_loads(&mut c, &loads, 1);
+    let names: Vec<_> = c.track_cpu().iter().map(|t| t.name.clone()).collect();
+    assert_eq!(names, ["Lead", "Bass"], "heaviest first");
+    // A rename shows on the next pass, in the track and in the owner of its devices.
+    c.apply_command(Command::Rename {
+        key: key("bass"),
+        name: "Sub".into(),
+    })
+    .unwrap();
+    feed_loads(&mut c, &loads, 2);
+    assert_eq!(c.track_cpu()[1].name, "Sub");
+    // A track added between two passes is summed from then on.
+    c.apply_command(Command::Workflow(WorkflowCommand::CreateInstrument {
+        index: usize::MAX,
+        source: CreateSource::Type("atomik.poly-synth".into()),
+        key: Some(key("pad")),
+        options: CreateOptions::default(),
+    }))
+    .unwrap();
+    loads.push((key("pad"), 20.0));
+    // The first reading of a device only starts its window; the load follows with the next.
+    feed_loads(&mut c, &loads, 3);
+    feed_loads(&mut c, &loads, 4);
+    assert_eq!(c.track_cpu().len(), 3);
+    assert_eq!(
+        c.track_cpu()[0].track,
+        key("pad"),
+        "the new track is the heaviest"
+    );
+    assert!(c.track_cpu()[0].percent > 0.0);
+    // A track removed between two passes leaves the list.
+    c.apply_command(Command::Song(SongCommand::RemoveTrack {
+        device: key("bass"),
+    }))
+    .unwrap();
+    feed_loads(&mut c, &loads, 5);
+    assert!(c.track_cpu().iter().all(|t| t.track != key("bass")));
+    assert_eq!(c.track_cpu().len(), 2);
+}
+
+#[test]
 fn the_heaviest_devices_name_their_tracks_and_a_container_counts_once() {
     let mut c = core_with(1);
     let chain = atomik_model::track_chain(c.doc(), c.registry(), &key("lead")).unwrap();
