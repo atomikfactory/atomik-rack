@@ -6,6 +6,7 @@
 
 use crate::keyboard_tab::{PAD, TITLE, TabOutcome};
 use crate::keymap_store::{ReverseMode, WorkflowPrefs, ZOOM_STEPS};
+use crate::performance::{Level, Performance};
 use atomik_model::ThinLevel;
 use atomik_ui::kurbo::{Point, Rect, RoundedRect};
 use atomik_ui::widget::KnobRange;
@@ -36,6 +37,8 @@ pub struct UiPrefs {
     pub reverse_mode: ReverseMode,
     /// How many automatic versions a save keeps.
     pub keep_versions: u32,
+    /// The frame rate, render size and automatic worker count.
+    pub performance: Performance,
 }
 
 /// The numbers of automatic versions the row steps through.
@@ -69,6 +72,7 @@ impl UiPrefs {
             auto_color: prefs.auto_color,
             reverse_mode: prefs.reverse_mode,
             keep_versions: prefs.keep_versions,
+            performance: prefs.performance,
         }
     }
 
@@ -82,6 +86,7 @@ impl UiPrefs {
         prefs.auto_color = self.auto_color;
         prefs.reverse_mode = self.reverse_mode;
         prefs.keep_versions = self.keep_versions;
+        prefs.performance = self.performance;
     }
 }
 
@@ -104,6 +109,8 @@ pub enum UiRow {
     ReverseMode,
     /// How many automatic versions a save keeps (steps through [`KEEP_VERSIONS_STEPS`]).
     KeepVersions,
+    /// The frame rate, render size and automatic workers (steps through the choices).
+    Performance,
 }
 
 /// One row of the tab.
@@ -147,6 +154,8 @@ pub struct InterfaceTab {
     prefs: UiPrefs,
     /// The name of the theme in use when it is neither Dark nor Light nor System.
     custom: Option<String>,
+    /// What Auto picks on this machine (shown on the Performance row).
+    auto: Level,
     hover: Option<Point>,
 }
 
@@ -156,6 +165,7 @@ impl InterfaceTab {
         Self {
             prefs,
             custom: None,
+            auto: Level::Full,
             hover: None,
         }
     }
@@ -163,6 +173,11 @@ impl InterfaceTab {
     /// Names the theme in use when it is one of the Themes tab's (shown on the Theme row).
     pub fn set_custom(&mut self, name: Option<String>) {
         self.custom = name;
+    }
+
+    /// Names what Auto picked on this machine (shown on the Performance row).
+    pub fn set_auto_level(&mut self, auto: Level) {
+        self.auto = auto;
     }
 
     /// Replaces the edited preferences.
@@ -240,6 +255,13 @@ impl InterfaceTab {
                 self.prefs.keep_versions.to_string(),
                 false,
             ),
+            (
+                UiRow::Performance,
+                "Performance",
+                "Low power: 30 frames a second, a smaller picture, fewer workers. Auto: 4 CPUs or fewer.",
+                self.prefs.performance.label(self.auto).to_string(),
+                false,
+            ),
         ] {
             let rect = Rect::new(x0, y, x0 + inner, y + ROW);
             let button = if matches!(which, UiRow::ValueTooltips | UiRow::AutoColor) {
@@ -291,6 +313,9 @@ impl InterfaceTab {
             UiRow::ReverseMode => self.prefs.reverse_mode = self.prefs.reverse_mode.next(),
             UiRow::KeepVersions => {
                 self.prefs.keep_versions = step_keep_versions(self.prefs.keep_versions, back);
+            }
+            UiRow::Performance => {
+                self.prefs.performance = self.prefs.performance.step(back);
             }
             UiRow::AutomationThinning => {
                 let all = ThinLevel::ALL;

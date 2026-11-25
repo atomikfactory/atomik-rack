@@ -59,7 +59,7 @@ pub fn default_file_name() -> &'static str {
 
 /// Writes [`device_info_text`] to `path`.
 pub fn export(registry: &Registry, path: &Path) -> std::io::Result<()> {
-    std::fs::write(path, device_info_text(registry))
+    crate::recovery::atomic_write(path, device_info_text(registry).as_bytes())
 }
 
 #[cfg(test)]

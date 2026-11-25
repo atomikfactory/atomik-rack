@@ -141,7 +141,7 @@ impl DockFrames {
     ) -> Result<(), String> {
         for frame in self.frames.values_mut() {
             let bar_h = frame.bar_height();
-            let surface = gpu.create_surface(Arc::clone(&frame.bar), frame.size.0, bar_h)?;
+            let surface = gpu.create_surface(Arc::clone(&frame.bar), frame.size.0, bar_h, 1.0)?;
             frame.surface = Some(surface);
             frame.paint(gpu, text);
         }
@@ -287,7 +287,7 @@ impl DockFrames {
                 return;
             }
         };
-        let surface = match gpu.create_surface(Arc::clone(&bar), size.0, bar_h) {
+        let surface = match gpu.create_surface(Arc::clone(&bar), size.0, bar_h, 1.0) {
             Ok(s) => Some(s),
             Err(e) => {
                 log::warn!("the title bar of a docked plugin editor has no surface: {e}");

@@ -146,7 +146,7 @@
 
 use crate::about_box::{AboutBox, AboutOutcome};
 use crate::app_core::{
-    AppCore, AppError, FreezeThrough, MidiExport, Pane, Revealed, TabExportFormat,
+    AppCore, AppError, FaultBypass, FreezeThrough, MidiExport, Pane, Revealed, TabExportFormat,
 };
 use crate::commands::{AppCommand, Menu, MenuState, ScaleStep, SongList, menus_with_songs};
 use crate::context_menus::{self, MenuEnable};
@@ -620,6 +620,9 @@ pub struct Shell<B: AudioBackend> {
     guide: Option<Guide>,
     /// The operating system is set to a dark theme (what the System theme choice follows).
     system_dark: bool,
+    /// What the Auto choice of the Performance setting picked on this machine (decided once at
+    /// start; Full until the program says, see [`Self::set_auto_level`]).
+    auto_level: crate::performance::Level,
     /// The language the views were last drawn in ([`Shell::sync_language`] notices a change).
     shown_language: atomik_ui::Lang,
     /// The rack split before a double-click on the divider collapsed the rack: the next
@@ -637,6 +640,10 @@ pub struct Shell<B: AudioBackend> {
     status: String,
     /// The engine fault already announced with a toast (cleared when the fault is).
     fault_announced: bool,
+    /// The budget of automatic restarts after an engine fault, and the one that is waiting.
+    fault_restart: crate::fault_restart::FaultRestart,
+    /// The device the waiting restart is for (the engine's id of it).
+    fault_device: Option<u32>,
     /// The dead stream (stalled or lost) already announced with a toast, and already reset to
     /// the default devices (both cleared when the stream is alive again).
     stream_announced: bool,
@@ -958,6 +965,7 @@ impl<B: AudioBackend> Shell<B> {
             dialog: None,
             about: None,
             system_dark: true,
+            auto_level: crate::performance::Level::Full,
             shown_language: atomik_ui::i18n::language(),
             split_before: None,
             ports_listed_at: None,
@@ -968,6 +976,8 @@ impl<B: AudioBackend> Shell<B> {
             wins: BTreeMap::from([(WindowKind::Main, WinState::new(MAIN_SIZE, 1.0, Pane::Rack))]),
             status: String::new(),
             fault_announced: false,
+            fault_restart: crate::fault_restart::FaultRestart::default(),
+            fault_device: None,
             stream_announced: false,
             stream_reset: false,
             overload: OverloadStats::default(),
@@ -2867,7 +2877,13 @@ impl<B: AudioBackend> Shell<B> {
     /// the preference says not to). Only the app's window calls it; the headless and MCP
     /// sessions never do, so they never show the screen.
     pub fn start_without_project(&mut self) {
-        if self.restore_last_project() {
+        self.start_without_project_with(true);
+    }
+
+    /// [`Self::start_without_project`], with `reopen_last` false to skip the last-project
+    /// preference (safe mode).
+    pub fn start_without_project_with(&mut self, reopen_last: bool) {
+        if reopen_last && self.restore_last_project() {
             return;
         }
         self.start_with_default_song();
@@ -4122,6 +4138,8 @@ impl<B: AudioBackend> Shell<B> {
             .set_reverse_mode(self.workflow.reverse_mode.graphical());
         self.core.set_midi_resolution(self.workflow.midi_resolution);
         self.core.set_keep_versions(self.workflow.keep_versions);
+        let low = self.performance_level().is_low();
+        self.core.sink_mut().set_low_power(low);
         self.core.set_backup(
             self.workflow.backup_folder.clone(),
             self.workflow.backup_keep,
@@ -4158,6 +4176,7 @@ impl<B: AudioBackend> Shell<B> {
                 self.workflow.clone(),
             )
             .with_themes(self.theme_rows(), self.system_dark);
+        dialog.set_auto_level(self.auto_level);
         dialog.set_camera_models(self.core.camera_models());
         dialog.set_camera_project(self.core.camera_override());
         if let Some(tab) = tab {
@@ -4166,6 +4185,23 @@ impl<B: AudioBackend> Shell<B> {
         dialog.set_profile_options(self.profile_options());
         self.dialog = Some(dialog);
         self.close_menubars();
+    }
+
+    /// Tells the shell what Auto picks on this machine (once, at start: it never switches while the
+    /// program runs).
+    pub fn set_auto_level(&mut self, auto: crate::performance::Level) {
+        if self.auto_level != auto {
+            self.auto_level = auto;
+            let low = self.performance_level().is_low();
+            self.core.sink_mut().set_low_power(low);
+            self.repaint = true;
+        }
+    }
+
+    /// The level the Performance setting runs at now: the frame rate, the render size and the
+    /// automatic worker count of every window and engine follow it.
+    pub fn performance_level(&self) -> crate::performance::Level {
+        self.workflow.performance.level(self.auto_level)
     }
 
     /// The theme in use: the preference, with the System choice following the operating system.
@@ -6948,6 +6984,7 @@ impl<B: AudioBackend> Shell<B> {
                     self.core.camera_delete_models();
                     dialog.set_camera_models(self.core.camera_models());
                 }
+                DialogOutcome::Rescan => self.rescan_devices(),
                 DialogOutcome::SetUpController => self.open_controller_wizard(),
                 DialogOutcome::ExportController => {
                     return vec![ShellRequest::PickExportController];
@@ -11646,13 +11683,14 @@ impl<B: AudioBackend> Shell<B> {
     }
 
     /// While the Audio Settings dialog is open, lists the MIDI ports again once a second so a
-    /// controller plugged in or removed shows without reopening the dialog, and opens the
-    /// enabled inputs that have appeared.
+    /// controller plugged in or removed shows without reopening the dialog. The audio hosts and
+    /// devices are not listed here: that asks every driver, some of them slowly, so it happens
+    /// when the dialog opens and on its Rescan chip ([`Self::rescan_devices`]).
     fn relist_ports(&mut self, at: std::time::Instant) {
-        if self.dialog.is_none() {
+        let Some(dialog) = &mut self.dialog else {
             self.ports_listed_at = None;
             return;
-        }
+        };
         let due = self
             .ports_listed_at
             .is_none_or(|last| at.saturating_duration_since(last) >= PORT_RELIST_EVERY);
@@ -11664,10 +11702,23 @@ impl<B: AudioBackend> Shell<B> {
         if !session.midi_complete() {
             session.rescan_midi();
         }
+        let lists = DeviceLists::query_midi(session.backend(), dialog.lists());
+        dialog.set_lists(lists);
+        self.repaint = true;
+    }
+
+    /// The Rescan chip of Audio Settings: lists the audio hosts, their devices and the MIDI ports
+    /// again, and opens the enabled MIDI inputs that have appeared.
+    fn rescan_devices(&mut self) {
+        let session = self.core.sink_mut();
+        if !session.midi_complete() {
+            session.rescan_midi();
+        }
         let lists = DeviceLists::query(session.backend());
         if let Some(dialog) = &mut self.dialog {
             dialog.set_lists(lists);
         }
+        self.ports_listed_at = Some(crate::session::clock_now());
         self.repaint = true;
     }
 
@@ -11686,6 +11737,75 @@ impl<B: AudioBackend> Shell<B> {
         if let Some(dialog) = &mut self.dialog {
             dialog.set_video_status(line);
         }
+    }
+
+    /// Answers an engine fault (see [`crate::fault_restart`]): the first poll that sees it tells
+    /// the user, and the audio is rebuilt by itself once the transport is stopped and a minute
+    /// has passed since the last such restart, up to three times a session. The device the
+    /// engine names is bypassed first (one undoable edit), so the new engine does not meet the
+    /// same crash. When the limit is used up, or the plugin crash path owns the device, the user
+    /// gets the manual message. True when the engine was rebuilt (the status is then stale).
+    fn handle_fault(&mut self, status: &AudioStatus, at: std::time::Instant) -> bool {
+        use crate::fault_restart::Arrival;
+        if !status.faulted {
+            self.fault_announced = false;
+            self.fault_device = None;
+            self.fault_restart.clear();
+            return false;
+        }
+        let stopped = !self.core.is_playing() && !self.core.is_recording();
+        if !self.fault_announced {
+            self.fault_announced = true;
+            self.fault_device = status.faulted_device;
+            let named = status
+                .faulted_device
+                .and_then(|id| self.core.device_name_of_instance(id));
+            let what = crate::status::faulted_text(&AudioStatus {
+                faulted_name: named,
+                ..status.clone()
+            });
+            let plugin_path = status
+                .faulted_device
+                .is_some_and(|id| self.core.fault_belongs_to_plugin_path(id));
+            let arrival = if self.silent || plugin_path {
+                Arrival::Manual
+            } else {
+                self.fault_restart.arrive()
+            };
+            match arrival {
+                Arrival::Manual => self.notify(format!(
+                    "{what}. Audio > Restart Audio rebuilds the engine; save your work first."
+                )),
+                Arrival::Automatic if !self.fault_restart.allowed(at, stopped) => {
+                    let text = if stopped {
+                        format!("{what}. Audio restarts by itself within a minute.")
+                    } else {
+                        format!("{what}. Audio restarts by itself when playback stops.")
+                    };
+                    self.notify(text);
+                }
+                Arrival::Automatic => {}
+            }
+        }
+        if !self.fault_restart.take_due(at, stopped) {
+            return false;
+        }
+        let message = match self.core.bypass_faulted_device(self.fault_device) {
+            FaultBypass::Bypassed(name) => {
+                format!("Audio restarted after a fault in {name}; the device is bypassed")
+            }
+            FaultBypass::Unsupported(name) => format!(
+                "Audio restarted after a fault in {name}; it has no bypass and may fail again"
+            ),
+            FaultBypass::NoDevice | FaultBypass::PluginPath(_) => {
+                "Audio restarted after a fault".to_owned()
+            }
+        };
+        self.core.rebuild_engine();
+        self.notify(message);
+        self.fault_announced = false;
+        self.fault_device = None;
+        true
     }
 
     /// Reads audio telemetry into the status bar; true when its text changed.
@@ -11712,6 +11832,10 @@ impl<B: AudioBackend> Shell<B> {
             // The stream was replaced: show what is true now.
             status = self.core.sink().status().clone();
         }
+        if self.handle_fault(&status, at) {
+            // The engine was rebuilt after a fault: show what is true now.
+            status = self.core.sink().status().clone();
+        }
         status.notes_target = target;
         if self.silent && !status.running {
             status.error = Some("another song has the audio".to_string());
@@ -11721,15 +11845,6 @@ impl<B: AudioBackend> Shell<B> {
         status.faulted_name = status
             .faulted_device
             .and_then(|id| self.core.device_name_of_instance(id));
-        if status.faulted && !self.fault_announced {
-            self.fault_announced = true;
-            let what = crate::status::faulted_text(&status);
-            self.notify(format!(
-                "{what}. Audio > Restart Audio rebuilds the engine; save your work first."
-            ));
-        } else if !status.faulted {
-            self.fault_announced = false;
-        }
         let (plugin_drops, late_batches, bad_blocks) = self.core.plugin_overload();
         status.overload.plugin_drops = plugin_drops;
         status.overload.late_sandbox_batches = late_batches;

@@ -545,3 +545,32 @@ fn every_new_command_is_reachable_by_its_registry_id() {
     s.run_command("view.app_zoom", Some("150"));
     assert_eq!(s.workflow().app_zoom, 150);
 }
+
+// ------------------------------------------------------------------ performance
+
+#[test]
+fn the_performance_setting_resolves_against_what_auto_picked_and_reaches_the_session() {
+    use crate::performance::{Level, Performance};
+    let mut s = shell();
+    // The default is Auto, and a shell that was not told otherwise sees a big machine.
+    assert_eq!(s.workflow().performance, Performance::Auto);
+    assert_eq!(s.performance_level(), Level::Full);
+    assert!(!s.core().sink().low_power());
+    // Auto on a small machine is Low power, for the windows and for the next engine.
+    s.set_auto_level(Level::Low);
+    assert_eq!(s.performance_level(), Level::Low);
+    assert!(s.core().sink().low_power());
+    // A chosen level ignores the machine; the change applies at once, nothing is restarted.
+    prefs_with(&mut s, |w| w.performance = Performance::Full);
+    assert_eq!(s.performance_level(), Level::Full);
+    assert!(!s.core().sink().low_power());
+    s.set_auto_level(Level::Full);
+    prefs_with(&mut s, |w| w.performance = Performance::LowPower);
+    assert_eq!(s.performance_level(), Level::Low);
+    assert!(s.core().sink().low_power());
+    // Auto goes back to what the machine picked.
+    s.set_auto_level(Level::Low);
+    prefs_with(&mut s, |w| w.performance = Performance::Auto);
+    assert_eq!(s.performance_level(), Level::Low);
+    assert!(s.core().sink().low_power());
+}

@@ -13,8 +13,18 @@
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
+/// The stage reached when the application state is built and the fonts are about to be read.
+pub const STATE_BUILT: &str = "application state built";
+/// The stage reached when the fonts of the machine are read.
+pub const FONTS_READY: &str = "fonts read";
+/// The stage reached when the event loop of the system exists.
+pub const EVENT_LOOP_READY: &str = "event loop created";
+/// The stage reached when the graphics adapters of the machine are listed.
+pub const ADAPTERS_LISTED: &str = "graphics adapters listed";
 /// The stage reached when the first window exists.
 pub const FIRST_WINDOW: &str = "first window created";
+/// The stage reached when the graphics device was made (the adapter was picked before).
+pub const DEVICE_CREATED: &str = "graphics device created";
 /// The stage reached when the graphics adapter was picked.
 pub const ADAPTER_CHOSEN: &str = "graphics adapter chosen";
 /// The stage reached when the device and the renderer are ready.

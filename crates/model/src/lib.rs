@@ -1040,8 +1040,8 @@ pub enum SyncOp {
     /// submits the engine song snapshot.
     SongChanged,
     /// A track was frozen or unfrozen (see [`crate::freeze`]): the engine graph changes (the
-    /// frozen devices leave it and a player takes their place), so the app restarts its
-    /// engine. [`SyncOp::SongChanged`] comes with it.
+    /// frozen devices leave it and a player takes their place), so the app swaps
+    /// them in its running engine, live. [`SyncOp::SongChanged`] comes with it.
     FrozenChanged,
     /// The console changed: channels, their order, the master, returns or
     /// compensation, or a console channel's `solo` param. The app re-reads

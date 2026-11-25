@@ -939,7 +939,7 @@ impl<S: EngineSink> AppCore<S> {
             self.report("There are no MIDI mappings to export");
             return false;
         }
-        if let Err(e) = std::fs::write(path, save_midi_preset(&preset)) {
+        if let Err(e) = crate::recovery::atomic_write(path, save_midi_preset(&preset).as_bytes()) {
             self.report(format!("{}: {e}", path.display()));
             return false;
         }
@@ -971,7 +971,7 @@ impl<S: EngineSink> AppCore<S> {
             self.report(format!("`{device}` has no MIDI mappings to export"));
             return false;
         };
-        if let Err(e) = std::fs::write(path, save_midi_preset(&preset)) {
+        if let Err(e) = crate::recovery::atomic_write(path, save_midi_preset(&preset).as_bytes()) {
             self.report(format!("{}: {e}", path.display()));
             return false;
         }

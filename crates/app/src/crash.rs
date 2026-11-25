@@ -85,10 +85,17 @@ pub fn is_realtime_thread(name: &str) -> bool {
             .any(|word| name.contains(word))
 }
 
+/// Whether the calling thread (called `name`) is an audio or render-worker thread: by its name,
+/// or because a stream callback has run on it (the callback threads of some audio backends have
+/// no name).
+fn on_audio_thread(name: &str) -> bool {
+    is_realtime_thread(name) || atomik_audio_io::on_callback_thread()
+}
+
 fn on_panic(info: &PanicHookInfo<'_>) {
     let thread = std::thread::current();
     let name = thread.name().unwrap_or("<unnamed>");
-    if is_realtime_thread(name) {
+    if on_audio_thread(name) {
         AUDIO_PANIC.store(true, Ordering::SeqCst);
         return;
     }
@@ -259,6 +266,24 @@ mod tests {
         for name in ["main", "atomik-import", "atomik-export", "<unnamed>"] {
             assert!(!is_realtime_thread(name), "{name}");
         }
+    }
+
+    #[test]
+    fn an_unnamed_thread_a_stream_callback_ran_on_counts_as_an_audio_thread() {
+        // A callback thread of a backend that names none: the name says nothing, the mark does.
+        let on_audio = std::thread::spawn(|| {
+            let name = std::thread::current().name().map(str::to_owned);
+            assert_eq!(name, None);
+            let before = on_audio_thread("<unnamed>");
+            atomik_audio_io::mark_callback_thread();
+            (before, on_audio_thread("<unnamed>"))
+        })
+        .join()
+        .unwrap();
+        assert_eq!(on_audio, (false, true));
+        // The name check stays, and an ordinary thread is neither.
+        assert!(on_audio_thread("atomik-render-1"));
+        assert!(!on_audio_thread("main"));
     }
 
     #[test]

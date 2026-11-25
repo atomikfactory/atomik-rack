@@ -6,6 +6,7 @@
 use super::*;
 use crate::keyboard_tab::Item;
 use crate::keymap_store::WorkflowPrefs;
+use crate::performance::{Level, Performance};
 use atomik_ui::keymap::{
     Chord, Context, KeymapEditor, Mods, Os, Profile, Role, Row, RowKey, Source, UserKeymap,
 };
@@ -962,6 +963,21 @@ fn right_click(d: &mut SettingsDialog, p: Point) {
 }
 
 #[test]
+fn the_performance_row_says_what_auto_picked_on_this_machine() {
+    let mut d = dialog();
+    goto(&mut d, Tab::Interface);
+    let value = |d: &SettingsDialog| d.interface_layout(VIEW).unwrap().rows[8].value.clone();
+    assert_eq!(value(&d), "Auto (Full)");
+    d.set_auto_level(Level::Low);
+    assert_eq!(value(&d), "Auto (Low power)");
+    let button = d.interface_layout(VIEW).unwrap().rows[8].button.center();
+    down(&mut d, button);
+    assert_eq!(value(&d), "Full", "a chosen level does not mention Auto");
+    down(&mut d, button);
+    assert_eq!(value(&d), "Low power");
+}
+
+#[test]
 fn the_interface_tab_steps_the_choices_and_apply_returns_them_with_the_workflow_prefs() {
     use atomik_ui::ThemeChoice;
     use atomik_ui::widget::KnobRange;
@@ -979,7 +995,8 @@ fn the_interface_tab_steps_the_choices_and_apply_returns_them_with_the_workflow_
             "Automation thinning",
             "Colour new tracks",
             "Reverse clips",
-            "Versions kept"
+            "Versions kept",
+            "Performance"
         ]
     );
     let values: Vec<&str> = l.rows.iter().map(|r| r.value.as_str()).collect();
@@ -993,7 +1010,8 @@ fn the_interface_tab_steps_the_choices_and_apply_returns_them_with_the_workflow_
             "Normal",
             "",
             "Notes as bars",
-            "20"
+            "20",
+            "Auto (Full)"
         ]
     );
     assert!(!l.rows[3].on, "value tooltips start off");
@@ -1022,6 +1040,20 @@ fn the_interface_tab_steps_the_choices_and_apply_returns_them_with_the_workflow_
     down(&mut d, l.rows[7].button.center());
     down(&mut d, l.rows[7].button.center());
     assert_eq!(d.preferences().unwrap().1.keep_versions, 20);
+    // The performance setting steps Auto, Full, Low power and wraps; the right button goes back.
+    let perf = |d: &SettingsDialog| d.preferences().unwrap().1.performance;
+    assert_eq!(perf(&d), Performance::Auto);
+    down(&mut d, l.rows[8].button.center());
+    assert_eq!(perf(&d), Performance::Full);
+    down(&mut d, l.rows[8].button.center());
+    assert_eq!(perf(&d), Performance::LowPower);
+    down(&mut d, l.rows[8].button.center());
+    assert_eq!(perf(&d), Performance::Auto, "wraps");
+    right_click(&mut d, l.rows[8].button.center());
+    assert_eq!(perf(&d), Performance::LowPower);
+    right_click(&mut d, l.rows[8].button.center());
+    right_click(&mut d, l.rows[8].button.center());
+    assert_eq!(perf(&d), Performance::Auto);
     down(&mut d, l.rows[2].button.center());
     down(&mut d, l.rows[2].button.center());
     assert_eq!(

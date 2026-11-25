@@ -6,6 +6,12 @@
 //! frame and builds the whole context again (see [`super::gpu_recovery`]). No surface or render
 //! target is ever configured larger than the device's texture limit.
 //!
+//! At Low power (see [`crate::performance`]) a window's render target is smaller than its
+//! surface: the scene is scaled down into it and the blit stretches it back over the surface
+//! with linear filtering. The surface, the scene and everything the UI reports (pointer
+//! positions, text positions, screenshots) stay in the window's own pixels; only the pixels
+//! vello fills are fewer.
+//!
 //! The adapter is chosen here by the rule of [`super::gpu_select`] (never a software adapter
 //! unless it is named in `WGPU_ADAPTER_NAME`), for the first start and for every rebuild alike;
 //! when none is acceptable the surface cannot be made and the caller says why.
@@ -17,6 +23,7 @@ use super::gpu_recovery::clamp_size;
 use super::gpu_select::{self, AdapterDesc, Kind, Overrides};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
+use vello::kurbo::Affine;
 use vello::peniko::Color;
 use vello::util::RenderSurface;
 use vello::wgpu;
@@ -183,6 +190,8 @@ struct Devices {
     devices: Vec<DeviceHandle>,
     /// The adapters seen by the last selection, for the message of a start that found none.
     found: Vec<AdapterDesc>,
+    /// The adapters being listed on a worker since the start, taken by the first selection.
+    listing: Option<std::thread::JoinHandle<Vec<wgpu::Adapter>>>,
 }
 
 impl Devices {
@@ -200,7 +209,31 @@ impl Devices {
             instance,
             devices: Vec::new(),
             found: Vec::new(),
+            listing: None,
         }
+    }
+
+    /// Lists the adapters of the machine on a worker, so that the list is there (or nearly) when
+    /// the first window asks for a device: the driver's first look at the machine is the slowest
+    /// step of a start. Nothing is chosen here; the first selection joins the worker and falls
+    /// back to listing on its own thread when there is none or it failed.
+    fn start_listing(&mut self) {
+        let instance = self.instance.clone();
+        self.listing = std::thread::Builder::new()
+            .name("gpu-adapters".to_string())
+            .spawn(move || pollster::block_on(instance.enumerate_adapters(wgpu::Backends::all())))
+            .ok();
+    }
+
+    /// The adapters of the machine: from the worker the first time when it was started, listed
+    /// now otherwise.
+    async fn list_adapters(&mut self) -> Vec<wgpu::Adapter> {
+        if let Some(Ok(adapters)) = self.listing.take().map(std::thread::JoinHandle::join) {
+            return adapters;
+        }
+        self.instance
+            .enumerate_adapters(wgpu::Backends::all())
+            .await
     }
 
     /// The id of a device that can present to `surface` (any, without one), made when there is
@@ -221,10 +254,8 @@ impl Devices {
 
     /// Chooses an adapter by the rule and makes a device on it.
     async fn new_device(&mut self, surface: Option<&wgpu::Surface<'_>>) -> Result<usize, String> {
-        let adapters = self
-            .instance
-            .enumerate_adapters(wgpu::Backends::all())
-            .await;
+        let adapters = self.list_adapters().await;
+        crate::startup::mark(crate::startup::ADAPTERS_LISTED);
         let described: Vec<AdapterDesc> = adapters
             .iter()
             .map(|a| {
@@ -281,6 +312,7 @@ impl Devices {
         width: u32,
         height: u32,
         present_mode: wgpu::PresentMode,
+        scale: f64,
     ) -> Result<RenderSurface<'static>, String> {
         let handle = &self.devices[dev_id];
         let format = target
@@ -305,7 +337,8 @@ impl Devices {
             alpha_mode: wgpu::CompositeAlphaMode::Auto,
             view_formats: vec![],
         };
-        let (target_texture, target_view) = targets(width, height, &handle.device);
+        let (tw, th) = crate::performance::target_size(width, height, scale);
+        let (target_texture, target_view) = targets(tw, th, &handle.device);
         let surface = RenderSurface {
             surface: target,
             config,
@@ -313,19 +346,32 @@ impl Devices {
             format,
             target_texture,
             target_view,
-            blitter: wgpu::util::TextureBlitter::new(&handle.device, format),
+            blitter: blitter(&handle.device, format, scale),
         };
         self.configure_surface(&surface);
         Ok(surface)
     }
 
-    fn resize_surface(&self, surface: &mut RenderSurface<'_>, width: u32, height: u32) {
-        let (texture, view) = targets(width, height, &self.devices[surface.dev_id].device);
+    fn resize_surface(&self, surface: &mut RenderSurface<'_>, width: u32, height: u32, scale: f64) {
+        let (tw, th) = crate::performance::target_size(width, height, scale);
+        let (texture, view) = targets(tw, th, &self.devices[surface.dev_id].device);
         surface.target_texture = texture;
         surface.target_view = view;
         surface.config.width = width;
         surface.config.height = height;
         self.configure_surface(surface);
+    }
+
+    /// Makes the render target of `surface` the size `scale` gives and the blit filter that
+    /// goes with it; the surface itself is not touched.
+    fn retarget(&self, surface: &mut RenderSurface<'_>, scale: f64) {
+        let device = &self.devices[surface.dev_id].device;
+        let (tw, th) =
+            crate::performance::target_size(surface.config.width, surface.config.height, scale);
+        let (texture, view) = targets(tw, th, device);
+        surface.target_texture = texture;
+        surface.target_view = view;
+        surface.blitter = blitter(device, surface.format, scale);
     }
 
     fn set_present_mode(&self, surface: &mut RenderSurface<'_>, mode: wgpu::PresentMode) {
@@ -337,6 +383,23 @@ impl Devices {
         let device = &self.devices[surface.dev_id].device;
         surface.surface.configure(device, &surface.config);
     }
+}
+
+/// The blit from a render target to the surface: nearest when the two have the same size (a
+/// copy, as it always was), linear when the target was rendered at a smaller `scale`.
+fn blitter(
+    device: &wgpu::Device,
+    format: wgpu::TextureFormat,
+    scale: f64,
+) -> wgpu::util::TextureBlitter {
+    let filter = if scale < 1.0 {
+        wgpu::FilterMode::Linear
+    } else {
+        wgpu::FilterMode::Nearest
+    };
+    wgpu::util::TextureBlitterBuilder::new(device, format)
+        .sample_type(filter)
+        .build()
 }
 
 /// The texture the renderer draws into (a compute shader cannot bind the surface texture) and
@@ -388,6 +451,10 @@ impl std::fmt::Debug for GpuContext {
 /// One window's surface. Drawn with the [`GpuContext`] that created it.
 pub struct WindowSurface {
     surface: RenderSurface<'static>,
+    /// The fraction of the surface size the render target has (see [`crate::performance`]).
+    scale: f64,
+    /// The scene scaled into the smaller target, kept between frames so it does not reallocate.
+    scaled: Scene,
 }
 
 impl std::fmt::Debug for WindowSurface {
@@ -418,6 +485,12 @@ impl GpuContext {
             adapter_noted: false,
             quiet_adapter: false,
         }
+    }
+
+    /// Starts listing the adapters on a worker (see [`Devices::start_listing`]); the live app
+    /// calls it first thing, before the window that needs them exists.
+    pub fn start_listing(&mut self) {
+        self.context.start_listing();
     }
 
     /// An empty context for the graphics of an app that lost its device.
@@ -494,6 +567,7 @@ impl GpuContext {
         window: Arc<Window>,
         width: u32,
         height: u32,
+        scale: f64,
     ) -> Result<WindowSurface, String> {
         if self.is_lost() {
             return Err("GPU surface: the graphics device is lost".to_string());
@@ -507,17 +581,29 @@ impl GpuContext {
         // it for everything that follows.
         let dev_id = pollster::block_on(self.context.device(Some(&target)))
             .map_err(|e| format!("GPU surface: {e}"))?;
+        crate::startup::mark(crate::startup::DEVICE_CREATED);
         self.watch_new_devices();
         let (width, height) = clamp_size(width, height, self.max_side(dev_id));
         let surface = self
             .context
-            .render_surface(dev_id, target, width, height, wgpu::PresentMode::AutoVsync)
+            .render_surface(
+                dev_id,
+                target,
+                width,
+                height,
+                wgpu::PresentMode::AutoVsync,
+                scale,
+            )
             .map_err(|e| format!("GPU surface: {e}"))?;
         crate::startup::mark(crate::startup::ADAPTER_CHOSEN);
         self.note_adapter(surface.dev_id);
         self.renderer_for(surface.dev_id)?;
         crate::startup::mark(crate::startup::RENDERER_READY);
-        Ok(WindowSurface { surface })
+        Ok(WindowSurface {
+            surface,
+            scale,
+            scaled: Scene::new(),
+        })
     }
 
     /// Writes the adapter of device `dev_id` to the log and keeps it for the diagnostics report,
@@ -576,7 +662,16 @@ impl GpuContext {
         let (w, h) = clamp_size(width, height, self.max_side(surface.surface.dev_id));
         let s = &mut surface.surface;
         if (w, h) != (s.config.width, s.config.height) {
-            self.context.resize_surface(s, w, h);
+            self.context.resize_surface(s, w, h, surface.scale);
+        }
+    }
+
+    /// Renders `surface` at `scale` of its size from now on (1.0: the full size). A change makes a
+    /// new render target; the next [`Self::render`] uses it.
+    pub fn set_render_scale(&mut self, surface: &mut WindowSurface, scale: f64) {
+        if (surface.scale - scale).abs() > f64::EPSILON {
+            surface.scale = scale;
+            self.context.retarget(&mut surface.surface, scale);
         }
     }
 
@@ -590,7 +685,9 @@ impl GpuContext {
         if self.is_lost() {
             return FrameResult::Lost;
         }
-        let surface = &mut surface.surface;
+        let WindowSurface {
+            surface, scaled, ..
+        } = surface;
         let texture = match surface.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(t)
             | wgpu::CurrentSurfaceTexture::Suboptimal(t) => t,
@@ -617,13 +714,32 @@ impl GpuContext {
         let handle = &self.context.devices[surface.dev_id];
         let (device, queue) = (&handle.device, &handle.queue);
         let (w, h) = (surface.config.width, surface.config.height);
+        let (tw, th) = (
+            surface.target_texture.width(),
+            surface.target_texture.height(),
+        );
+        // A target smaller than the surface gets the scene scaled to fit it; at the full size the
+        // scene is rendered as it is.
+        let scene = if (tw, th) == (w, h) {
+            scene
+        } else {
+            scaled.reset();
+            scaled.append(
+                scene,
+                Some(Affine::scale_non_uniform(
+                    f64::from(tw) / f64::from(w),
+                    f64::from(th) / f64::from(h),
+                )),
+            );
+            &*scaled
+        };
         if renderer
             .render_to_texture(
                 device,
                 queue,
                 scene,
                 &surface.target_view,
-                &params(base, w, h),
+                &params(base, tw, th),
             )
             .is_err()
         {

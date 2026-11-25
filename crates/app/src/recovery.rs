@@ -18,6 +18,9 @@
 //!   the scratch folder ([`remove_dir_bounded`]) give up after [`EXIT_WAIT`]. A snapshot the
 //!   writer was still writing is left to finish (or not) by itself: it is a rename of a complete
 //!   temporary file, so the folder never holds half of one.
+//! * **Scratch sweep.** [`sweep_scratch`] removes, on a background thread at start, the scratch
+//!   folders of sessions that are gone for good: no live marker, untouched for [`SWEEP_AGE`], not
+//!   named by a snapshot's bundle note. Whatever it cannot decide it keeps.
 //! * **Orphan recordings.** A recording streams to `rec-<pid>-<take>-<n>.wav`
 //!   (see `audio_writer`). [`scan_orphans`] lists, within bounds, such files whose process is gone.
 
@@ -516,6 +519,162 @@ pub fn scan_orphans(
     out.sort_by(|a, b| (a.pid, a.take, a.track, &a.path).cmp(&(b.pid, b.take, b.track, &b.path)));
     out.dedup_by(|a, b| a.path == b.path);
     out
+}
+
+/// How long a scratch folder of a dead session must have been left alone before the start-up
+/// sweep may remove it.
+pub const SWEEP_AGE: Duration = Duration::from_secs(14 * 24 * 3600);
+/// Most entries the sweep looks at inside one scratch folder; a folder with more is kept.
+const SWEEP_ENTRY_LIMIT: usize = 100_000;
+
+/// What a [`sweep_scratch`] removed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct SweepReport {
+    /// Folders removed.
+    pub folders: usize,
+    /// Bytes they held.
+    pub bytes: u64,
+}
+
+/// What a scratch folder holds: its size and the newest modification time in it.
+struct Weight {
+    bytes: u64,
+    newest: std::time::SystemTime,
+    entries: usize,
+}
+
+/// Adds `dir` and what is in it (links are not followed) to `weight`; false when something
+/// cannot be read or there are too many entries to tell.
+fn weigh(dir: &Path, weight: &mut Weight) -> bool {
+    let Ok(read) = std::fs::read_dir(dir) else {
+        return false;
+    };
+    for entry in read {
+        weight.entries += 1;
+        if weight.entries > SWEEP_ENTRY_LIMIT {
+            return false;
+        }
+        let Ok(entry) = entry else {
+            return false;
+        };
+        let Ok(meta) = std::fs::symlink_metadata(entry.path()) else {
+            return false;
+        };
+        let Ok(modified) = meta.modified() else {
+            return false;
+        };
+        weight.newest = weight.newest.max(modified);
+        if meta.is_dir() {
+            if !weigh(&entry.path(), weight) {
+                return false;
+            }
+        } else {
+            weight.bytes += meta.len();
+        }
+    }
+    true
+}
+
+/// Whether the session of process `pid` is alive according to the markers in `dir`: `Some(true)`
+/// a marker of it is locked, `Some(false)` none is (a start removes the markers of dead
+/// sessions, so no marker at all means gone), `None` a marker of it cannot be read.
+fn pid_state(dir: &Path, pid: u32) -> Option<bool> {
+    if pid == std::process::id() {
+        return Some(true);
+    }
+    let mut unknown = false;
+    for entry in std::fs::read_dir(dir).ok()?.flatten().take(SCAN_LIMIT) {
+        let path = entry.path();
+        let ours = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .is_some_and(|n| marker_pid(n) == Some(pid));
+        if ours {
+            match held(&path) {
+                Some(true) => return Some(true),
+                Some(false) => {}
+                None => unknown = true,
+            }
+        }
+    }
+    (!unknown).then_some(false)
+}
+
+/// The recovery folders under `root`: the first song's, and the `song-<n>` folders of the songs
+/// opened next to it.
+fn recovery_folders(root: &Path) -> Option<Vec<PathBuf>> {
+    let mut folders = vec![root.to_path_buf()];
+    for entry in std::fs::read_dir(root).ok()?.flatten().take(SCAN_LIMIT) {
+        let path = entry.path();
+        let song = path.file_name().and_then(|n| n.to_str()).is_some_and(|n| {
+            n.strip_prefix("song-")
+                .is_some_and(|k| k.parse::<u32>().is_ok())
+        });
+        if song && path.is_dir() {
+            folders.push(path);
+        }
+    }
+    Some(folders)
+}
+
+/// Removes the scratch folders (`atomik-rack-session-<pid>-<n>` in `temp`) that a dead session
+/// left: the process has no live session marker in the recovery folders under `recovery_root`,
+/// nothing in the folder was touched for `min_age`, and no recovery snapshot's note names a
+/// bundle inside it. Whatever cannot be decided is kept: an unreadable recovery folder or note,
+/// a marker that cannot be read, a folder that cannot be measured. A folder held by a live
+/// process is never touched. Meant for a background thread at start-up.
+pub fn sweep_scratch(temp: &Path, recovery_root: &Path, min_age: Duration) -> SweepReport {
+    let mut report = SweepReport::default();
+    let Some(folders) = recovery_folders(recovery_root) else {
+        return report;
+    };
+    let mut noted = Vec::new();
+    for folder in &folders {
+        match RecoveryDir::new(folder).noted_bundles() {
+            Some(mut bundles) => noted.append(&mut bundles),
+            None => return report,
+        }
+    }
+    let Ok(read) = std::fs::read_dir(temp) else {
+        return report;
+    };
+    for entry in read.flatten().take(SCAN_LIMIT) {
+        let path = entry.path();
+        let Some(pid) = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .and_then(|n| n.strip_prefix(SCRATCH_PREFIX))
+            .and_then(|n| n.split('-').next())
+            .and_then(|n| n.parse::<u32>().ok())
+        else {
+            continue;
+        };
+        let is_folder = std::fs::symlink_metadata(&path).is_ok_and(|m| m.is_dir());
+        if !is_folder || noted.iter().any(|b| b.starts_with(&path)) {
+            continue;
+        }
+        let dead = folders.iter().try_fold(true, |dead, f| {
+            pid_state(f, pid).map(|alive| dead && !alive)
+        });
+        if dead != Some(true) {
+            continue;
+        }
+        let mut weight = Weight {
+            bytes: 0,
+            newest: std::time::UNIX_EPOCH,
+            entries: 0,
+        };
+        let top = std::fs::symlink_metadata(&path).and_then(|m| m.modified());
+        let (Ok(top), true) = (top, weigh(&path, &mut weight)) else {
+            continue;
+        };
+        let quiet = top.max(weight.newest).elapsed();
+        if quiet.is_ok_and(|age| age >= min_age) && std::fs::remove_dir_all(&path).is_ok() {
+            report.folders += 1;
+            report.bytes += weight.bytes;
+        }
+    }
+    report
 }
 
 #[cfg(test)]

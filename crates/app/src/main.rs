@@ -40,16 +40,22 @@ fn run_app() {
     }
     // The log and the crash reports come first, so that everything after them (settings,
     // plugins, audio) can report. Both live in `<config folder>/logs`.
-    let settings_path = cli
-        .settings
-        .clone()
-        .or_else(atomik_app::settings::default_settings_path);
-    let config = atomik_app::settings::config_folder(settings_path.as_deref());
+    // Safe mode keeps everything but the logs in a temporary folder (see `Cli::start_plan`).
+    let plan = cli.start_plan(
+        atomik_app::settings::default_settings_path(),
+        &std::env::temp_dir(),
+        std::process::id(),
+    );
+    let config = atomik_app::settings::config_folder(plan.logs_beside.as_deref());
     let logs = atomik_app::logging::log_dir(&config.dir);
     atomik_app::logging::init(&logs);
     // Kept for the whole run; dropping it would put the previous panic hook back.
     let _crash_hook = atomik_app::crash::install(&logs);
-    if let Err(e) = atomik_app::platform::run(cli) {
+    let result = atomik_app::platform::run(cli);
+    if let Some(folder) = &plan.temporary_folder {
+        atomik_app::recovery::remove_dir_bounded(folder, atomik_app::recovery::EXIT_WAIT);
+    }
+    if let Err(e) = result {
         atomik_app::logging::fatal(&e);
         std::process::exit(1);
     }

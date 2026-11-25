@@ -605,6 +605,9 @@ impl OutputCallback {
         // The one documented HI-1 exception: a single priority promotion on the first callback,
         // before anything is rendered. Later callbacks only load an atomic here.
         self.promotion.promote_once(rt::promote_current_thread);
+        // The panic hook knows this thread by this mark, whatever its name (some backends
+        // leave callback threads unnamed).
+        rt::mark_callback_thread();
         let start = telemetry::now();
         let Some(payload) = self.payload.get_mut().filter(|_| !self.halted) else {
             data.bytes_mut().fill(0);
@@ -796,6 +799,7 @@ struct InputCallback {
 
 impl InputCallback {
     fn run(&mut self, data: &cpal::Data, info: &cpal::InputCallbackInfo) {
+        rt::mark_callback_thread();
         let timestamp = info.timestamp();
         self.telemetry
             .on_input_timing(timestamp.callback, timestamp.capture, self.sample_rate);

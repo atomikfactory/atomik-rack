@@ -124,7 +124,8 @@ impl LearnStrips {
         text: &mut TextEngine,
     ) -> Result<(), String> {
         for strip in self.strips.values_mut() {
-            let surface = gpu.create_surface(Arc::clone(&strip.window), strip.at.2, strip.at.3)?;
+            let surface =
+                gpu.create_surface(Arc::clone(&strip.window), strip.at.2, strip.at.3, 1.0)?;
             strip.surface = Some(surface);
             paint(gpu, text, strip);
         }
@@ -230,7 +231,7 @@ impl LearnStrips {
                 return;
             }
         };
-        let surface = match gpu.create_surface(Arc::clone(&window), at.2, at.3) {
+        let surface = match gpu.create_surface(Arc::clone(&window), at.2, at.3, 1.0) {
             Ok(s) => Some(s),
             Err(e) => {
                 log::warn!("the Learn strip of a plugin window has no surface: {e}");

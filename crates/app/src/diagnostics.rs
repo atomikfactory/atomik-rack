@@ -297,7 +297,7 @@ pub fn build(i: &Inputs, now_secs: u64) -> String {
 /// # Errors
 /// The file cannot be written.
 pub fn export(i: &Inputs, path: &Path) -> std::io::Result<()> {
-    std::fs::write(path, build(i, logging::unix_seconds()))
+    crate::recovery::atomic_write(path, build(i, logging::unix_seconds()).as_bytes())
 }
 
 /// The file name the save dialog proposes.

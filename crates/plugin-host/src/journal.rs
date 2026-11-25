@@ -247,6 +247,20 @@ impl RecoveryDir {
         (!root.as_os_str().is_empty() && root.is_dir()).then_some(root)
     }
 
+    /// The bundle folders the notes next to the snapshots name, whether or not the folders still
+    /// exist. `None` when a note is there but cannot be read: what it names is then unknown.
+    pub fn noted_bundles(&self) -> Option<Vec<PathBuf>> {
+        let mut out = Vec::new();
+        for (_, snapshot) in self.snapshots() {
+            match std::fs::read_to_string(Self::bundle_note_path(&snapshot)) {
+                Ok(text) => out.push(PathBuf::from(text.trim_end())),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(_) => return None,
+            }
+        }
+        Some(out)
+    }
+
     /// The newest snapshot, if any.
     pub fn newest(&self) -> Option<PathBuf> {
         self.snapshots().pop().map(|(_, p)| p)

@@ -14,6 +14,7 @@ use crate::cli::Cli;
 use crate::clicks::ClickCounter;
 use crate::commands::AppCommand;
 use crate::cursor_art::{self, CursorArt};
+use crate::performance::Level;
 use crate::plugin_setup;
 use crate::session::{LiveSession, SystemBackend};
 use crate::settings::{self, AudioSettings, default_settings_path};
@@ -49,8 +50,6 @@ use winit::window::{CustomCursor, Window, WindowId};
 /// A window of the app: the song it belongs to and its place in that song.
 type Key = (DocId, WindowKind);
 
-/// Redraw tick while audio runs (≈ 60 Hz, for meters and status).
-const FRAME: Duration = Duration::from_micros(16_667);
 /// Status bar refresh period.
 const STATUS_PERIOD: Duration = Duration::from_millis(250);
 /// How often the cursor is read while files from the system hover over a window and the system
@@ -68,18 +67,52 @@ mod clock {
     }
 }
 
+/// What a safe-mode start tells the user (the window title says it too).
+const SAFE_MODE_NOTE: &str = "Safe mode: temporary settings, no audio device, no plugins, no project reopened. Nothing is saved to your settings.";
+
+/// Starts the sweep of old scratch folders of dead sessions on a background thread and logs what
+/// it freed (see [`crate::recovery::sweep_scratch`]).
+fn start_scratch_sweep(config_dir: &std::path::Path) {
+    let recovery = config_dir.join(crate::recovery::RECOVERY_FOLDER);
+    let spawned = std::thread::Builder::new()
+        .name("atomik-sweep".into())
+        .spawn(move || {
+            let report = crate::recovery::sweep_scratch(
+                &std::env::temp_dir(),
+                &recovery,
+                crate::recovery::SWEEP_AGE,
+            );
+            log::info!(
+                "scratch sweep: removed {} old scratch folder(s), {} bytes freed",
+                report.folders,
+                report.bytes
+            );
+        });
+    if let Err(e) = spawned {
+        log::warn!("scratch sweep: no thread ({e})");
+    }
+}
+
 /// Runs the app until the window closes.
 pub fn run(cli: Cli) -> Result<(), String> {
     // The one place the language of the machine is read: the System choice of the language
     // setting follows it.
     atomik_ui::i18n::set_system_locale(sys_locale::get_locale());
-    let settings_path = cli.settings.clone().or_else(default_settings_path);
+    let plan = cli.start_plan(
+        default_settings_path(),
+        &std::env::temp_dir(),
+        std::process::id(),
+    );
+    let settings_path = plan.settings_path.clone();
     let (saved, settings_error) = match &settings_path {
-        Some(path) => settings::load(path),
-        None => (AudioSettings::default(), None),
+        Some(path) if plan.load_settings => settings::load(path),
+        _ => (AudioSettings::default(), None),
     };
     let config = settings::config_folder(settings_path.as_deref());
     let mut settings = cli.apply(saved);
+    if !plan.plugins {
+        settings.plugins.enabled = false;
+    }
     if cli.stress_audio && settings.stream_threshold_bytes.is_none() {
         settings.stream_threshold_bytes = Some(STRESS_AUDIO_THRESHOLD_BYTES);
     }
@@ -125,7 +158,14 @@ pub fn run(cli: Cli) -> Result<(), String> {
             open_error = Some(format!("stress plugins: {e}"));
         }
     }
-    let session = LiveSession::new(SystemBackend, settings, !cli.no_audio);
+    let mut session = LiveSession::new(SystemBackend, settings, plan.audio);
+    // The graphics driver's first look at the machine runs beside the rest of the start. It begins
+    // once the audio stream runs: both open devices of the system, and the stream starts sooner
+    // when it does not wait for the driver.
+    let mut gpu = GpuContext::new();
+    gpu.start_listing();
+    // Before the first engine starts: the saved setting decides its automatic worker count.
+    session.set_low_power(crate::performance::startup_level(settings_path.as_deref()).is_low());
     let mut core = AppCore::with_doc(session, doc, None);
     install_video(&mut core);
     // The recent songs are read before a project named on the command line is opened, so that
@@ -134,6 +174,12 @@ pub fn run(cli: Cli) -> Result<(), String> {
         core.set_recent_path(path);
     }
     core.configure_plugins(plugin_config);
+    if cli.safe {
+        core.set_safe_mode(true);
+    }
+    if plan.sweep_scratch {
+        start_scratch_sweep(&config.dir);
+    }
     if let Some(warning) = isolation_warning.filter(|_| plugins_on) {
         core.warn_plugin_isolation(&warning);
     }
@@ -228,6 +274,7 @@ pub fn run(cli: Cli) -> Result<(), String> {
             settings_path,
         },
     );
+    shell.set_auto_level(crate::performance::auto_level_here());
     shell.set_library_default(crate::settings::default_library_dir(
         crate::settings::TargetOs::current(),
         &|k| std::env::var_os(k),
@@ -249,11 +296,12 @@ pub fn run(cli: Cli) -> Result<(), String> {
     // and the start screen offers the new song, the templates and the recent songs.
     // The very first start (no settings file yet) opens the audio and MIDI setup before the
     // start screen; the update question waits behind it. A screenshot or stress run skips it.
-    if cli.screenshot.is_none() && !cli.stress && !cli.stress_song_loads() {
+    if cli.screenshot.is_none() && !cli.stress && !cli.stress_song_loads() && plan.first_run_prompts
+    {
         shell.first_run_setup();
     }
     if cli.starts_empty() {
-        shell.start_without_project();
+        shell.start_without_project_with(plan.reopen_last);
     }
     // The program's only network client, installed here and nowhere else (a shell without one
     // cannot reach the network). It is used for the optional update check: with no answer to the
@@ -264,15 +312,22 @@ pub fn run(cli: Cli) -> Result<(), String> {
     shell
         .core_mut()
         .set_vision(Arc::new(crate::vision_link::SystemVision::new(&config.dir)));
-    if cli.screenshot.is_none() && !cli.stress && !cli.stress_song_loads() {
+    if cli.screenshot.is_none() && !cli.stress && !cli.stress_song_loads() && plan.first_run_prompts
+    {
         shell.start_update_check();
     }
     let no_config = config
         .fallback
         .then(|| settings::NO_CONFIG_NOTE.to_string());
-    for message in [settings_error.map(|e| e.to_string()), open_error, no_config]
-        .into_iter()
-        .flatten()
+    let safe_note = cli.safe.then(|| SAFE_MODE_NOTE.to_string());
+    for message in [
+        settings_error.map(|e| e.to_string()),
+        open_error,
+        no_config,
+        safe_note,
+    ]
+    .into_iter()
+    .flatten()
     {
         log::warn!("{message}");
         shell.notify(message);
@@ -328,6 +383,7 @@ pub fn run(cli: Cli) -> Result<(), String> {
     let status = shell.status_text().to_string();
     log::info!("{status}");
     let event_loop = EventLoop::new().map_err(|e| format!("event loop: {e}"))?;
+    crate::startup::mark(crate::startup::EVENT_LOOP_READY);
     // Live MIDI input wakes the loop at once: the idle loop sleeps between its slow polls, and
     // a mapped control or a transport command must not wait for the next one.
     let midi_wake = event_loop.create_proxy();
@@ -380,6 +436,7 @@ pub fn run(cli: Cli) -> Result<(), String> {
                     settings_path: song_settings_path.clone(),
                 },
             );
+            song.set_auto_level(crate::performance::auto_level_here());
             song.set_library_default(crate::settings::default_library_dir(
                 crate::settings::TargetOs::current(),
                 &|k| std::env::var_os(k),
@@ -397,10 +454,14 @@ pub fn run(cli: Cli) -> Result<(), String> {
     let crashed =
         crate::recovery::crashed_song_snapshots(&config.dir.join(crate::recovery::RECOVERY_FOLDER));
     shell.recover_songs(&crashed);
+    let perf = shell.performance_level();
+    crate::startup::mark(crate::startup::STATE_BUILT);
+    let text = TextEngine::new();
+    crate::startup::mark(crate::startup::FONTS_READY);
     let mut app = App {
         ime_on: false,
         shell,
-        gpu: GpuContext::new(),
+        gpu,
         windows: BTreeMap::new(),
         custom_cursors: BTreeMap::new(),
         ids: BTreeMap::new(),
@@ -408,7 +469,7 @@ pub fn run(cli: Cli) -> Result<(), String> {
         last_focused: (DocId::FIRST, WindowKind::Main),
         drag_noted: false,
         foreign_hover: None,
-        text: TextEngine::new(),
+        text,
         modifiers: Modifiers::NONE,
         mod_events: translate::ModifierTracker::default(),
         buttons: translate::PointerMap::default(),
@@ -419,7 +480,8 @@ pub fn run(cli: Cli) -> Result<(), String> {
         frame_watch: crate::ui_stall::FrameWatch::default(),
         activity: crate::ui_activity::Activity::new(),
         last_paint: None,
-        frame: FRAME,
+        perf,
+        frame: perf.frame_period(),
         frame_started: None,
         held_until: None,
         held_buttons: window_logic::HeldButtons::default(),
@@ -511,6 +573,8 @@ struct AppWindow {
     /// slots. The frame cap reads it; it is not the app-wide [`App::last_paint`], which only
     /// drives the paint tail.
     last_painted: Option<Instant>,
+    /// Made hidden, not yet shown: [`App::reveal`] shows it once a frame was tried.
+    hidden: bool,
 }
 
 struct App {
@@ -549,8 +613,12 @@ struct App {
     /// When a window was last painted: the loop stays at the full frame rate for a while after
     /// it (see [`window_logic::PAINT_TAIL`]).
     last_paint: Option<Instant>,
+    /// What the Performance setting runs at (see [`crate::performance`]): the frame period and the
+    /// render scale of every window follow it, and it is read again after every event.
+    perf: Level,
     /// The length of the frame slots of the windows that present without waiting for the
-    /// vertical blank (see [`window_logic::paint_gate`]): [`FRAME`] now, one place to change.
+    /// vertical blank (see [`window_logic::paint_gate`]), and the redraw tick while audio runs:
+    /// the period of [`Self::perf`] (60 Hz at Full, 30 Hz at Low power).
     frame: Duration,
     /// When the current frame slot began: the windows that present without waiting share it.
     frame_started: Option<Instant>,
@@ -797,7 +865,7 @@ impl App {
     /// Whether the surfaces wait for the vertical blank now: the one rule that sets the present
     /// mode and decides whether the frame cap applies.
     fn presents_with_vsync(&self) -> bool {
-        window_logic::presents_with_vsync(self.windows.len())
+        window_logic::presents_with_vsync(self.windows.len(), self.perf.is_low())
     }
 
     /// Lets the surfaces wait for the vertical blank only while one window is open.
@@ -846,6 +914,8 @@ impl App {
             .with_inner_size(LogicalSize::new(placement.size.0, placement.size.1))
             .with_min_inner_size(LogicalSize::new(min_size.0, min_size.1))
             .with_maximized(placement.maximised)
+            // Shown after its first frame ([`App::reveal`]): not blank while the graphics start.
+            .with_visible(!window_logic::HIDE_UNTIL_FIRST_FRAME)
             .with_window_icon(window_logic::window_icon());
         // The desktop shell matches a window to its launcher (name and icon) by this id: the id of
         // the desktop entry of the Linux packages (packaging/linux).
@@ -874,10 +944,12 @@ impl App {
         let surface = if self.recovery.is_down() || self.gpu.is_lost() {
             None
         } else {
-            match self
-                .gpu
-                .create_surface(Arc::clone(&window), size.width, size.height)
-            {
+            match self.gpu.create_surface(
+                Arc::clone(&window),
+                size.width,
+                size.height,
+                self.perf.render_scale(),
+            ) {
                 Ok(surface) => {
                     self.graphics_ok = true;
                     Some(surface)
@@ -929,11 +1001,26 @@ impl App {
                 title: self.shell.title_in(kind),
                 zoom,
                 last_painted: None,
+                hidden: window_logic::HIDE_UNTIL_FIRST_FRAME,
             },
         );
         self.report_geom(key);
+        if self.windows.get(&key).is_some_and(|w| w.surface.is_none()) {
+            // Nothing will be drawn until the graphics are back: the window shows what it has.
+            self.reveal(key);
+        }
         window.request_redraw();
         Ok(())
+    }
+
+    /// Shows the window `key` if it was made hidden: the first frame is on its surface, or none
+    /// is coming soon.
+    fn reveal(&mut self, key: Key) {
+        if let Some(w) = self.windows.get_mut(&key)
+            && std::mem::take(&mut w.hidden)
+        {
+            w.window.set_visible(true);
+        }
     }
 
     /// Closes the window of `kind` (the shell attached its pane).
@@ -1269,6 +1356,7 @@ impl App {
         let kind = key.1;
         self.service_graphics();
         if self.recovery.is_down() {
+            self.reveal(key);
             return; // no surface until the graphics are back; the rebuild repaints everything
         }
         let Some(window) = self.windows.get(&key).map(|w| Arc::clone(&w.window)) else {
@@ -1276,6 +1364,7 @@ impl App {
         };
         let size = window.inner_size();
         if size.width == 0 || size.height == 0 {
+            self.reveal(key);
             return; // minimized
         }
         self.advance_activity();
@@ -1306,14 +1395,17 @@ impl App {
         let result = match &mut w.surface {
             Some(surface) => {
                 self.gpu.resize(surface, size.width, size.height);
+                self.gpu.set_render_scale(surface, self.perf.render_scale());
                 self.gpu.render(surface, &w.scene, Color::BLACK)
             }
             // A window that was minimized while the graphics were rebuilt has no surface yet.
             None => {
-                match self
-                    .gpu
-                    .create_surface(Arc::clone(&window), size.width, size.height)
-                {
+                match self.gpu.create_surface(
+                    Arc::clone(&window),
+                    size.width,
+                    size.height,
+                    self.perf.render_scale(),
+                ) {
                     Ok(surface) => {
                         w.surface = Some(surface);
                         self.shell.repaint_window(kind);
@@ -1324,6 +1416,9 @@ impl App {
                 return;
             }
         };
+        if window_logic::reveals_window(&result) {
+            self.reveal(key);
+        }
         match result {
             FrameResult::Presented => crate::startup::mark(crate::startup::FIRST_FRAME),
             // Painted but not shown: the shell has marked the window clean, so ask again.
@@ -1440,6 +1535,7 @@ impl App {
                 Arc::clone(&w.window),
                 size.width,
                 size.height,
+                self.perf.render_scale(),
             )?);
         }
         self.dock_frames
@@ -1617,6 +1713,22 @@ impl App {
     }
 
     /// Tells every window its new scale and size when the application zoom changed.
+    /// Follows the Performance setting: a change of level is the new frame period and render
+    /// scale from the next frame on (the render target is made when a window next paints).
+    /// Nothing is restarted.
+    fn apply_performance(&mut self) {
+        let level = self.shell.performance_level();
+        if level != self.perf {
+            self.perf = level;
+            self.frame = level.frame_period();
+            self.pace_presentation();
+            log::info!(
+                "performance: {}",
+                if level.is_low() { "low power" } else { "full" }
+            );
+        }
+    }
+
     fn apply_zoom(&mut self) {
         for ((doc, kind), w) in &mut self.windows {
             let Some(zoom) = self.shell.song(*doc).map(|s| s.app_zoom()) else {
@@ -1639,6 +1751,7 @@ impl App {
 
     fn after_event(&mut self, event_loop: &ActiveEventLoop, requests: Vec<ShellRequest>) {
         self.shell.sync_preferences();
+        self.apply_performance();
         self.apply_zoom();
         self.sync_windows(event_loop);
         self.handle_requests(event_loop, requests);

@@ -319,6 +319,8 @@ pub struct AppCore<S: EngineSink> {
     open_stages: Stages,
     target: Arc<NoteTarget>,
     rejection: Option<String>,
+    /// A safe-mode run (`--safe`): only the window title reads it.
+    safe_mode: bool,
     arrangement: ArrangementView,
     piano_roll: PianoRollView,
     tab_editor: TabEditorView,
@@ -521,9 +523,6 @@ pub struct AppCore<S: EngineSink> {
     pending_play: Option<u32>,
     /// The count-in the waiting Play starts with, if any.
     pending_pre_roll: Option<PreRoll>,
-    /// A freeze or unfreeze changed the engine graph while the transport ran: the engine is
-    /// rebuilt at the next stop instead of cutting the sound (the song is held back too).
-    restart_deferred: bool,
     /// Effect meter feed: the last publish sequence and values applied per device.
     fx_meter_seq: BTreeMap<DeviceKey, MeterFeed>,
     /// The rack view's [`RackView::rebuild_count`] when the meters were last fed: a rebuilt panel
@@ -697,6 +696,7 @@ impl<S: EngineSink> AppCore<S> {
             recent_path: None,
             target,
             rejection: None,
+            safe_mode: false,
             arrangement: ArrangementView::new(theme.clone()),
             piano_roll: PianoRollView::new(theme.clone()),
             tab_editor: TabEditorView::new(theme.clone()),
@@ -763,7 +763,6 @@ impl<S: EngineSink> AppCore<S> {
             engine_shape: (0, 0, 0),
             pending_play: None,
             pending_pre_roll: None,
-            restart_deferred: false,
             fx_meter_seq: BTreeMap::new(),
             fx_meter_rebuilds: 0,
             fx_meter_buf: vec![0.0; FX_METER_CAPACITY],
@@ -1040,6 +1039,11 @@ impl<S: EngineSink> AppCore<S> {
         self.saved_gen += 1;
     }
 
+    /// Marks this run as a safe-mode run: the window title says so.
+    pub fn set_safe_mode(&mut self, on: bool) {
+        self.safe_mode = on;
+    }
+
     /// The window title: `Atomik Rack — <file name>` (`Untitled` without a file), with ` *`
     /// when there are unsaved changes (rack or song). A song with a title in its information
     /// shows it instead, with the file name after it in brackets.
@@ -1057,7 +1061,8 @@ impl<S: EngineSink> AppCore<S> {
             (false, None) => song.to_string(),
         };
         let dirty = if self.is_dirty() { " *" } else { "" };
-        format!("Atomik Rack \u{2014} {name}{dirty}")
+        let safe = if self.safe_mode { " [Safe mode]" } else { "" };
+        format!("Atomik Rack \u{2014} {name}{dirty}{safe}")
     }
 
     /// The latest rejected command or engine error (also shown by the view until the next
@@ -1543,7 +1548,12 @@ impl<S: EngineSink> AppCore<S> {
         let revision = self.document.revision();
         let doc = self.document.doc();
         let actions = match pane {
-            Pane::Rack => self.view.handle(event, doc, &self.registry),
+            Pane::Rack => {
+                self.view.set_doc_revision(Some(revision));
+                let actions = self.view.handle(event, doc, &self.registry);
+                self.view.set_doc_revision(None);
+                actions
+            }
             Pane::Transport => self.transport_bar.handle(event, doc, &self.registry),
             Pane::Arrangement => {
                 self.arrangement.set_doc_revision(Some(revision));
@@ -1960,7 +1970,7 @@ impl<S: EngineSink> AppCore<S> {
         (d.input_channels, d.output_channels, d.sample_rate) != self.engine_shape
     }
 
-    /// [`Self::rebuild_engine`] for an edit of the document (a rate, a channel count, a freeze):
+    /// [`Self::rebuild_engine`] for an edit of the document (a rate, a channel count):
     /// the transport comes back at the tick it was at and keeps playing if it was. Reverb and
     /// delay tails and notes that sounded do not survive the new engine.
     fn rebuild_engine_in_place(&mut self) {
@@ -1979,7 +1989,6 @@ impl<S: EngineSink> AppCore<S> {
     /// engine loop and the metronome. The transport starts stopped; a take in progress ends
     /// without a clip.
     pub fn rebuild_engine(&mut self) {
-        self.restart_deferred = false;
         let mut clock = StageClock::start();
         let mut stages = Stages::new();
         if self.take.take().is_some() {
@@ -2264,8 +2273,13 @@ impl<S: EngineSink> AppCore<S> {
         let mut expanded: Option<ExpandedRack> = None;
         // (song stale, tempo changed): flushed before device and routing ops, and at the end.
         let mut stale = (false, false);
-        let mut restart = false;
-        let mut defer = false;
+        // A freeze or unfreeze: the devices the frozen tracks leave and take come and go live,
+        // see `sync_frozen_in` and `sync_frozen_out`.
+        let frozen_changed = ops.iter().any(|op| matches!(op, SyncOp::FrozenChanged));
+        if frozen_changed {
+            let exp = expanded.get_or_insert_with(|| self.doc().expand(&self.registry));
+            self.sync_frozen_in(exp, &mut inserted);
+        }
         // Keys that this edit both adds and removes: a replacement (or its undo) hands a new
         // device the old one's key. The model reports the additions first and the removals last
         // (so routing never names a missing device), which for such a key would remove the NEW
@@ -2304,6 +2318,10 @@ impl<S: EngineSink> AppCore<S> {
                         }
                     }
                     for device in subtree {
+                        // A freeze in the same edit already inserted what it needs.
+                        if self.ids.contains_key(&device.key) {
+                            continue;
+                        }
                         self.fx_meter_seq.remove(&device.key);
                         self.audio.monitor_sent.remove(&device.key);
                         self.insert_flat(device);
@@ -2384,15 +2402,9 @@ impl<S: EngineSink> AppCore<S> {
                 // A patch (or its undo) replaced a plugin's state: the live instance takes it.
                 SyncOp::PluginStateChanged { device } => self.plugin_state_changed(device),
                 SyncOp::SongChanged => stale.0 = true,
-                // The graph changes (devices leave, a player comes): a new engine, but never
-                // under a running transport: that waits for the next stop.
-                SyncOp::FrozenChanged => {
-                    if self.playing {
-                        defer = true;
-                    } else {
-                        restart = true;
-                    }
-                }
+                // The graph changes (devices leave, a player comes): done live, before the loop and
+                // after it.
+                SyncOp::FrozenChanged => {}
                 // A sampler inserted by this edit already got its map after the insert.
                 SyncOp::ZonesChanged(key) => {
                     if !inserted.contains(key) {
@@ -2443,9 +2455,12 @@ impl<S: EngineSink> AppCore<S> {
         }
         // A bank or a target that came or went changes what the macros drive: the targets of a
         // removed bank get their stored values back and those of a restored one the macro's.
-        let membership = ops
-            .iter()
-            .any(|op| matches!(op, SyncOp::DeviceAdded(_) | SyncOp::DeviceRemoved(_)));
+        let membership = ops.iter().any(|op| {
+            matches!(
+                op,
+                SyncOp::DeviceAdded(_) | SyncOp::DeviceRemoved(_) | SyncOp::FrozenChanged
+            )
+        });
         if membership && (!self.macro_sent.is_empty() || !self.doc().macros.assigns.is_empty()) {
             let exp = expanded.get_or_insert_with(|| self.doc().expand(&self.registry));
             self.send_macro_values(exp);
@@ -2457,21 +2472,15 @@ impl<S: EngineSink> AppCore<S> {
             self.analysers.set_devices(analysers::analyser_keys(exp));
             self.observed.set_devices(exp);
         }
-        if defer && !self.restart_deferred {
-            self.restart_deferred = true;
-            log::info!(
-                "a freeze changed the engine graph during playback: the engine is rebuilt at the next stop"
-            );
-            self.reject(
-                "The freeze takes effect when playback stops: until then the track plays as it was"
-                    .to_string(),
-            );
-        }
         self.flush_song(&mut stale);
+        if frozen_changed {
+            let exp = expanded.get_or_insert_with(|| self.doc().expand(&self.registry));
+            self.sync_frozen_out(exp);
+        }
         self.push_midi_out_ports();
-        if restart || self.engine_shape_changed() {
-            // The host stream opens the document's channel counts and rate, or a track was
-            // frozen or unfrozen: restart the engine where the transport was.
+        if self.engine_shape_changed() {
+            // The host stream opens the document's channel counts and rate: restart the engine
+            // where the transport was.
             self.rebuild_engine_in_place();
             return;
         }
@@ -2499,7 +2508,7 @@ impl<S: EngineSink> AppCore<S> {
     }
 
     fn flush_song(&mut self, stale: &mut (bool, bool)) {
-        if stale.0 && !self.restart_deferred {
+        if stale.0 {
             self.submit_song(stale.1);
         }
         *stale = (false, false);
@@ -2760,6 +2769,11 @@ impl<S: EngineSink> AppCore<S> {
         topology.set_align_inputs(doc.console.align_returns);
         let mut problems = Vec::new();
         for device in &expanded.devices {
+            // A frozen device may still be in the engine (a freeze applied live removes it after
+            // this routing): the routing leaves it out, and the engine accepts its removal.
+            if device.frozen {
+                continue;
+            }
             let (Some(id), Some(f)) = (
                 self.ids.get(&device.key),
                 self.registry.get(&device.type_id),
@@ -3521,7 +3535,9 @@ impl<S: EngineSink> AppCore<S> {
 
     /// Paints the rack view (physical pixels; see the `atomik-ui` hosting contract).
     pub fn paint(&mut self, canvas: &mut dyn Canvas) {
+        self.view.set_doc_revision(Some(self.document.revision()));
         self.view.paint(canvas, self.document.doc(), &self.registry);
+        self.view.set_doc_revision(None);
     }
 
     /// Paints one pane (physical pixels; the sequencer views draw inside their bounds).
@@ -3529,7 +3545,11 @@ impl<S: EngineSink> AppCore<S> {
         let revision = self.document.revision();
         let doc = self.document.doc();
         match pane {
-            Pane::Rack => self.view.paint(canvas, doc, &self.registry),
+            Pane::Rack => {
+                self.view.set_doc_revision(Some(revision));
+                self.view.paint(canvas, doc, &self.registry);
+                self.view.set_doc_revision(None);
+            }
             Pane::Transport => self.transport_bar.paint(canvas, doc, &self.registry),
             Pane::Arrangement => {
                 self.arrangement.set_doc_revision(Some(revision));
@@ -4054,10 +4074,6 @@ impl<S: EngineSink> AppCore<S> {
                 self.locate(tick);
             }
         }
-        if self.restart_deferred {
-            // The freeze that came during playback takes effect now.
-            self.rebuild_engine_in_place();
-        }
     }
 
     fn locate(&mut self, tick: i64) {
@@ -4395,7 +4411,7 @@ pub fn is_project_path(path: &Path) -> bool {
 }
 
 fn write_file(path: &Path, text: &str) -> Result<(), AppError> {
-    std::fs::write(path, text).map_err(|source| AppError::Io {
+    crate::recovery::atomic_write(path, text.as_bytes()).map_err(|source| AppError::Io {
         path: path.to_path_buf(),
         source,
     })
@@ -4410,6 +4426,10 @@ impl<S: EngineSink> Drop for AppCore<S> {
         self.audio.remove_scratch();
     }
 }
+
+#[path = "app_core_fault.rs"]
+mod fault_ops;
+pub use fault_ops::FaultBypass;
 
 #[path = "app_core_audio.rs"]
 mod audio;

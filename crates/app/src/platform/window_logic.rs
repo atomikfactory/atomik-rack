@@ -14,6 +14,18 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 use winit::dpi::{LogicalPosition, PhysicalPosition, Position};
 
+/// Whether a window is made hidden and shown after its first frame. Only where a hidden window
+/// still gets its redraw requests (Windows): elsewhere it is shown at once, as before.
+pub(super) const HIDE_UNTIL_FIRST_FRAME: bool = cfg!(windows);
+
+/// Whether a window made hidden is shown after a frame with this `result`: after any frame
+/// that was tried, except the one that only reconfigured the surface (the redraw it asks for
+/// comes right after). A frame that was skipped or lost shows the window too: it must never
+/// stay hidden.
+pub(super) fn reveals_window(result: &super::gpu::FrameResult) -> bool {
+    !matches!(result, super::gpu::FrameResult::Reconfigured)
+}
+
 /// What a window event says about the paint that follows it, for the paint counters (see
 /// [`crate::ui_activity`]); `None` for an event that explains no paint.
 pub(super) fn paint_cause_of(event: &winit::event::WindowEvent) -> Option<PaintReason> {
@@ -243,8 +255,12 @@ pub(super) fn changed<T: PartialEq + Clone>(old: &T, new: &T) -> Option<T> {
 /// vertical blank would stall every other window for a whole refresh of this one's monitor, and
 /// the windows on monitors with different rates would drag each other down. They then present
 /// without waiting and the app's own tick sets the pace.
-pub(super) fn presents_with_vsync(open_windows: usize) -> bool {
-    open_windows <= 1
+///
+/// At Low power no window waits for the vertical blank: a lone window too is held to the frame
+/// slot, whose period is 30 Hz there, which a presentation in step with a 60 Hz monitor could
+/// not do for the paints that input asks for.
+pub(super) fn presents_with_vsync(open_windows: usize, low_power: bool) -> bool {
+    open_windows <= 1 && !low_power
 }
 
 /// How often the loop runs its housekeeping frame while an audio stream is open and nothing
@@ -628,6 +644,17 @@ mod tests {
     }
 
     #[test]
+    fn a_hidden_window_is_shown_after_any_frame_but_a_reconfigure() {
+        use super::super::gpu::FrameResult;
+        assert!(reveals_window(&FrameResult::Presented));
+        // A frame that was skipped or lost must not leave the window hidden.
+        assert!(reveals_window(&FrameResult::Skipped));
+        assert!(reveals_window(&FrameResult::Lost));
+        // The reconfigure asks for a redraw at once; the window is shown after that one.
+        assert!(!reveals_window(&FrameResult::Reconfigured));
+    }
+
+    #[test]
     fn a_zero_area_window_is_minimized_and_the_app_is_when_all_of_them_are() {
         assert!(is_minimized((0, 0)));
         assert!(is_minimized((0, 600)));
@@ -659,9 +686,45 @@ mod tests {
 
     #[test]
     fn only_a_lone_window_waits_for_the_vertical_blank() {
-        assert!(presents_with_vsync(1));
-        assert!(!presents_with_vsync(2));
-        assert!(!presents_with_vsync(3));
+        assert!(presents_with_vsync(1, false));
+        assert!(!presents_with_vsync(2, false));
+        assert!(!presents_with_vsync(3, false));
+    }
+
+    #[test]
+    fn at_low_power_not_even_a_lone_window_waits_for_the_vertical_blank() {
+        for open in 1..=3 {
+            assert!(!presents_with_vsync(open, true), "{open}");
+        }
+    }
+
+    #[test]
+    fn the_frame_period_of_each_performance_level_is_the_slot_the_cap_uses() {
+        use crate::performance::Level;
+        let periods: Vec<Duration> = [Level::Full, Level::Low].map(Level::frame_period).into();
+        assert_eq!(periods[0], FRAME);
+        assert_eq!(periods[1], Duration::from_micros(33_333));
+        for period in periods {
+            // A window already painted in the slot waits for the rest of it, and the next slot
+            // opens when it is over: at 30 Hz as at 60 Hz.
+            let since = 5 * MS;
+            assert_eq!(
+                paint_gate(false, Some(since), true, period, PaintReason::Input),
+                PaintGate::Wait(period - since)
+            );
+            assert_eq!(
+                paint_gate(false, Some(period), true, period, PaintReason::Input),
+                OPENS
+            );
+            // The loop wakes once per period while something animates.
+            let animating = Wakers {
+                animating: true,
+                ..wakers()
+            };
+            assert_eq!(wake_after(animating, period), Some(period));
+            let tol = frame_tolerance(period);
+            assert!(tol >= MS && tol < period / 4, "{tol:?}");
+        }
     }
 
     const MS: Duration = Duration::from_millis(1);

@@ -8,6 +8,64 @@ may break APIs and the patch and project formats.
 
 ## [Unreleased]
 
+### Added
+- **Performance setting: Auto, Full or Low power.** The Interface tab has a new Performance row. Low power draws every
+  window at 30 frames a second instead of 60, renders each main window at three quarters of its size and stretches it
+  to fit, and starts at most one render worker when the worker count is automatic (a count you fixed is never
+  changed). Auto, the default, picks Low power on a machine with 4 or fewer logical CPUs and Full otherwise, once at
+  start, and the button says which. The frame rate and the render size apply at once; the worker count from the next
+  engine start. Rendered audio does not change.
+- **Safe mode: `atomik --safe`.** Starts with temporary default settings (your saved settings, keymap, recent songs and
+  recovery copies are neither read nor written), no audio device, no plugins loaded or scanned and no project
+  reopened, so a setting, a device or a plugin that stops a normal start cannot. The window title ends in
+  `[Safe mode]` and a message says so. It cannot be combined with `--settings`.
+
+### Changed
+- **The rack builds the automation values it shows once, not on every paint.** While an automation lane has points,
+  the rack laid its values over a copy of the whole document on every paint; the copy is now kept while the
+  document and the shown values are unchanged, so a stopped rack with automation paints with about a third fewer
+  allocations. What the knobs show does not change.
+- **A faster start with no blank window (Windows).** The graphics adapters are listed on a worker thread while the
+  rest of the app builds its state, so the first frame comes about 200 to 250 ms sooner on a desktop and on a
+  software adapter; and a window is made hidden and shown right after its first frame, so none sits blank while the
+  graphics start (the Rack and Mixer windows restored at start included). Other systems keep showing the window at
+  once. Startup errors behave as before.
+- **Audio Settings no longer lists every audio device once a second.** While the dialog was open, each host and each
+  device was asked about its formats every second, which could stutter the window with a slow driver. The lists are
+  read when the dialog opens and when you press the new Rescan chip beside the audio hosts, which also looks for
+  MIDI inputs that appeared; the MIDI ports still refresh once a second. A device plugged in while the dialog is open
+  shows after Rescan or when the dialog is opened again.
+- **Freezing and unfreezing a track no longer stops playback or reopens the audio device.** Freeze Track,
+  Unfreeze Track, Re-render Frozen Track and their undo and redo now apply while the song plays: the engine takes the
+  frozen track's player, routing and song and drops the devices that leave through its usual live edit paths, with
+  no engine restart and no stop and start of the audio stream, so freezing a heavy track relieves an overloaded
+  session at once. The track switches between two audio blocks (no crossfade; the tail of its old effects is cut,
+  as when a device is removed during playback). Rendered audio and bounces do not change.
+- **Audio restarts by itself after a contained fault.** When a device panics while rendering, or a panic stops the
+  audio stream, the engine used to stay silent until you chose Audio > Restart Audio. Now, once the transport is
+  stopped (at once if it already is, otherwise at the next stop), the device the fault names is bypassed as an
+  ordinary edit you can undo, the audio is rebuilt, and a message says what happened ("Audio restarted after a fault
+  in <device>; the device is bypassed"). It restarts at most once a minute and at most three times in a session; after
+  that the message asks you to restart the audio yourself, as before. A device with no bypass switch (an instrument)
+  is named and left in place. A plugin whose process crashed keeps its own crash handling and reload. Audio >
+  Restart Audio works as before.
+- **Scratch folders left by crashed runs are swept.** At start, a background thread removes the
+  `atomik-rack-session-*` folders in the temp folder whose session is gone, that nothing has touched for 14 days and
+  that no recovery copy points at; a folder it cannot be sure about is kept. One log line says how many and how much.
+- **A knob turned while a song plays re-applies only the automation of that knob.** Any control message used to make
+  every automation lane write its value again at the next batch; now only the lanes of that device and parameter do.
+  Rendered audio does not change.
+
+### Fixed
+- **Exporting a patch, a MIDI file or MIDI mappings, a tab or chord sheet, the device list or the diagnostics report
+  can no longer leave half a file.** They write a temporary file and rename it, as a project save does, so a failed
+  export keeps the file that was there.
+- **A contained panic on an unnamed audio thread no longer writes a file on that thread.** Some audio backends run the
+  callback on a thread with no name, which the crash hook could not recognise; every stream callback now marks its
+  thread.
+- **The last value of a drag is no longer dropped when the engine's parameter queue is full.** The newest refused
+  value of each parameter is sent again on the next poll.
+
 ## [0.5.0-rc.2] - 2026-11-24
 
 ### Added

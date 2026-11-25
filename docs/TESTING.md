@@ -1075,8 +1075,10 @@ channel, saves and loads the ignorable `strip` field, and survives Re-render Fro
 `crates/ui/tests/freeze.rs` covers the header mark and the labelled render, nothing to grab where a
 frozen track's clips are, the tracks a command works on and the registry.
 `crates/app/src/app_core_freeze_tests.rs` runs the worker end to end on a recording sink (the
-progress and the queue, the engine restart without the frozen devices and with the player, the song
-the engine plays, bit-identical bounce of the frozen document, unfreeze, undo and redo, keep audio,
+progress and the queue, the live swap (no engine reset, also while playing: the player inserted, the
+routing, then the removal of the frozen devices), the song the engine plays, bit-identical bounce
+of the frozen document, unfreeze, undo and redo, keep audio, a real offline engine whose output
+after a freeze while playing equals the track frozen beforehand from the swap block on,
 freezing up to the selected device, a render of a track that changed meanwhile thrown away, cancel,
 what cannot be frozen, edits refused with the message, the tail option, bounce in place with and
 without muting, several tracks, the menu state, a new project dropping the render) and
@@ -1574,6 +1576,14 @@ These are the hand checks, on every OS (`atomik --detach rack,console` opens bot
   play, move the pointer over one window for a few seconds, then stop moving and read the next `ui activity`
   lines: wake-ups should be about 60 a second (not about 120) and both windows about 60 paints/s. Do the same
   after resizing one of the windows by dragging its edge, and after clicking the other window to focus it.
+- Performance (Interface tab): set it to Low power with the rack playing a pattern. The meters and the playhead
+  keep moving at about 30 frames a second (the `ui activity` line shows about 30 wake-ups and paints a second, with
+  one window as with two), the picture is a little softer, the sound does not change, and switching back to Full
+  restores 60 and the sharp picture without a restart. On a 4K display or at 150 % scaling check that the text at
+  Low power is still easy to read. Detach the rack and the mixer at Low power: each is drawn at 30 frames a second
+  and nothing stretches wrongly when a window is resized. On a machine with 4 or fewer logical CPUs a fresh
+  settings folder shows "Auto (Low power)" on the button; the log line `render workers` says "low power" after the
+  next engine start.
 
 Run on Windows only so far (three windows open, draw, close, quit and restore); macOS, Linux (X11
 and Wayland) and monitors of mixed scale have not been tried.
@@ -1844,7 +1854,8 @@ is `session_open`, edit, kill the server process, `session_open` again.
 reopened log appends, a folder that cannot be made is an error and the logger still works),
 `crash.rs` the hook tests (a panic on a thread writes a report with the message, the thread, a
 backtrace, the version and the devices, the guard puts the previous hook back, a panic on a render
-thread writes nothing and the UI thread's flush does), `diagnostics.rs` the report tests (home
+thread writes nothing and the UI thread's flush does, an unnamed thread that ran a stream callback counts as an
+audio thread), `diagnostics.rs` the report tests (home
 folders hidden in every spelling, the log, the crash report and the counters present, a report with
 no files) and `status.rs` the status-bar string with every counter.
 `crates/app/tests/no_eprintln.rs` fails when production code of any crate but the command-line
@@ -2081,6 +2092,14 @@ Hand checks, not automated (they need an audio interface and your hands):
   toast: `AUDIO DEVICE LOST` (or `AUDIO STOPPED` on a driver that just goes quiet) within about half
   a second. Audio > Restart Audio with the interface still out reports why audio is off; plug it
   back in and Restart Audio plays again.
+- A contained engine fault restarts the audio by itself (`crates/app/src/fault_restart.rs` has the rule with simulated
+  time; `shell_device_loss_tests.rs` has the shell cases: a fault while stopped bypasses the named device and restarts
+  once, a fault during playback waits for the stop, two faults inside a minute restart once, the fourth is left to the
+  user, an undone bypass that faults again obeys the minute; `app_core_plugins_sandbox_tests.rs` has the crashed
+  plugin that is left to its own path). No real device panics in these tests: they feed the shell the status the
+  engine reports. Hand check: there is no menu command that makes a device panic, so only a build with a deliberately
+  broken device can show it end to end; the visible result is the message "Audio restarted after a fault in <device>;
+  the device is bypassed", the device bypassed (Edit > Undo brings it back) and sound again with the transport stopped.
 - Turn on Audio Settings > If the audio device is lost > Switch to the default devices, repeat: the
   app moves to the default output by itself with a toast, and `settings.json` still names the
   interface. Do it once for each host (WASAPI, ASIO where built, CoreAudio, ALSA).
@@ -2113,6 +2132,8 @@ Hand checks, not automated (they need two MIDI controllers):
 - Switch one off: it stops playing at once and the other keeps going. Switch it on again.
 - Unplug a controller while Audio Settings is open: the list drops it within a second; plug it in
   again: it reappears and, if switched on, opens (the status bar lists the open ports).
+- Plug in a USB audio interface while Audio Settings is open: it is not listed until you press Rescan
+  (next to the audio hosts); leave the dialog open for a minute: the window never stutters.
 - Unplug it with the dialog closed, plug it in again and use Audio > Rescan MIDI Ports.
 - Set a pad controller to mapping only, map a pad to Play: the pad runs the transport and plays no
   note; the keyboard still plays.
@@ -2543,3 +2564,12 @@ with files that the tests make themselves, in `crates/tab/tests/gp_fixtures`:
   and what read is written and read again. The run was repeated with overflow checks on.
 - The fuzz targets tab_gp, tab_musicxml, tab_ascii and chord_sheet are seeded by `scripts/fuzz-seed.sh`; the file
   seeds are written by the ignored tests `write_fuzz_seeds` (nothing is downloaded).
+
+## Safe mode
+
+`atomik --safe` starts with temporary default settings in `%TEMP%tomik-rack-safe-<pid>` (removed at exit), no audio
+device, no plugins and no reopened project; the title bar ends in `[Safe mode]`. The decision is a pure function
+(`Cli::start_plan`, tested in `cli.rs`: the settings path is temporary, audio and plugins are off, the saved file is not
+read). Hand check: with a settings file in place, run `atomik --safe`, change a setting, quit, and confirm the real
+`settings.json`, `recent.json` and `recovery` folder are untouched and the temporary folder is gone. Never combine it
+with `--play`.

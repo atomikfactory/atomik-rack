@@ -1050,3 +1050,78 @@ None of the instance figures was changed. Sharing the manager's and the handle's
 (128 KiB at 500 params), under the 200 KiB bar; the parameter queues are all needed when a batch touches every
 parameter and the first touch arrives on the audio thread; the event lists could only be made smaller by proving a
 bound under the device's `4 * MAX_EVENTS_PER_BATCH + 256` events.
+
+## Performance setting: Full against Low power (2026-11-24)
+
+The running app on the reference machine above (graphics card: a discrete desktop GPU), release build of the
+branch that adds the Performance setting, the transport stopped and nothing sounding (no `--play`), the stress rack
+(100 devices) with the audio stream open, one main window. Profile LP4: the process pinned to four logical
+processors (two cores, four threads) right after launch, with `--workers 1` given explicitly so that the worker count
+is the same in both rows (the setting only cuts an automatic count). A clean settings folder per run, with a
+`workflow.json` that sets `performance` to `full` or `low_power`. The sampler is `scripts/perf/sample-app.ps1` (15 s
+settle, 20 s window; its UI probe wakes the app about ten times a second in both rows). The "pointer sweep" rows
+add a script that moves the pointer over the window every 10 ms during the window. GPU % is the summed GPU engine
+utilisation of the app process; one run per row.
+
+| Scenario | CPU % (one core) | GPU % | Wakes/s | Main paints/s | UI probe p95 ms |
+|---|---|---|---|---|---|
+| Stopped stress rack, Full | 26.0 | 3.6 | 14.1 | 0.5 | 0.2 |
+| Stopped stress rack, Low power | 22.7 | 5.7 | 14.0 | 1.4 | 0.1 |
+| Stopped stress rack, pointer sweep, Full | 36.9 | 14.3 | 38.8 | 7.0 | 0.9 |
+| Stopped stress rack, pointer sweep, Low power | 35.0 | 16.3 | 40.2 | 5.5 | 3.4 |
+
+Read these rows as "no difference": a stopped rack paints about once a second, and the sweep reached only 5 to 7
+paints a second (a hover marks few repaints), far below either frame rate, so neither the 30 Hz slot nor the smaller
+render target has anything to save; the gaps between the rows are run-to-run noise (the Low power idle row painted
+more often, by chance, and shows more GPU). The frame time is not in the sampler's output. The effects show only while
+something animates for real (a playing pattern, a drag, a 4K window); that needs the owner's hand check, since this
+run may not play audio.
+
+## Rack paint with a shown automation lane (2026-11-24)
+
+`cargo test -p atomik-ui --release --test bench_shown_memo -- --ignored --nocapture`: a stopped rack of 100 devices
+(no cables, a small document) at 1920x1080, one automation lane showing a value, a repaint forced on every paint,
+200 paints after two warm-up paints; allocations counted on the thread. "Built each paint" is what every paint did
+before (the revision is not declared); "kept" declares the document revision, as the app does. Three runs.
+
+| Rack paint, one shown lane | ms/paint | Allocations/paint |
+|---|---|---|
+| Overlay built each paint | 0.44 / 0.52 / 0.48 | 892 |
+| Overlay kept while nothing changed | 0.41 / 0.43 / 0.43 | 586 |
+
+The document in this bench is small; a project with a console, assets, cables and macros copies more per build, so the
+gain there is larger. The 586 allocations left are the other per-paint work of `prepare` and the paint itself.
+
+## Start-up stages (2026-11-24)
+
+Release build, a clean settings folder and library, `--no-midi --quit-after 5`, no playback. Five starts per profile
+(normal; LP4 = affinity 0xF and `--workers 2`; WARP = `WGPU_BACKEND=dx12` with the Basic Render Driver). Times are
+milliseconds after the process began, from the `startup` log lines: median / max of the five. "Before" is the base of
+this change. "After" is the change with the adapter listing started at the very top of `run()`, before the audio
+stream; the shipped placement starts it right after the stream runs (a few lines later) and has NOT been measured, see
+the note below.
+
+| Stage | Normal before | Normal after | LP4 before | LP4 after | WARP before | WARP after |
+|---|---|---|---|---|---|---|
+| Audio stream running | 46 / 51 | 254 / 265 | 49 / 50 | 260 / 266 | 48 / 50 | 65 / 68 |
+| Event loop created | n/a | 388 / 398 | n/a | 396 / 412 | n/a | 207 / 217 |
+| State built, fonts read | n/a | 392 / 402 | n/a | 400 / 418 | n/a | 211 / 221 |
+| First window created | 452 / 496 | 402 / 414 | 476 / 591 | 416 / 433 | 250 / 307 | 226 / 232 |
+| Adapters listed | n/a | 459 / 529 | n/a | 471 / 503 | n/a | 282 / 292 |
+| Device created | n/a | 536 / 610 | n/a | 548 / 583 | n/a | 352 / 441 |
+| Adapter chosen | 975 / 1275 | 781 / 862 | 1026 / 1161 | 799 / 842 | 584 / 642 | 360 / 450 |
+| Device and renderer ready | 987 / 1911 | 794 / 873 | 1048 / 1180 | 814 / 858 | 3118 / 3179 | 2842 / 2968 |
+| First frame presented | 1019 / 1941 | 825 / 909 | 1076 / 1217 | 848 / 894 | 3166 / 3225 | 2917 / 3040 |
+
+What the table says. The window used to be visible and blank from its creation to the first present: about 570 ms
+(normal), 600 ms (LP4) and 2.9 s (WARP). Listing the adapters is the slow step on a real GPU (about 500 ms in the
+base, from window to adapter chosen); building the renderer is 12 to 20 ms there. On the software adapter the
+renderer build (shader compilation) is about 2.5 s of the 3.1 s: that is the shader compiler's cost and a worker
+cannot hide it, since the first frame needs it. Fonts take 2 to 4 ms, the event loop 130 to 180 ms.
+
+A first, cold run of the base measured 1456 ms to the first frame (normal); the table uses the warm second set.
+
+Note on the audio row: with the listing worker started before the audio stream, the stream came up at 254 ms instead
+of 46 ms (the driver's first look at the machine slows the opening of the audio device). The shipped change therefore
+starts the worker after the audio stream runs. That placement was not measured (the app was not started again); the
+owner's check: start time with the change, and the audio row.

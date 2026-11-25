@@ -891,7 +891,13 @@ sound moved. The views show an overlay instead
 - **The document is not touched.** `RackDoc::view_with_shown` copies the devices with the shown
   values in place (an empty song: no view reads it); the document, its history and `is_dirty` never
   see the overlay. The rack applies it in `prepare`, the console and the plugin list in `sync`;
-  inside a container's own view the controls show the stored values.
+  inside a container's own view the controls show the stored values. The rack keeps its overlay
+  (`shown_doc` in `rack/container_input.rs`) while the document revision the host declared with
+  `RackView::set_doc_revision` around `handle` and `paint`, and the generation of its shown values
+  (bumped by `set_shown_values` when the set changes), are the ones it was built for: a rack that
+  is painted again with nothing changed builds no copy, and its sync skips the compare of the
+  devices against the same overlay. A call without a declared revision builds the overlay every
+  time.
 - **What the user holds.** A lane in `AutoTake` that `PassRecorder::is_writing` (Overwrite from the
   start, Latch from the first touch, Touch while held) is left out, so the control shows the user's
   value and, in Touch, follows the lane again at the release. With the song stopped `ParamChanged`
@@ -1033,9 +1039,9 @@ proxy (`ControlHub::set_waker`), so a mapped control does not wait for the next 
 quit time, a screenshot, a submenu switch, the graphics back-off) always win over the slow wake. The headless
 shell, the QA server and the tests drive the shell directly and never see these rates.
 The windows that present without waiting for the vertical blank (two or more windows are open) share one frame
-phase: time is cut into slots of one frame period (`App::frame`, from `FRAME`; `App::frame_started` is the start
-of the current slot) and each such window is painted at most once per slot (`window_logic::paint_gate`, with
-`AppWindow::last_painted`, apart from the app-wide `last_paint` of the paint tail). A tick uses its one time for
+phase: time is cut into slots of one frame period (`App::frame`, set by the Performance level: 60 Hz at
+Full, 30 Hz at Low power; `App::frame_started` is the start of the current slot) and each such window is
+painted at most once per slot (`window_logic::paint_gate`, with `AppWindow::last_painted`, apart from the app-wide `last_paint` of the paint tail). A tick uses its one time for
 every window it paints. Input, live and update paints of a window not yet painted in the slot are made at once; one
 already painted in it waits for the slot to end, and the paint after the end opens the next slot, so every window
 is painted by the same wake-up of the loop and a window painted off the tick does not split the loop into two
@@ -2547,8 +2553,19 @@ the project bounce (2.7) with one tap on the rack; neither changes the engine or
   render), the track keeps playing the old render, and `RefreezeTrack` swaps the new one in as one
   undo step (the render is thrown away if the track or its chain changed meanwhile, as for a
   freeze).
-  `SyncOp::FrozenChanged` makes the app restart its engine: `rebuild_engine` skips the frozen
-  devices but spends their ids, so freezing or unfreezing stops playback. With plugins, the worker
+  `SyncOp::FrozenChanged` is applied live, without a restart and while the transport runs
+  (`AppCore::sync_frozen_in` and `sync_frozen_out`, called around the loop of `sync_ops`): the
+  engine gets the devices it lacks (the player of a frozen track, the devices an unfrozen one
+  takes back) through `insert_device`, then one `submit_routing` from the new expansion (the
+  frozen devices' cables are gone), then the song that plays the render, and last `remove_device`
+  for what leaves, which the engine drops off the audio thread. All of it is one run of the
+  engine's ordered control queue, applied at one block boundary: the track switches between two
+  blocks, its old chain's tail (a reverb still ringing) is cut as when a device is removed
+  during playback, and there is no crossfade. Undo and redo of a freeze and of a re-render take
+  the same path (a re-render also gives the player its new delay). The audio stream is not
+  reopened; a sample-rate or channel-count edit still rebuilds the engine. `rebuild_engine`
+  (a new project, an audio restart) still skips the frozen devices and spends their ids. With
+  plugins, the worker
   makes its own `PluginHost` from the app's scan cache and settings with the sandbox of the app in
   bounce mode (an instance may only live on the thread that made the host); without the sandbox
   the worker loads a second instance of each plugin in the app process, on its own thread, from
@@ -3045,7 +3062,10 @@ none on a single core. The physical core count comes from the `num_cpus` crate; 
 nothing, or more cores than threads, the old guess from the thread count stands in
 (`workers_auto` in `settings.json`; a file that sets `workers` and not `workers_auto` keeps its
 number, the Audio settings tab has an Auto chip). The stream start logs the count with the
-physical and logical counts it was derived from.
+physical and logical counts it was derived from. At Low power an
+automatic count is cut to one worker (`performance::workers_for`, read when an engine starts, so a change of the
+Performance setting applies from the next engine start; a count fixed by hand is never changed by it).
+Workers never change a rendered sample, so a bounce is the same at either level.
 
 ### Per-device processing time
 
@@ -3170,7 +3190,11 @@ They share only wait-free single-producer/single-consumer ring buffers (`rtrb`),
 | preview ring | decoder → engine | interleaved stereo `f32` frames of the file being previewed (one ring per preview) | `PREVIEW_RING_FRAMES` = 65 536 frames |
 | atomics | engine → everyone | dropped events, stream underruns, meters, latencies, the transport state (a seqlock cell) | – |
 
-A full queue makes the handle method return `EngineError::QueueFull`; the engine never waits. Live
+A full queue makes the handle method return `EngineError::QueueFull`; the engine never waits. The live
+session keeps the newest value of each parameter that was refused and sends it again on its next poll,
+so the end of a drag is not lost. A parameter message makes the song player apply again only the
+automation lanes of that device and parameter; any other control message or transport command still
+makes it apply every lane. Live
 audio adds `atomik-audio-io`: the callback publishes `(engine host frame, instant)` through a
 `FrameClock` (so MIDI can be mapped to an exact frame) and counts xruns and DSP load. cpal has no
 duplex stream, so captured samples reach the render callback through a wait-free ring.
@@ -3233,7 +3257,10 @@ stale clock cannot hold back the notes behind it, since the engine only looks at
 queue. `LiveSession::sync_midi` opens and closes ports to match the settings and leaves the
 others alone; a port that is not there yet is reported in the status and opened by Audio > Rescan
 MIDI Ports (`audio.rescan_midi`) or, while Audio Settings is open, by the one second re-listing
-of the ports. The `session_midi_input` tool takes the name of the port a message comes from.
+of the MIDI ports (`DeviceLists::query_midi`: cheap, no driver is asked). The audio hosts and devices are
+listed when the dialog opens and when its Rescan chip is pressed (`Shell::rescan_devices`), never on a
+timer: listing them asks every driver, and a slow one stalled the window once a second.
+The `session_midi_input` tool takes the name of the port a message comes from.
 
 **MIDI output.** The MIDI Out device (`atomik.midi-out`, see [DEVICES.md](DEVICES.md)) sends notes and
 controllers to a port, and the audio thread never touches a port. The device turns what it
@@ -5305,6 +5332,19 @@ take the app down; Settings > Plugins can switch back to running plugins inside 
   clip at the start of the song, so the frames up to the last header refresh come back (at most
   about a second is lost); one undo removes track and clip, and the `rec-` file is deleted only after the
   project is saved.
+- **The scratch sweep.** A crashed run leaves its `atomik-rack-session-<pid>-<n>` folder in the temp
+  folder, and nothing else removes it. At start, on a background thread (`recovery::sweep_scratch`),
+  the app removes such folders whose process has no live session marker in the recovery folders, that
+  nothing has touched for 14 days and that no snapshot's bundle note names. A folder it cannot decide
+  about (an unreadable marker, note or folder) is kept, a run with its own `--settings` file or in
+  safe mode does not sweep (it cannot see the notes of the usual folder), and one log line gives the
+  count and the bytes freed.
+- **Safe mode.** `atomik --safe` (`Cli::start_plan`) keeps the settings, the keymap, the recent songs,
+  the window state and the recovery folder in a temporary folder `atomik-rack-safe-<pid>` that is
+  removed at exit; the saved settings are neither read nor written. No audio stream is opened, plugins
+  are off (nothing scanned or loaded; their devices show as stand-ins), the last project is not
+  reopened, and neither the first-run setup nor the update check start. The window title ends in
+  `[Safe mode]` and a message says so. Logs and crash reports still go to the usual folder.
 - **The sandbox** ([plugin-sandbox](../crates/plugin-sandbox/src),
   [plugin-ipc](../crates/plugin-ipc/src), [plugin-hostd](../crates/plugin-hostd/src)).
   `SandboxBackend` is a `PluginBackend` like the format backends: `instantiate` starts one
@@ -5724,6 +5764,21 @@ creation chain in the **Creation chain** bullet.
   `SettingsDialog::preferences` merges into the Workflow draft, and View > Theme and View >
   Application Zoom (`AppCommand::SetTheme`, `AppCommand::AppZoom`) apply and save at once. None of
   it touches the project or the engine.
+  - **Performance.** `workflow.json` also holds `performance` (`auto`, `full`, `low_power`; a file without it
+    is Auto; [app/src/performance.rs](../crates/app/src/performance.rs)). Low power does three things and only
+    these: the shared frame slot is 30 Hz instead of 60 (`Level::frame_period`, `App::frame`; at Low power not
+    even a lone window waits for the vertical blank, so input cannot paint it faster), each main window's
+    graphics target is rendered at 0.75 of its physical size (`Level::render_scale`, `performance::target_size`)
+    with the scene scaled into it and the existing blit stretching it back over the surface with linear
+    filtering (`GpuContext::set_render_scale`; the surface, the scene, pointer positions, text positions and
+    screenshots stay in the window's own pixels, and the small bar and strip windows of plugin editors keep
+    the full size), and an automatic render worker count is cut to one (`performance::workers_for`). **Auto**
+    is Low power on a machine with 4 or fewer logical CPUs and Full otherwise (`performance::auto_level`), decided
+    once at start (`Shell::set_auto_level`) and shown on the button as "Auto (Low power)". The frame rate and the
+    render size apply at once when the setting is applied (`App::apply_performance`); the worker count applies
+    from the next engine start (`LiveSession::set_low_power`; the saved setting is read before the first
+    engine starts). The headless renderer of the QA server and screenshots keep scale 1.0. Nothing reaches the
+    engine's output.
   - **Theme.** `Theme::dark` and `Theme::light` fill the same tokens. What the sequencer views used
     to spell as colours (lanes, piano keys, the veil outside a clip, the mute colour) is a token
     too, faint overlay lines use `Theme::overlay` (white on dark, near-black on light) and the type
@@ -7009,6 +7064,14 @@ winit and GPU code is not (it needs a window and a GPU).
   Every window has its own `Scene` and `SceneCache`; the `TextEngine` is shared. `render_offscreen`
   (`--screenshot`) is separate and writes one PNG per open window (`shot.png`, `shot-rack.png`,
   `shot-console.png`).
+- **The start overlaps the slow graphics step, and no window shows blank.** Once the audio stream runs, `run`
+  starts `GpuContext::start_listing`: a worker lists the graphics adapters while the application state, the fonts
+  and the event loop are built; the first selection joins it (`Devices::list_adapters`) and lists on its own
+  thread when there is no worker or it failed, so a start without the worker behaves as before. On Windows a window
+  is created hidden and `App::reveal` shows it after its first frame (`window_logic::reveals_window`: any tried
+  frame but a surface reconfigure; a window with no surface, a minimized one or a down device shows at once);
+  other systems keep showing it at creation (`window_logic::HIDE_UNTIL_FIRST_FRAME`). The `startup` log lines
+  name every stage (`startup.rs`).
 - **A lost graphics device is rebuilt, not fatal.** The context installs two callbacks on every device it makes
   (`GpuHealth`): the uncaptured-error handler and the device-lost callback only set an atomic flag and keep the
   reason text (running out of memory or an internal error loses the device; a rejected command is only noted, once
@@ -7112,7 +7175,9 @@ winit and GPU code is not (it needs a window and a GPU).
   other on one thread, so a wait for one monitor's blank would stall the others, and monitors with
   different refresh rates would drag each other down; the 60 Hz tick sets the pace, and a window is
   painted at most once per shared frame slot (`window_logic::paint_gate`), so a burst of input events cannot
-  build more frames than the tick would. A lone window keeps vsync and is not capped.
+  build more frames than the tick would. A lone window keeps vsync and is not capped, except at Low power
+  (Performance setting, see Interface preferences), where no window waits for the blank and every window is held
+  to the 30 Hz slot.
 - **Invariants.** Every song has a main window, and it is the owner of the editors of that song's sandboxed
   plugins (`set_plugin_editor_owner`), whichever pane is detached; plugin editor windows are
   separate top-level windows (kept per song) and are not touched by any of this. Nothing here reaches the engine,
@@ -7224,8 +7289,10 @@ stderr is their output).
 - **The panic hook.** [crash.rs](../crates/app/src/crash.rs) installs a hook once. A panic writes
   `crash-<timestamp>.txt` next to the log: message, place, thread, a forced backtrace, the version,
   the OS and the audio and MIDI devices the session had open; then the previous hook runs. A panic
-  on an audio or render thread (`is_realtime_thread`) does no file I/O: it raises a flag and the UI
-  thread writes the report on its next status poll. The engine's fault containment is unchanged; the
+  on an audio or render thread does no file I/O: it raises a flag and the UI thread writes the report
+  on its next status poll. The hook knows such a thread by its name (`is_realtime_thread`) or by a
+  thread-local mark that every stream callback sets first thing (`atomik_audio_io::on_callback_thread`),
+  because the callback threads of some audio backends have no name. The engine's fault containment is unchanged; the
   report says it happened.
 - **Overload counters.** `status::OverloadStats` gathers what the real-time side dropped or could
   not do in time: note events dropped (`EngineHandle::dropped_events`), input overruns, frames the
@@ -8261,7 +8328,13 @@ A bug in a device must cost that device, not the session. The rules:
   same guard: a panic there faults only that node, and `Arena::settle_faults` records it once per
   batch (a bool test while nothing happened). `Engine::fault` and `EngineHandle::fault` report it; the audio callback
   publishes it in `Telemetry::faulted`/`faulted_device`, the status line shows
-  `ENGINE FAULTED: <device>` and a toast points at Audio > Restart Audio, which rebuilds the engine.
+  `ENGINE FAULTED: <device>`. The shell reads that flag when it polls the status and answers with the rule in
+  [fault_restart.rs](../crates/app/src/fault_restart.rs): while the transport is stopped, at most once a minute and at
+  most three times a session, it bypasses the named device in the model (one undoable `SetParam`, so the new engine
+  does not meet the same crash; `AppCore::bypass_faulted_device`) and rebuilds the engine as Audio > Restart Audio does.
+  A fault during playback waits for the stop. After the limit, or when the plugin crash path already owns the device
+  (a sandboxed plugin's process ended: that path reloads it), a toast points at Audio > Restart Audio instead. The
+  time is the `Instant` the shell polls with, so tests move it. Nothing of this runs on the audio thread.
   The callback also wraps the whole render in `catch_unwind` as a last line: a panic outside any
   device (the engine's own code) silences the stream and sets `Telemetry::faulted`.
 - **A quiescent device is skipped** ([plan.rs](../crates/engine/src/plan.rs), `Node::skippable`). After each `process`

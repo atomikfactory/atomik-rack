@@ -83,6 +83,29 @@ fn a_value_set_from_outside_is_overwritten_by_the_lane_on_the_next_batch() {
 }
 
 #[test]
+fn a_knob_turned_on_another_parameter_leaves_the_other_lanes_alone() {
+    let (mut e, mut h, id, log) = rig();
+    run(&mut e, 64 * 10, 64);
+    // The knob is on `B`, the flat lane is on `A`: `A` has no reason to be written again.
+    h.set_param(id, ParamLog::B, 0.9).unwrap();
+    run(&mut e, 64 * 10, 64);
+    assert_eq!(
+        log.applied(ParamLog::A).len(),
+        1,
+        "the flat lane is not re-applied for a knob that is not its own"
+    );
+    // The lane of the knob's own parameter still wins at the next batch.
+    let b = log.applied(ParamLog::B);
+    assert_eq!(b.len(), 21, "the moving lane writes every batch");
+    // A knob on the lane's own parameter forces it again, as before.
+    h.set_param(id, ParamLog::A, 0.9).unwrap();
+    run(&mut e, 64 * 10, 64);
+    let a = log.applied(ParamLog::A);
+    assert_eq!(a.len(), 2);
+    assert_eq!(a[1].1, 0.5);
+}
+
+#[test]
 fn a_locate_applies_every_lane_again() {
     let (mut e, mut h, _id, log) = rig();
     run(&mut e, 64 * 10, 64);

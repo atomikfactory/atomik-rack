@@ -119,7 +119,7 @@ fn inserted(calls: &[SinkCall]) -> Vec<&'static str> {
 }
 
 #[test]
-fn a_freeze_renders_on_a_worker_then_freezes_the_track_and_restarts_the_engine() {
+fn a_freeze_renders_on_a_worker_then_freezes_the_track_live() {
     let mut c = core_with(1);
     select_track(&mut c, "lead");
     c.freeze_tracks(FreezeThrough::Track);
@@ -160,30 +160,44 @@ fn a_freeze_renders_on_a_worker_then_freezes_the_track_and_restarts_the_engine()
     assert!(c.bundle_root().unwrap().join("Audio").is_dir());
     assert!(c.peaks().contains_key(&f.audio.asset));
     assert!(c.song_assets().contains_key(&f.audio.asset));
-    // The engine restarted: the instrument and the reverb are not inserted, the player is.
+    // The engine was not rebuilt: the player is inserted, the instrument and the reverb leave
+    // (the routing without them first), the bass and the strips stay.
     let calls = c.sink_mut().take();
-    assert!(calls.iter().any(|c| matches!(c, SinkCall::Reset { .. })));
-    let devices = inserted(&calls);
-    let all = c.doc().expand(c.registry());
-    assert_eq!(
-        devices.len(),
-        all.devices.iter().filter(|d| !d.frozen).count()
+    assert!(
+        !calls.iter().any(|c| matches!(c, SinkCall::Reset { .. })),
+        "{calls:?}"
     );
-    assert_eq!(
-        devices
-            .iter()
-            .filter(|t| **t == "atomik.audio-track")
-            .count(),
-        1
+    assert_eq!(inserted(&calls), ["atomik.audio-track"], "the player only");
+    let removed: Vec<_> = calls
+        .iter()
+        .filter_map(|c| match c {
+            SinkCall::Remove(id) => Some(*id),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(removed.len(), 2, "the instrument and the reverb: {calls:?}");
+    let last_routing = calls
+        .iter()
+        .rposition(|c| matches!(c, SinkCall::Routing(_)))
+        .expect("a routing");
+    let first_remove = calls
+        .iter()
+        .position(|c| matches!(c, SinkCall::Remove(_)))
+        .unwrap();
+    let last_insert = calls
+        .iter()
+        .rposition(|c| matches!(c, SinkCall::Insert { .. }))
+        .unwrap();
+    assert!(
+        last_insert < last_routing && last_routing < first_remove,
+        "player, routing, removal: {calls:?}"
     );
-    assert_eq!(devices.iter().filter(|t| **t == "atomik.reverb").count(), 0);
-    assert_eq!(
-        devices
-            .iter()
-            .filter(|t| **t == "atomik.poly-synth")
-            .count(),
-        1,
-        "bass"
+    let SinkCall::Routing(order) = &calls[last_routing] else {
+        unreachable!()
+    };
+    assert!(
+        removed.iter().all(|id| !order.contains(id)),
+        "the routing no longer names what leaves: {order:?}"
     );
     // The song the engine plays: the render on the player, no notes for the frozen synth.
     let song = calls.iter().rev().find_map(|call| match call {
@@ -229,14 +243,23 @@ fn unfreeze_restores_the_track_exactly_and_undo_and_redo_move_between_the_states
     assert!(frozen(&c, "lead").is_some());
     assert!(c.freeze_menu().can_unfreeze);
 
+    c.sink_mut().take();
     c.unfreeze_tracks(false);
     assert!(frozen(&c, "lead").is_none());
     assert_eq!(c.doc().song, before, "exactly the song it was");
     let calls = c.sink_mut().take();
-    assert!(calls.iter().any(|c| matches!(c, SinkCall::Reset { .. })));
+    assert!(!calls.iter().any(|c| matches!(c, SinkCall::Reset { .. })));
     assert!(
         inserted(&calls).contains(&"atomik.reverb"),
         "the effect is back"
+    );
+    assert_eq!(
+        calls
+            .iter()
+            .filter(|c| matches!(c, SinkCall::Remove(_)))
+            .count(),
+        1,
+        "the player leaves: {calls:?}"
     );
 
     c.undo();
@@ -280,12 +303,18 @@ fn freezing_up_to_the_selected_device_leaves_the_later_effects_live() {
     c.wait_background();
     let f = frozen(&c, "lead").expect("frozen through the reverb");
     assert_eq!(f.effects, vec![fx[0].clone()]);
-    let devices = inserted(&c.sink_mut().take());
-    assert!(
-        devices.contains(&"atomik.stereo-delay"),
-        "the delay stays live"
+    // Live: the player comes, the instrument and the reverb leave, the delay is not touched.
+    let calls = c.sink_mut().take();
+    assert_eq!(inserted(&calls), ["atomik.audio-track"], "{calls:?}");
+    assert_eq!(
+        calls
+            .iter()
+            .filter(|c| matches!(c, SinkCall::Remove(_)))
+            .count(),
+        2,
+        "the instrument and the reverb leave, the delay stays: {calls:?}"
     );
-    assert!(!devices.contains(&"atomik.reverb"));
+    assert!(!calls.iter().any(|c| matches!(c, SinkCall::Reset { .. })));
 
     // The instrument itself: nothing but it is frozen.
     let mut c = core_with(2);
@@ -705,7 +734,7 @@ fn unfreeze_and_keep_the_audio_connects_the_new_track_to_the_engine() {
 }
 
 #[test]
-fn a_freeze_that_finishes_during_playback_waits_for_the_stop() {
+fn a_freeze_that_finishes_during_playback_applies_at_once_without_a_restart() {
     let mut c = core_with(1);
     select_track(&mut c, "lead");
     c.freeze_tracks(FreezeThrough::Track);
@@ -723,22 +752,28 @@ fn a_freeze_that_finishes_during_playback_waits_for_the_stop() {
         "no engine restart under a running transport: {calls:?}"
     );
     assert!(
-        !calls.iter().any(|c| matches!(c, SinkCall::Song(_))),
-        "the song is held back with the engine"
+        calls.iter().any(|c| matches!(c, SinkCall::Song(_))),
+        "the song that plays the render is submitted now"
     );
     assert!(
         c.last_rejection()
-            .is_some_and(|m| m.contains("when playback stops")),
+            .is_some_and(|m| m.starts_with("Froze Lead") && !m.contains("when playback stops")),
         "{:?}",
         c.last_rejection()
     );
-    // The stop applies it.
-    c.handle_action(atomik_ui::UiAction::Transport(
-        atomik_ui::TransportAction::Stop,
-    ));
+    // Unfreeze and undo / redo of the freeze take the same live path, still playing.
+    c.unfreeze_tracks(false);
+    c.undo();
+    c.redo();
+    c.undo();
+    c.undo();
     let calls = c.sink_mut().take();
-    assert!(calls.iter().any(|c| matches!(c, SinkCall::Reset { .. })));
-    assert!(!c.is_playing());
+    assert!(
+        !calls.iter().any(|c| matches!(c, SinkCall::Reset { .. })),
+        "{calls:?}"
+    );
+    assert!(c.is_playing());
+    assert!(frozen(&c, "lead").is_none(), "undone twice: back to live");
 }
 
 #[test]
@@ -1419,4 +1454,142 @@ fn a_freeze_that_may_not_fit_asks_first_and_goes_on_when_asked_again() {
     assert!(c.freeze_busy());
     c.wait_background();
     assert!(frozen(&c, "lead").is_some());
+}
+
+// ------------------------------------------------------------------ live, on a real engine
+
+use crate::offline_sink::OfflineSink;
+
+/// The starter project with one synth track `lead` (two bars of notes), on a real offline engine.
+fn offline_core() -> AppCore<OfflineSink> {
+    let mut c = AppCore::with_doc(OfflineSink::new(), new_project_doc(), None);
+    c.apply_command(Command::Workflow(WorkflowCommand::CreateInstrument {
+        index: usize::MAX,
+        source: CreateSource::Type("atomik.poly-synth".into()),
+        key: Some(key("lead")),
+        options: CreateOptions::default(),
+    }))
+    .unwrap();
+    c.apply_command(Command::Song(SongCommand::AddClip {
+        device: key("lead"),
+        lane: 0,
+        clip: notes(0, 2 * BAR),
+    }))
+    .unwrap();
+    c.apply_command(Command::Song(SongCommand::SetTrackFlags {
+        device: key("lead"),
+        muted: false,
+        solo: false,
+        armed: false,
+    }))
+    .unwrap();
+    c
+}
+
+fn play_offline(c: &mut AppCore<OfflineSink>) {
+    c.handle_action(atomik_ui::UiAction::Transport(
+        atomik_ui::TransportAction::Play,
+    ));
+    // The streamer's read-ahead: frames until the transport starts.
+    for _ in 0..200 {
+        c.frame();
+        if c.sink_mut().transport_state().playing {
+            break;
+        }
+    }
+}
+
+fn freeze_offline(c: &mut AppCore<OfflineSink>) {
+    c.arrangement_mut().set_selected_track(Some(key("lead")));
+    c.freeze_tracks(FreezeThrough::Track);
+    c.wait_background();
+    assert!(
+        c.doc().song.track(&key("lead")).unwrap().frozen.is_some(),
+        "{:?}",
+        c.last_rejection()
+    );
+}
+
+/// What the engine plays from the block of the swap on is the frozen render: a project frozen
+/// while the transport runs sounds, from there, like the same project frozen before it played.
+#[test]
+fn a_live_freeze_plays_the_render_from_the_swap_block_on() {
+    const BLOCK: usize = 64;
+    let swap_after = 40 * BLOCK;
+    let after = 120 * BLOCK;
+
+    // The reference: frozen while stopped, then played from the start.
+    let mut reference = offline_core();
+    freeze_offline(&mut reference);
+    play_offline(&mut reference);
+    let wanted = reference
+        .sink_mut()
+        .render_blocks(swap_after + after, BLOCK);
+
+    // Frozen while playing: the live synth for a while, then the render.
+    let mut c = offline_core();
+    play_offline(&mut c);
+    let mut heard = c.sink_mut().render_blocks(swap_after, BLOCK);
+    let live_peak = heard[0].iter().fold(0.0_f32, |a, x| a.max(x.abs()));
+    assert!(live_peak > 0.0, "the live synth is heard before the freeze");
+    freeze_offline(&mut c);
+    assert!(c.is_playing(), "the transport kept playing");
+    let tail = c.sink_mut().render_blocks(after, BLOCK);
+    for (h, t) in heard.iter_mut().zip(tail) {
+        h.extend(t);
+    }
+
+    for ch in 0..2 {
+        assert_eq!(
+            heard[ch][swap_after..],
+            wanted[ch][swap_after..],
+            "channel {ch}: the render plays from the swap block on, bit for bit"
+        );
+    }
+    let peak = wanted[0][swap_after..]
+        .iter()
+        .fold(0.0_f32, |a, x| a.max(x.abs()));
+    assert!(peak > 0.0, "the render is not silence: {peak}");
+
+    // Undo and redo of the freeze are live too, and the engine accepts every removal.
+    for step in 0..2 {
+        if step == 0 {
+            c.undo();
+        } else {
+            c.redo();
+        }
+        assert!(c.is_playing());
+        assert!(
+            c.last_rejection().is_none_or(|m| !m.starts_with("engine")),
+            "{:?}",
+            c.last_rejection()
+        );
+    }
+    assert!(c.doc().song.track(&key("lead")).unwrap().frozen.is_some());
+}
+
+/// Unfreezing while the transport runs puts the live chain back without stopping.
+#[test]
+fn a_live_unfreeze_brings_the_chain_back_while_playing() {
+    const BLOCK: usize = 64;
+    let mut c = offline_core();
+    freeze_offline(&mut c);
+    play_offline(&mut c);
+    c.sink_mut().render_blocks(10 * BLOCK, BLOCK);
+    c.unfreeze_tracks(false);
+    assert!(c.is_playing());
+    // The engine took the synth and the routing without a restart: the track sounds again from
+    // the position it is at, so a note that starts later is heard.
+    let out = c.sink_mut().render_blocks(500 * BLOCK, BLOCK);
+    assert!(
+        out[0].iter().any(|x| x.abs() > 0.0),
+        "{:?}",
+        c.last_rejection()
+    );
+    assert!(c.sink_mut().transport_state().playing);
+    assert!(
+        c.last_rejection().is_none_or(|m| !m.contains("engine")),
+        "{:?}",
+        c.last_rejection()
+    );
 }

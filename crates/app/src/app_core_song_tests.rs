@@ -1435,6 +1435,33 @@ fn export_patch_writes_v2_without_the_song() {
 }
 
 #[test]
+fn a_failed_patch_export_leaves_the_file_that_was_there() {
+    let path = temp_path("export-failed.json");
+    let mut tmp = path.as_os_str().to_owned();
+    tmp.push(".tmp");
+    let tmp = std::path::PathBuf::from(tmp);
+    std::fs::write(&path, "the earlier export").unwrap();
+    // The temporary file next to the target cannot be made: the write goes through it, so it
+    // fails before it touches the target.
+    std::fs::create_dir_all(&tmp).unwrap();
+    let c = with_track();
+    assert!(c.export_patch(&path).is_err());
+    assert_eq!(
+        std::fs::read_to_string(&path).unwrap(),
+        "the earlier export"
+    );
+    std::fs::remove_dir_all(&tmp).unwrap();
+    c.export_patch(&path).unwrap();
+    assert!(
+        std::fs::read_to_string(&path)
+            .unwrap()
+            .contains("\"atomik-patch\"")
+    );
+    assert!(!tmp.exists(), "no temporary file is left behind");
+    std::fs::remove_file(&path).ok();
+}
+
+#[test]
 fn opening_a_new_file_stops_the_transport_and_recording() {
     let mut c = with_track();
     arm(&mut c, "a", true);

@@ -65,8 +65,9 @@ fn the_exported_report_has_the_session_and_the_log_of_the_config_folder() {
         "{:?}",
         s.core().last_rejection()
     );
-    // A path that cannot be written is a message, not a crash.
-    s.export_diagnostics_to(&dir.join("missing").join("report.txt"));
+    // A path that cannot be written is a message, not a crash. (A folder that is a file:
+    // the export cannot create it.)
+    s.export_diagnostics_to(&out.join("report.txt"));
     assert!(
         s.core()
             .last_rejection()
@@ -126,7 +127,8 @@ fn the_device_parameter_list_is_asked_for_and_written() {
     let text = std::fs::read_to_string(&out).unwrap();
     assert!(text.starts_with(crate::device_info::HEADER), "{text}");
     assert!(text.contains("atomik.poly-synth | "), "{text}");
-    s.export_device_info_to(&dir.join("missing").join("devices.txt"));
+    // A folder that is a file: the export cannot create it.
+    s.export_device_info_to(&out.join("devices.txt"));
     assert!(
         s.core()
             .last_rejection()

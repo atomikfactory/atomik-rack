@@ -313,6 +313,21 @@ fn device_named(listed: &str, wanted: &str) -> bool {
     listed == wanted || listed.to_lowercase().contains(&wanted.to_lowercase())
 }
 
+/// The render worker count an engine is asked for: `auto` (what the machine gets) while the
+/// settings say automatic, made conservative at Low power; the count the user fixed otherwise,
+/// whatever the power level.
+fn requested_workers(settings: &AudioSettings, low_power: bool, auto: u16) -> u16 {
+    if !settings.workers_auto {
+        return settings.workers;
+    }
+    let level = if low_power {
+        crate::performance::Level::Low
+    } else {
+        crate::performance::Level::Full
+    };
+    crate::performance::workers_for(level, auto)
+}
+
 /// Engine, stream and MIDI input for the app.
 pub struct LiveSession<B: AudioBackend> {
     backend: B,
@@ -342,6 +357,10 @@ pub struct LiveSession<B: AudioBackend> {
     input_trims_logged: u64,
     /// A tap stop the full control queue refused; retried on the next poll.
     stop_tap_pending: bool,
+    /// The newest value of each parameter the full control queue refused, sent again by the
+    /// next poll (a drag whose last value found the queue full still ends on it). Lives on the
+    /// UI thread: nothing of it is on the audio path.
+    held_params: BTreeMap<(DeviceInstanceId, ParamId), f32>,
     /// A message for the user that the next [`Self::take_notice`] hands out.
     notice: Option<String>,
     /// The port each MIDI Out device chose (by engine device id); a device that has none uses
@@ -363,6 +382,10 @@ pub struct LiveSession<B: AudioBackend> {
     /// The restart that follows is the one try at the chosen devices: a failure of it does not
     /// make them the preferred ones again.
     switching_back: bool,
+    /// Low power: an automatic render worker count is the conservative one (see
+    /// [`crate::performance::workers_for`]). Read when an engine starts, so a change applies
+    /// from the next start; a count the user fixed is never touched.
+    low_power: bool,
 }
 
 impl<B: AudioBackend> std::fmt::Debug for LiveSession<B> {
@@ -402,6 +425,7 @@ impl<B: AudioBackend> LiveSession<B> {
             stalled_batches: 0,
             input_trims_logged: 0,
             stop_tap_pending: false,
+            held_params: BTreeMap::new(),
             notice: None,
             out_ports: BTreeMap::new(),
             clock_error: None,
@@ -411,7 +435,19 @@ impl<B: AudioBackend> LiveSession<B> {
             preferred: None,
             switch_back: false,
             switching_back: false,
+            low_power: false,
         }
+    }
+
+    /// Whether an automatic render worker count is the conservative one (Low power).
+    pub fn low_power(&self) -> bool {
+        self.low_power
+    }
+
+    /// Sets whether an automatic render worker count is the conservative one (Low power). It
+    /// applies to the next engine this session starts; nothing restarts.
+    pub fn set_low_power(&mut self, on: bool) {
+        self.low_power = on;
     }
 
     /// The backend.
@@ -571,6 +607,7 @@ impl<B: AudioBackend> LiveSession<B> {
                 self.stop_tap_pending = false;
             }
         }
+        self.resend_held_params();
         self.poll_sync(at);
         self.watch_preferred(at);
         // Pushes that found the engine's queue full, and control messages (MIDI to
@@ -582,8 +619,26 @@ impl<B: AudioBackend> LiveSession<B> {
         &self.status
     }
 
+    /// Sends again the parameter values the full control queue refused, newest per parameter,
+    /// until the queue is full once more. The retry is not a new stall: the push that failed
+    /// was counted when it failed.
+    fn resend_held_params(&mut self) {
+        let Some(r) = &mut self.running else {
+            self.held_params.clear();
+            return;
+        };
+        while let Some((&(id, param), &plain)) = self.held_params.first_key_value() {
+            if r.handle.set_param(id, param, plain).is_err() {
+                break;
+            }
+            self.held_params.remove(&(id, param));
+        }
+    }
+
     /// Stops MIDI and the stream and drops the engine on this thread.
     pub fn shutdown(&mut self) {
+        // The values were meant for the engine that is going away.
+        self.held_params.clear();
         // The next engine starts with no preview clock on any device.
         self.previewing.clear();
         if let Some(r) = self.running.take() {
@@ -646,16 +701,17 @@ impl<B: AudioBackend> LiveSession<B> {
         config: &EngineConfig,
     ) -> Result<(Opened<B>, Option<String>), IoError> {
         // Never more workers than cores - 1: the audio thread keeps a core of its own.
-        let requested = if settings.workers_auto {
-            atomik_audio_io::auto_workers_here()
-        } else {
-            settings.workers
-        };
+        let requested = requested_workers(
+            settings,
+            self.low_power,
+            atomik_audio_io::auto_workers_here(),
+        );
         let threads = atomik_audio_io::cap_workers_here(requested);
         if settings.workers_auto {
             let (physical, logical) = atomik_audio_io::core_counts_here();
             log::info!(
-                "render workers: {threads} (automatic; {physical} physical cores, {logical} logical)"
+                "render workers: {threads} (automatic{}; {physical} physical cores, {logical} logical)",
+                if self.low_power { ", low power" } else { "" }
             );
         } else if threads != settings.workers {
             log::info!(
@@ -1061,6 +1117,9 @@ impl<B: AudioBackend> LiveSession<B> {
 impl<B: AudioBackend> EngineSink for LiveSession<B> {
     fn reset(&mut self, config: &EngineConfig) {
         self.status.error = None;
+        // A fault belongs to the engine that is being replaced.
+        self.status.faulted = false;
+        self.status.faulted_device = None;
         self.shutdown();
         if !self.enabled {
             return;
@@ -1206,10 +1265,24 @@ impl<B: AudioBackend> EngineSink for LiveSession<B> {
         plain: f32,
     ) -> Result<(), EngineError> {
         match &mut self.running {
-            Some(r) => counted(
-                &mut self.control_stalled,
-                r.handle.set_param(id, param, plain),
-            ),
+            Some(r) => {
+                let result = counted(
+                    &mut self.control_stalled,
+                    r.handle.set_param(id, param, plain),
+                );
+                match result {
+                    // A refused value waits for the next poll (the newest one per parameter);
+                    // one that went through makes an older waiting value of its own stale.
+                    Err(EngineError::QueueFull) => {
+                        self.held_params.insert((id, param), plain);
+                    }
+                    Ok(()) => {
+                        self.held_params.remove(&(id, param));
+                    }
+                    Err(_) => {}
+                }
+                result
+            }
             None => Ok(()),
         }
     }

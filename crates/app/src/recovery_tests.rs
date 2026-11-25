@@ -362,3 +362,100 @@ fn the_scratch_folder_is_removed_before_the_call_returns_when_the_disk_is_fine()
     assert!(remove_dir_bounded(&d, Duration::from_secs(60)));
     assert!(!d.exists());
 }
+
+/// A temp root with a scratch folder of process `pid` holding 10 bytes, and an empty recovery
+/// folder. Returns `(temp, recovery, scratch)`.
+fn sweep_rig(name: &str, pid: u32) -> (PathBuf, PathBuf, PathBuf) {
+    let root = dir(name);
+    let temp = root.join("temp");
+    let recovery = root.join("recovery");
+    let scratch = temp.join(format!("{SCRATCH_PREFIX}{pid}-0"));
+    std::fs::create_dir_all(scratch.join("1").join("Audio")).unwrap();
+    std::fs::create_dir_all(&recovery).unwrap();
+    std::fs::write(scratch.join("1").join("Audio").join("a.wav"), b"0123456789").unwrap();
+    (temp, recovery, scratch)
+}
+
+#[test]
+fn the_sweep_removes_an_old_unreferenced_folder_of_a_dead_session() {
+    let (temp, recovery, scratch) = sweep_rig("sweep-dead", 4_000_001);
+    // Not a scratch folder, and the folder of a name that has no process: both are left alone.
+    std::fs::create_dir_all(temp.join("something-else")).unwrap();
+    std::fs::create_dir_all(temp.join(format!("{SCRATCH_PREFIX}x-0"))).unwrap();
+    let report = sweep_scratch(&temp, &recovery, Duration::ZERO);
+    assert_eq!(
+        report,
+        SweepReport {
+            folders: 1,
+            bytes: 10
+        }
+    );
+    assert!(!scratch.exists());
+    assert!(temp.join("something-else").is_dir());
+    assert!(temp.join(format!("{SCRATCH_PREFIX}x-0")).is_dir());
+}
+
+#[test]
+fn the_sweep_keeps_a_recent_folder() {
+    let (temp, recovery, scratch) = sweep_rig("sweep-recent", 4_000_002);
+    let report = sweep_scratch(&temp, &recovery, SWEEP_AGE);
+    assert_eq!(report, SweepReport::default());
+    assert!(scratch.is_dir());
+}
+
+#[test]
+fn the_sweep_keeps_the_folder_of_a_live_session() {
+    let (temp, recovery, scratch) = sweep_rig("sweep-live", 4_000_003);
+    // Another session's marker, locked as a running process holds its own.
+    let marker = recovery.join("session-4000003-0.lock");
+    let held_open = File::create(&marker).unwrap();
+    held_open.lock().unwrap();
+    assert_eq!(
+        sweep_scratch(&temp, &recovery, Duration::ZERO),
+        SweepReport::default()
+    );
+    assert!(scratch.is_dir());
+    // The process ends: the lock is released and the folder goes.
+    drop(held_open);
+    assert_eq!(sweep_scratch(&temp, &recovery, Duration::ZERO).folders, 1);
+    assert!(!scratch.exists());
+    // This process's own folder is never swept.
+    let own = temp.join(format!("{SCRATCH_PREFIX}{}-9", std::process::id()));
+    std::fs::create_dir_all(&own).unwrap();
+    assert_eq!(sweep_scratch(&temp, &recovery, Duration::ZERO).folders, 0);
+    assert!(own.is_dir());
+}
+
+#[test]
+fn the_sweep_keeps_a_folder_a_recovery_note_points_at() {
+    let (temp, recovery, scratch) = sweep_rig("sweep-noted", 4_000_004);
+    let snapshot = recovery.join("p-00000000000000000001.recover.atomik");
+    std::fs::write(&snapshot, b"x").unwrap();
+    let note = RecoveryDir::bundle_note_path(&snapshot);
+    std::fs::write(&note, scratch.join("1").to_string_lossy().as_bytes()).unwrap();
+    assert_eq!(
+        sweep_scratch(&temp, &recovery, Duration::ZERO),
+        SweepReport::default()
+    );
+    assert!(scratch.is_dir());
+}
+
+#[test]
+fn the_sweep_keeps_everything_it_cannot_decide() {
+    let (temp, recovery, scratch) = sweep_rig("sweep-unknown", 4_000_005);
+    // No recovery folder to read the markers from.
+    let missing = recovery.join("nowhere");
+    assert_eq!(
+        sweep_scratch(&temp, &missing, Duration::ZERO),
+        SweepReport::default()
+    );
+    // A note that cannot be read as text.
+    let snapshot = recovery.join("p-00000000000000000001.recover.atomik");
+    std::fs::write(&snapshot, b"x").unwrap();
+    std::fs::create_dir(RecoveryDir::bundle_note_path(&snapshot)).unwrap();
+    assert_eq!(
+        sweep_scratch(&temp, &recovery, Duration::ZERO),
+        SweepReport::default()
+    );
+    assert!(scratch.is_dir());
+}

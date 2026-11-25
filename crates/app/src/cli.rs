@@ -45,6 +45,11 @@ pub struct Cli {
     /// Settings file to use instead of the one in the OS config directory.
     #[arg(long, value_name = "PATH")]
     pub settings: Option<PathBuf>,
+    /// Safe mode: start with temporary default settings (the saved ones are neither read nor
+    /// written), no audio device, no plugins loaded or scanned, and no project reopened. For
+    /// getting in when a setting, a device or a plugin stops a normal start.
+    #[arg(long, conflicts_with_all = ["settings", "stress_plugins"])]
+    pub safe: bool,
     /// Library folder for this run, instead of the one in the Workflow settings or the default
     /// (`Documents/Atomik Rack/Library`).
     #[arg(long, value_name = "DIR")]
@@ -168,7 +173,72 @@ pub struct Cli {
     pub quit_after: Option<f64>,
 }
 
+/// Prefix of the temporary folder a safe-mode run keeps its settings and state in.
+pub const SAFE_FOLDER_PREFIX: &str = "atomik-rack-safe-";
+
+/// What a start does, decided from the command line before anything is opened. See
+/// [`Cli::start_plan`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StartPlan {
+    /// The settings file of this run: the saved one, or a file in the temporary folder.
+    pub settings_path: Option<PathBuf>,
+    /// The settings file the logs and crash reports sit next to (always the usual one, so a
+    /// problem met in safe mode can still be reported).
+    pub logs_beside: Option<PathBuf>,
+    /// Whether the settings file is read (safe mode starts from the defaults).
+    pub load_settings: bool,
+    /// Whether an audio stream is opened at start.
+    pub audio: bool,
+    /// Whether plugins may be loaded and scanned (still subject to their own setting).
+    pub plugins: bool,
+    /// Whether the last project is reopened when the preference says so.
+    pub reopen_last: bool,
+    /// Whether the first-run setup and the update check may start.
+    pub first_run_prompts: bool,
+    /// Whether old scratch folders of dead sessions are swept in the background.
+    pub sweep_scratch: bool,
+    /// The temporary folder to remove at exit (safe mode only).
+    pub temporary_folder: Option<PathBuf>,
+}
+
 impl Cli {
+    /// Decides the start: where the settings live, and whether audio, plugins, the last project,
+    /// the first-run prompts and the scratch sweep run. `default_settings` is the settings file
+    /// of the OS, `temp` the temporary folder and `pid` this process.
+    pub fn start_plan(
+        &self,
+        default_settings: Option<PathBuf>,
+        temp: &Path,
+        pid: u32,
+    ) -> StartPlan {
+        let usual = self.settings.clone().or(default_settings);
+        if self.safe {
+            let folder = temp.join(format!("{SAFE_FOLDER_PREFIX}{pid}"));
+            return StartPlan {
+                settings_path: Some(folder.join(crate::settings::SETTINGS_FILE)),
+                logs_beside: usual,
+                load_settings: false,
+                audio: false,
+                plugins: false,
+                reopen_last: false,
+                first_run_prompts: false,
+                sweep_scratch: false,
+                temporary_folder: Some(folder),
+            };
+        }
+        StartPlan {
+            sweep_scratch: self.settings.is_none() && usual.is_some(),
+            settings_path: usual.clone(),
+            logs_beside: usual,
+            load_settings: true,
+            audio: !self.no_audio,
+            plugins: true,
+            reopen_last: true,
+            first_run_prompts: true,
+            temporary_folder: None,
+        }
+    }
+
     /// Whether nobody is at the screen to click a dialog: a run that quits by itself, renders a
     /// screenshot or is a stress run. A blocking message box is never shown to such a run.
     pub fn unattended(&self) -> bool {
@@ -312,6 +382,51 @@ mod tests {
 
     fn parse(args: &[&str]) -> Cli {
         Cli::try_parse_from(std::iter::once("atomik").chain(args.iter().copied())).unwrap()
+    }
+
+    #[test]
+    fn safe_mode_starts_on_temporary_settings_without_audio_plugins_or_the_last_project() {
+        let real = PathBuf::from("/config/atomik/settings.json");
+        let temp = Path::new("/tmp");
+        let plan = parse(&["--safe"]).start_plan(Some(real.clone()), temp, 77);
+        let folder = temp.join("atomik-rack-safe-77");
+        assert_eq!(plan.settings_path, Some(folder.join("settings.json")));
+        assert_ne!(
+            plan.settings_path,
+            Some(real.clone()),
+            "the real file is not the one used"
+        );
+        assert!(!plan.load_settings, "the saved settings are not read");
+        assert!(!plan.audio && !plan.plugins && !plan.reopen_last);
+        assert!(!plan.first_run_prompts && !plan.sweep_scratch);
+        assert_eq!(plan.temporary_folder, Some(folder));
+        assert_eq!(plan.logs_beside, Some(real));
+    }
+
+    #[test]
+    fn a_normal_start_uses_the_saved_settings_and_turns_nothing_off() {
+        let real = PathBuf::from("/config/atomik/settings.json");
+        let plan = parse(&[]).start_plan(Some(real.clone()), Path::new("/tmp"), 77);
+        assert_eq!(plan.settings_path, Some(real));
+        assert!(plan.load_settings && plan.audio && plan.plugins && plan.reopen_last);
+        assert!(plan.first_run_prompts && plan.sweep_scratch);
+        assert_eq!(plan.temporary_folder, None);
+        // No audio when asked; no sweep when the settings file is not the usual one.
+        assert!(
+            !parse(&["--no-audio"])
+                .start_plan(None, Path::new("/tmp"), 1)
+                .audio
+        );
+        let other = parse(&["--settings", "/x/s.json"]).start_plan(None, Path::new("/tmp"), 1);
+        assert!(!other.sweep_scratch);
+        assert_eq!(other.settings_path, Some(PathBuf::from("/x/s.json")));
+    }
+
+    #[test]
+    fn safe_mode_does_not_combine_with_a_settings_file_or_the_plugin_stress_run() {
+        assert!(Cli::try_parse_from(["atomik", "--safe", "--settings", "s.json"]).is_err());
+        assert!(Cli::try_parse_from(["atomik", "--safe", "--stress-plugins"]).is_err());
+        assert!(parse(&["--safe"]).safe);
     }
 
     #[test]
