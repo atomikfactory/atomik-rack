@@ -12,6 +12,14 @@ inputs:
     description: Extra key that separates caches of jobs with different build settings.
     required: false
     default: ""
+  sccache:
+    description: >
+      "true" caches the compiled crates (the workspace's own as well) with sccache, in the GitHub
+      Actions cache, so a rebuild of unchanged crates is a download. Off by default: release and
+      nightly builds never use a shared compile cache. The job should end with a step that runs
+      `sccache --show-stats` (a composite action cannot run a step at the end of the job).
+    required: false
+    default: "false"
 
 runs:
   using: composite
@@ -52,10 +60,32 @@ runs:
         rustc --version
         cargo --version
 
+    - name: Install sccache
+      if: inputs.sccache == 'true'
+      uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
+
+    - name: Compile through sccache
+      if: inputs.sccache == 'true'
+      shell: bash
+      # The job's later cargo steps see the wrapper. The cache backend is the Actions cache of the
+      # job: no secret. sccache cannot cache incremental builds, so the workflow must keep
+      # CARGO_INCREMENTAL=0 (checked here).
+      run: |
+        if [ "${CARGO_INCREMENTAL:-}" != "0" ]; then
+          echo "::error::sccache needs CARGO_INCREMENTAL=0 in the workflow env"
+          exit 1
+        fi
+        echo "SCCACHE_GHA_ENABLED=true" >> "$GITHUB_ENV"
+        echo "RUSTC_WRAPPER=sccache" >> "$GITHUB_ENV"
+
     - name: Cache Cargo registry and target
       uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       with:
         key: ${{ inputs.cache-key }}
+        # With sccache the compiled crates live in the sccache store: keeping the target folder
+        # here too would store every dependency twice. The registry, the git checkouts and the
+        # installed binaries stay cached either way.
+        cache-targets: ${{ inputs.sccache != 'true' }}
         # Only main saves: a pull request restores the caches main saved and does not spend its
         # time uploading a cache nobody else can use (the dependencies are what is cached).
         save-if: ${{ github.ref == 'refs/heads/main' }}
