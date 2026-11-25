@@ -15,7 +15,7 @@ use crate::console_meter::meter_norm;
 use crate::theme::Theme;
 use atomik_device_sdk::{DeviceDescriptor, Direction};
 use atomik_model::{INTERFACE_KEY, RackDoc};
-use vello::kurbo::{Circle, Rect, RoundedRect};
+use vello::kurbo::{BezPath, Circle, Line, Rect, RoundedRect};
 
 /// The state of one Audio I/O socket lamp.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -41,6 +41,44 @@ impl IoSocketState {
     }
 }
 
+/// Which focus a song can have among the open songs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SongFocus {
+    /// Play Focus: the song that owns the audio stream and plays.
+    Play,
+    /// Input Focus: the song that receives the live MIDI keyboard and controller input.
+    Input,
+}
+
+/// Which of the two foci the song of a panel has (both, until the host says otherwise: a single
+/// song always has both).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct IoFocus {
+    /// The song has the Play Focus.
+    pub play: bool,
+    /// The song has the Input Focus.
+    pub input: bool,
+}
+
+impl Default for IoFocus {
+    fn default() -> Self {
+        Self {
+            play: true,
+            input: true,
+        }
+    }
+}
+
+impl IoFocus {
+    /// Whether the song has `which`.
+    pub fn has(self, which: SongFocus) -> bool {
+        match which {
+            SongFocus::Play => self.play,
+            SongFocus::Input => self.input,
+        }
+    }
+}
+
 /// Floor of the displayed level, dB.
 pub const LEVEL_FLOOR_DB: f32 = -60.0;
 /// How far a displayed level falls per feed, dB.
@@ -59,6 +97,8 @@ pub struct IoInfo<'a> {
     pub levels: &'a [f32],
     /// Latched clip flag per socket.
     pub clips: &'a [bool],
+    /// The two foci of the song the panel belongs to.
+    pub focus: IoFocus,
 }
 
 /// The lamp states of the interface sockets, in descriptor order: `input_channels` host inputs
@@ -125,6 +165,8 @@ pub struct IoView {
     pub levels: Vec<f32>,
     /// Latched clip flag per socket.
     pub clips: Vec<bool>,
+    /// The two foci of the song the panel belongs to.
+    pub focus: IoFocus,
 }
 
 impl IoView {
@@ -134,6 +176,7 @@ impl IoView {
             states: &self.states,
             levels: &self.levels,
             clips: &self.clips,
+            focus: self.focus,
         }
     }
 }
@@ -251,6 +294,41 @@ pub fn cells(desc: &DeviceDescriptor) -> Vec<IoCell> {
     out
 }
 
+/// The two focus buttons on the plate of the panel, in panel coordinates: Play on the left,
+/// Input on the right, in the row the BYPASS switch has on an effect.
+pub fn focus_rects(height: f64) -> [(SongFocus, Rect); 2] {
+    let row = crate::paint::bypass_button_rect(height, false);
+    let mid = row.center().x;
+    [
+        (
+            SongFocus::Play,
+            Rect::new(row.x0, row.y0, mid - 1.0, row.y1),
+        ),
+        (
+            SongFocus::Input,
+            Rect::new(mid + 1.0, row.y0, row.x1, row.y1),
+        ),
+    ]
+}
+
+/// What the tooltip of a focus button says.
+pub fn focus_tip(which: SongFocus, has: bool) -> &'static str {
+    match (which, has) {
+        (SongFocus::Play, true) => {
+            "Play Focus: this song owns the audio stream and plays. Click another song's button to move it"
+        }
+        (SongFocus::Play, false) => {
+            "Play Focus: click to give the audio stream to this song (the song that has it stops)"
+        }
+        (SongFocus::Input, true) => {
+            "Input Focus: this song takes the MIDI keyboard and controllers, while it also has the Play Focus"
+        }
+        (SongFocus::Input, false) => {
+            "Input Focus: click to give the MIDI keyboard and controllers to this song (they sound while it also has the Play Focus)"
+        }
+    }
+}
+
 /// The tag baseline ("IN" or "OUT") of `row` given which rows exist.
 fn tag_y(desc: &DeviceDescriptor, row: usize) -> Option<f64> {
     let has = |dir| desc.sockets.iter().any(|s| s.direction == dir);
@@ -264,6 +342,62 @@ fn tag_y(desc: &DeviceDescriptor, row: usize) -> Option<f64> {
 }
 
 // ------------------------------------------------------------------ painter
+
+/// Paints the two focus buttons: a speaker for Play, a piano keyboard for Input, lit in the
+/// accent colour while the song has that focus.
+pub fn paint_focus<C: Canvas + ?Sized>(
+    c: &mut C,
+    theme: &Theme,
+    height: f64,
+    focus: IoFocus,
+    accent: vello::peniko::Color,
+) {
+    for (which, r) in focus_rects(height) {
+        let on = focus.has(which);
+        crate::plugin_panel::led_button(c, theme, r, "", None, true, accent);
+        let m = r.center();
+        let ink = if on { accent } else { theme.text_muted };
+        if on {
+            c.fill_with(
+                RoundedRect::from_rect(r.inset(-1.0), 2.0),
+                accent.with_alpha(0.22),
+            );
+        }
+        match which {
+            SongFocus::Play => {
+                // A speaker: the box and the cone, with a wave while it has the focus.
+                let mut body = BezPath::new();
+                body.move_to(pt(m.x - 5.0, m.y - 1.8));
+                body.line_to(pt(m.x - 2.6, m.y - 1.8));
+                body.line_to(pt(m.x + 0.4, m.y - 4.2));
+                body.line_to(pt(m.x + 0.4, m.y + 4.2));
+                body.line_to(pt(m.x - 2.6, m.y + 1.8));
+                body.line_to(pt(m.x - 5.0, m.y + 1.8));
+                body.close_path();
+                c.fill_with(body, ink);
+                if on {
+                    let mut wave = BezPath::new();
+                    wave.move_to(pt(m.x + 2.6, m.y - 2.4));
+                    wave.quad_to(pt(m.x + 4.6, m.y), pt(m.x + 2.6, m.y + 2.4));
+                    c.stroke_with(wave, 1.2, ink);
+                }
+            }
+            SongFocus::Input => {
+                // A keyboard: the outline with three key dividers and two black keys.
+                let keys = Rect::new(m.x - 6.0, m.y - 3.6, m.x + 6.0, m.y + 3.6);
+                c.stroke_with(RoundedRect::from_rect(keys, 1.0), 1.0, ink);
+                for k in 1..4 {
+                    let x = keys.x0 + keys.width() * f64::from(k) / 4.0;
+                    c.stroke_with(Line::new(pt(x, keys.y0), pt(x, keys.y1)), 0.8, ink);
+                }
+                for k in [1.0, 2.0] {
+                    let x = keys.x0 + keys.width() * k / 4.0;
+                    c.fill_with(Rect::new(x - 1.0, keys.y0, x + 1.0, keys.y0 + 3.0), ink);
+                }
+            }
+        }
+    }
+}
 
 /// Paints the front of the Audio I/O panel: row tags, and per socket the state lamp, the peak
 /// meter, the clip lamp and the socket number.

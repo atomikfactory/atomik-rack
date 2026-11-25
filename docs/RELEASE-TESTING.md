@@ -347,8 +347,14 @@ list for every release so that a result can be compared with the last one.
   file browser from one window over the other and let go on the rack there; undo in the second song.
 - **Expected:** the first song keeps what it had; the second gets the clip (a moment later, converted to its rate,
   playing at the right pitch and length), the synth and the patch, each as one undo step; a patch hovering over the
-  other window outlines the device it would load into; nothing moves in the song the drag started in.
-- **Automated:** `crates/app/src/workspace_tests.rs` (the drops, without OS windows)
+  other window outlines the device it would load into; nothing moves in the song the drag started in. While the
+  clip or the synth is still held over the other window, that window shows the drop marker (the lane and time line,
+  or the line between devices) where the drop then lands, and the marker goes when the pointer leaves or lets go.
+  With two songs and a MIDI keyboard: the Play and Input buttons on each song's Audio I/O plate light for the foci
+  it has; Input on the song that does not play closes the keyboard and Play on it opens it again; with Settings >
+  Workflow > Focus follows the active song set to None, clicking in the other window moves nothing.
+- **Automated:** `crates/app/src/workspace_tests.rs` and `workspace_focus_tests.rs` (the drops and the foci, without
+  OS windows)
 - **Known bad:** a clip that sounds an octave off after the drop, a drag that leaves the clip moved in the first
   song, or a drop that lands in the song the audio does not belong to.
 

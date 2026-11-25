@@ -469,6 +469,12 @@ pub enum ShellRequest {
     CloseSong,
     /// Move the audio and the keys to another song (the workspace answers it).
     ShowSong(SongTarget),
+    /// The Play button of this song's Audio I/O panel: the song takes the Play Focus (the audio
+    /// stream). Only a workspace answers it.
+    TakePlayFocus,
+    /// The Input button of this song's Audio I/O panel: the song takes the Input Focus (the
+    /// live MIDI keyboard and the controllers). Only a workspace answers it.
+    TakeInputFocus,
     /// Bring the main window of a song to the front and give it the keyboard focus.
     FocusSong(DocId),
 }
@@ -482,6 +488,24 @@ pub enum SongTarget {
     Previous,
     /// The song at this place of the list of open songs.
     Place(usize),
+}
+
+/// What a drag of the selection out of one song carries over another song's window
+/// ([`Shell::song_drag_carries`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Carried {
+    /// Clips: every one is a note clip (`notes`) or every one an audio clip (`audio`); a mix
+    /// is neither.
+    Clips {
+        /// Every clip is a note clip.
+        notes: bool,
+        /// Every clip is an audio clip.
+        audio: bool,
+    },
+    /// Devices of the rack.
+    Devices,
+    /// Tracks.
+    Tracks,
 }
 
 /// What waits for the answer to the question about unsaved changes.
@@ -878,6 +902,9 @@ pub struct Shell<B: AudioBackend> {
     /// Another song of the workspace has the audio: this one runs without a stream, a MIDI
     /// input or a control surface until it is focused ([`Self::claim_audio`]).
     silent: bool,
+    /// This song has the Input Focus: its MIDI inputs and control surfaces are open while it
+    /// also has the audio (a song without a stream has nothing to play them into).
+    input_focus: bool,
     /// The names of the open songs and this one's place in the list (the Window menu).
     songs: Vec<String>,
     song_at: usize,
@@ -1125,6 +1152,7 @@ impl<B: AudioBackend> Shell<B> {
             tips: Tips::default(),
             help_mode: HelpMode::default(),
             silent: false,
+            input_focus: true,
             songs: Vec::new(),
             song_at: 0,
         };
@@ -3990,6 +4018,13 @@ impl<B: AudioBackend> Shell<B> {
     /// The workflow preferences (`workflow.json`).
     pub fn workflow(&self) -> &WorkflowPrefs {
         &self.workflow
+    }
+
+    /// Sets which foci follow the active song, as the Workflow tab does (tests; the tab saves
+    /// the whole preferences).
+    #[cfg(test)]
+    pub(crate) fn set_focus_follows(&mut self, follows: crate::focus_follows::FocusFollows) {
+        self.workflow.focus_follows = follows;
     }
 
     /// The library folder in use: the run's override, else the one chosen in the Workflow tab,
@@ -8537,6 +8572,12 @@ impl<B: AudioBackend> Shell<B> {
                 UiAction::HarmonyPicker(target) => self.open_harmony_picker(*target),
                 UiAction::AuditionChord(chord) => self.core.audition_chord(chord),
                 UiAction::EditWavetable(device) => self.open_wavetable_editor(device.clone()),
+                UiAction::TakeFocus(atomik_ui::SongFocus::Play) => {
+                    self.pending.push(ShellRequest::TakePlayFocus);
+                }
+                UiAction::TakeFocus(atomik_ui::SongFocus::Input) => {
+                    self.pending.push(ShellRequest::TakeInputFocus);
+                }
                 UiAction::OpenSampleEditor(_) => self.show_sample_editor(),
                 UiAction::CloseSampleEditor => {
                     if self.focus == Pane::SampleEditor {
@@ -11098,7 +11139,11 @@ impl<B: AudioBackend> Shell<B> {
     /// them. Nothing happens when the settings are the ones they already run with. A port that
     /// cannot be opened is reported, and a surface with no open port is not set up.
     fn configure_surface(&mut self) {
-        let wanted: Vec<SurfaceSettings> = self.core.sink().settings().surfaces.clone();
+        let wanted: Vec<SurfaceSettings> = if self.input_focus && !self.silent {
+            self.core.sink().settings().surfaces.clone()
+        } else {
+            Vec::new()
+        };
         if wanted == self.surface_applied {
             return;
         }
@@ -11578,10 +11623,39 @@ impl<B: AudioBackend> Shell<B> {
         session.set_settings(settings);
         session.set_enabled(false);
         self.silent = true;
-        self.configure_surface();
+        self.sync_input_hold();
         self.core.rebuild_engine();
         self.poll_status();
         self.repaint = true;
+    }
+
+    /// Whether this song has the Input Focus (the live MIDI keyboard and the controllers).
+    pub fn has_input_focus(&self) -> bool {
+        self.input_focus
+    }
+
+    /// Gives this song the Input Focus or takes it away. The MIDI inputs and the control
+    /// surfaces are open only while the song has it and also has the audio: a song without a
+    /// stream has no engine to play live notes into. A running stream keeps going; only the
+    /// ports open or close.
+    pub(crate) fn set_input_focus(&mut self, focus: bool) {
+        if self.input_focus == focus {
+            return;
+        }
+        self.input_focus = focus;
+        self.sync_input_hold();
+        self.repaint = true;
+    }
+
+    /// Brings the MIDI inputs and the control surfaces in line with the foci (see
+    /// [`Self::set_input_focus`]) and tells the panel of the interface which it has.
+    fn sync_input_hold(&mut self) {
+        let held = self.input_focus && !self.silent;
+        self.core.sink_mut().set_midi_held(held);
+        self.configure_surface();
+        self.core
+            .view_mut()
+            .set_io_focus(!self.silent, self.input_focus);
     }
 
     /// Takes the audio over with `settings` (the ones the song that gave it up ran with): the
@@ -11594,7 +11668,7 @@ impl<B: AudioBackend> Shell<B> {
         session.set_settings(settings);
         session.set_enabled(true);
         self.silent = false;
-        self.configure_surface();
+        self.sync_input_hold();
         self.core.rebuild_engine();
         if (gain - self.core.metronome_gain()).abs() > f32::EPSILON {
             self.core.set_metronome_gain(gain);
@@ -11619,7 +11693,7 @@ impl<B: AudioBackend> Shell<B> {
         let session = self.core.sink_mut();
         session.set_settings(settings);
         session.set_enabled(false);
-        self.configure_surface();
+        self.sync_input_hold();
         self.poll_status();
     }
 

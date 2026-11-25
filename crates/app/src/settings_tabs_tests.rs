@@ -784,7 +784,7 @@ fn the_workflow_tab_steps_the_record_mode_and_the_keep_events_policy() {
     let mut d = dialog();
     goto(&mut d, Tab::Workflow);
     let l = d.workflow_layout(VIEW).unwrap();
-    assert_eq!(l.cycles.len(), 4);
+    assert_eq!(l.cycles.len(), 5);
     assert_eq!(l.cycles[0].value, "Replace (takes)");
     assert_eq!(l.cycles[1].value, "Keep");
     assert_eq!(l.cycles[2].value, "Loops only");

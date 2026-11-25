@@ -8,12 +8,19 @@
 //! # Audio
 //!
 //! The audio device is unique: only the song that has the **play focus** owns a running
-//! stream, the MIDI inputs and the control surfaces. Every other song runs on a session that
-//! is switched off (it plays nothing and holds no port), the same state a song is in when its
-//! stream failed to open. Giving the focus to another song ([`Workspace::focus`]) closes the
-//! stream of the old one before the new one opens it, with the settings the old one ran with,
-//! and rebuilds the new song's engine, as a change of the audio devices does. The transport of
-//! the song that lost the focus stops; its plugin instances stay loaded.
+//! stream. Every other song runs on a session that is switched off (it plays nothing and holds
+//! no port), the same state a song is in when its stream failed to open. Giving the focus to
+//! another song ([`Workspace::set_play_focus`]) closes the stream of the old one before the new
+//! one opens it, with the settings the old one ran with, and rebuilds the new song's engine, as
+//! a change of the audio devices does. The transport of the song that lost the focus stops; its
+//! plugin instances stay loaded.
+//!
+//! The **input focus** is the song that takes the live MIDI keyboard, the controllers and the
+//! control surfaces ([`Workspace::set_input_focus`]). A live note is played by the engine of the
+//! song that owns the stream, so the inputs are open only while one song has both foci; a
+//! keyboard whose song does not play is closed (the song's panel says so in a tooltip).
+//! [`Workspace::focus`], the song you work in, takes the foci the setting "Focus follows the
+//! active song" names (both by default).
 //!
 //! # Routing
 //!
@@ -30,7 +37,7 @@
 
 use crate::commands::AppCommand;
 use crate::session::AudioBackend;
-use crate::shell::{PendingAction, Shell, ShellRequest, SongTarget};
+use crate::shell::{Carried, PendingAction, Shell, ShellRequest, SongTarget};
 use crate::windows::{DocId, WindowHit, WindowKind};
 use atomik_ui::UiEvent;
 use std::ops::{Deref, DerefMut};
@@ -52,8 +59,11 @@ pub struct Workspace<B: AudioBackend> {
     songs: Vec<Song<B>>,
     /// The song calls without an explicit song are for ([`Self::select`]).
     routed: DocId,
-    /// The song that has the audio and the MIDI input.
+    /// The song that has the audio: the Play Focus.
     play: DocId,
+    /// The song that takes the live MIDI keyboard and the controllers: the Input Focus. Its
+    /// ports are open while it also has the audio.
+    input: DocId,
     next: u32,
     make: SongFactory<B>,
     /// The song whose question about unsaved changes is on the screen, for the answer.
@@ -67,6 +77,9 @@ pub struct Workspace<B: AudioBackend> {
     pinned: usize,
     /// The library revision each song had when it was last compared, by song id.
     library_seen: Vec<(DocId, u64)>,
+    /// What the drag of the selection in a song carries while it hovers over another song
+    /// ([`Self::drag_over_song`]), by the song it comes from.
+    carry: Option<(DocId, Carried)>,
 }
 
 impl<B: AudioBackend> std::fmt::Debug for Workspace<B> {
@@ -78,6 +91,7 @@ impl<B: AudioBackend> std::fmt::Debug for Workspace<B> {
             )
             .field("routed", &self.routed)
             .field("play", &self.play)
+            .field("input", &self.input)
             .finish_non_exhaustive()
     }
 }
@@ -108,6 +122,7 @@ impl<B: AudioBackend> Workspace<B> {
             }],
             routed: DocId::FIRST,
             play: DocId::FIRST,
+            input: DocId::FIRST,
             next: DocId::FIRST.0 + 1,
             make,
             asking: None,
@@ -115,6 +130,7 @@ impl<B: AudioBackend> Workspace<B> {
             recent: Vec::new(),
             pinned: 0,
             library_seen: Vec::new(),
+            carry: None,
         };
         workspace.recent = workspace.songs[0].shell.core().recent().to_vec();
         workspace.pinned = workspace.songs[0].shell.core().pinned_count();
@@ -154,9 +170,15 @@ impl<B: AudioBackend> Workspace<B> {
         self.routed
     }
 
-    /// The song that has the audio and the MIDI input.
+    /// The song that has the audio (the Play Focus).
     pub fn play_focus(&self) -> DocId {
         self.play
+    }
+
+    /// The song that takes the live MIDI keyboard and the controllers (the Input Focus). Its
+    /// MIDI inputs are open while it is also [`Self::play_focus`].
+    pub fn input_focus(&self) -> DocId {
+        self.input
     }
 
     /// The song `id`, when it is open.
@@ -242,6 +264,7 @@ impl<B: AudioBackend> Workspace<B> {
         if from == to || !self.has(from) || !self.has(to) {
             return false;
         }
+        self.carry = None;
         let (a, b) = (self.index_of(from), self.index_of(to));
         let Some(data) = self.songs[a].shell.take_song_drag() else {
             return false;
@@ -275,6 +298,44 @@ impl<B: AudioBackend> Workspace<B> {
         true
     }
 
+    /// The drag of the selection (clips, devices) in song `from` is over `hit`, a point of a
+    /// window of song `to`, and has not been let go: `to` draws the marker it draws for files at
+    /// the place [`Self::drag_to_song`] would drop at. False when no such songs are open, they
+    /// are the same song, or `from` has no such drag in progress.
+    pub fn drag_over_song(&mut self, from: DocId, to: DocId, hit: WindowHit) -> bool {
+        if from == to || !self.has(from) || !self.has(to) {
+            return false;
+        }
+        let (a, b) = (self.index_of(from), self.index_of(to));
+        if self.songs[a].shell.song_drag().is_none() {
+            self.carry = None;
+            return false;
+        }
+        // What the drag carries is worked out once, not at every move of the pointer.
+        let carried = match self.carry {
+            Some((id, carried)) if id == from => carried,
+            _ => {
+                let Some(carried) = self.songs[a].shell.song_drag_carries() else {
+                    return false;
+                };
+                self.carry = Some((from, carried));
+                carried
+            }
+        };
+        let at = atomik_ui::kurbo::Point::new(hit.logical.0, hit.logical.1);
+        self.songs[b].shell.song_drag_over(hit.kind, at, carried);
+        true
+    }
+
+    /// The drag of another song left song `to`'s windows, was dropped or was cancelled: the
+    /// markers go.
+    pub fn drag_left_song(&mut self, to: DocId) {
+        self.carry = None;
+        if let Some(song) = self.song_mut(to) {
+            song.song_drag_left();
+        }
+    }
+
     /// The files of a drag out of another song's file browser left song `to`'s windows.
     pub fn files_left_song(&mut self, to: DocId) {
         if let Some(song) = self.song_mut(to) {
@@ -295,17 +356,58 @@ impl<B: AudioBackend> Workspace<B> {
         }
     }
 
-    /// The song `id` takes the audio from the one that has it (the keys follow too): the
-    /// old song's stream, MIDI inputs and control surfaces close, then the new song opens them
-    /// with the same settings. Returns false when no such song is open.
+    /// Song `id` becomes the song you work in: calls are routed to it, and the foci that the
+    /// setting "Focus follows the active song" names go to it with it (both by default, so the
+    /// audio and the MIDI keyboard follow you). Returns false when no such song is open.
     pub fn focus(&mut self, id: DocId) -> bool {
         if !self.has(id) {
             return false;
         }
         self.carry_clipboard(self.routed, id);
         self.routed = id;
+        let follows = self.songs[self.index_of(id)].shell.workflow().focus_follows;
+        // The ports move first: they close with the old song's stream still running and open
+        // with the new song's engine as it starts.
+        if follows.moves_input() {
+            self.input = id;
+            self.apply_foci();
+        }
+        if follows.moves_play() {
+            self.move_play(id);
+        }
+        true
+    }
+
+    /// Song `id` takes the Play Focus whatever the setting says (the Play button of its panel):
+    /// the old song's stream and control surfaces close, then the new song opens them with the
+    /// same settings. The Input Focus stays where it is. Returns false when no such song is
+    /// open.
+    pub fn set_play_focus(&mut self, id: DocId) -> bool {
+        if !self.has(id) {
+            return false;
+        }
+        self.move_play(id);
+        true
+    }
+
+    /// Song `id` takes the Input Focus whatever the setting says (the Input button of its
+    /// panel): the MIDI keyboard and the controllers go to it, and they sound while it also has
+    /// the audio. The audio stays where it is. Returns false when no such song is open.
+    pub fn set_input_focus(&mut self, id: DocId) -> bool {
+        if !self.has(id) {
+            return false;
+        }
+        self.input = id;
+        self.apply_foci();
+        true
+    }
+
+    /// The audio changes hands: the stream of the song that has it closes (the transport stops,
+    /// the plugins stay loaded), then `id` opens one with the settings the old one ran with and
+    /// rebuilds its engine. Nothing happens when `id` has the audio already.
+    fn move_play(&mut self, id: DocId) {
         if self.play == id {
-            return true;
+            return;
         }
         let from = self.index_of(self.play);
         let to = self.index_of(id);
@@ -313,7 +415,15 @@ impl<B: AudioBackend> Workspace<B> {
         self.songs[from].shell.release_audio();
         self.songs[to].shell.claim_audio(settings);
         self.play = id;
-        true
+    }
+
+    /// Tells every song whether it has the Input Focus (its ports open or close, its panel
+    /// shows it).
+    fn apply_foci(&mut self) {
+        let input = self.input;
+        for song in &mut self.songs {
+            song.shell.set_input_focus(song.id == input);
+        }
     }
 
     /// Opens a new song in a window of its own and gives it the focus.
@@ -334,6 +444,7 @@ impl<B: AudioBackend> Workspace<B> {
         self.library_seen
             .push((id, shell.core().library_revision()));
         self.songs.push(Song { id, shell });
+        self.apply_foci();
         self.focus(id);
         self.share_song_list();
         id
@@ -366,7 +477,7 @@ impl<B: AudioBackend> Workspace<B> {
     /// A snapshot that cannot be read is skipped. Returns how many songs were opened.
     pub fn recover_songs(&mut self, snapshots: &[std::path::PathBuf]) -> usize {
         let asked = self.routed;
-        let focused = self.play;
+        let focused = (self.play, self.input);
         let mut opened = 0;
         for snapshot in snapshots {
             let id = self.new_song();
@@ -383,9 +494,9 @@ impl<B: AudioBackend> Workspace<B> {
         }
         if opened > 0 {
             self.share_song_list();
-            if self.has(focused) {
-                self.focus(focused);
-            }
+            // Both foci go back where they were, whatever the setting says.
+            self.set_input_focus(focused.1);
+            self.set_play_focus(focused.0);
             if self.has(asked) {
                 self.select(asked);
             }
@@ -417,6 +528,7 @@ impl<B: AudioBackend> Workspace<B> {
     fn discard_song(&mut self, id: DocId) {
         let at = self.index_of(id);
         let had_audio = self.play == id;
+        let had_input = self.input == id;
         let mut song = self.songs.remove(at);
         let settings = song.shell.audio_settings();
         let ui_state = song.shell.take_ui_state_path();
@@ -447,6 +559,10 @@ impl<B: AudioBackend> Workspace<B> {
             self.songs[0].shell.set_ui_state_path(path);
         }
         let next = self.songs[at.min(self.songs.len() - 1)].id;
+        if had_input {
+            self.input = next;
+            self.apply_foci();
+        }
         if had_audio {
             let i = self.index_of(next);
             self.songs[i].shell.claim_audio(settings);
@@ -458,10 +574,10 @@ impl<B: AudioBackend> Workspace<B> {
         self.share_song_list();
     }
 
-    /// The song after the one with the focus (the first after the last), or the one before it.
+    /// The song after the one you work in (the first after the last), or the one before it.
     pub fn neighbour(&self, forward: bool) -> DocId {
         let n = self.songs.len();
-        let at = self.index_of(self.play);
+        let at = self.index_of(self.routed);
         let to = if forward {
             (at + 1) % n
         } else {
@@ -611,6 +727,12 @@ impl<B: AudioBackend> Workspace<B> {
                     self.focus(id);
                     out.push(ShellRequest::FocusSong(id));
                 }
+                ShellRequest::TakePlayFocus => {
+                    self.set_play_focus(self.routed);
+                }
+                ShellRequest::TakeInputFocus => {
+                    self.set_input_focus(self.routed);
+                }
                 ShellRequest::ConfirmSave { then } => {
                     self.asking = Some(self.routed);
                     if fresh && then == PendingAction::Command(AppCommand::Quit) {
@@ -759,3 +881,7 @@ fn two_mut<T>(items: &mut [T], a: usize, b: usize) -> (&mut T, &mut T) {
 #[cfg(test)]
 #[path = "workspace_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "workspace_focus_tests.rs"]
+mod focus_tests;
