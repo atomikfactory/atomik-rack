@@ -383,3 +383,118 @@ fn a_version_that_cannot_be_read_stops_the_carry_and_nothing_is_removed() {
     assert!(old.path_of(good).unwrap().is_file());
     assert!(old.path_of(bad).unwrap().is_file());
 }
+
+#[test]
+fn rename_sets_changes_and_clears_a_name_and_the_index_reads_back() {
+    let d = dir("rename");
+    let mut store = VersionStore::open(&d, "song").unwrap();
+    let a = auto(&mut store, "one", 10);
+    let n = store
+        .add(VersionKind::Named, "Idea", "two", &no_assets(), 20)
+        .unwrap();
+    assert!(store.rename(a, "  Before\tthe mix ").unwrap());
+    assert_eq!(store.get(a).unwrap().name, "Before the mix");
+    assert_eq!(store.get(a).unwrap().kind, VersionKind::Automatic);
+    assert!(store.rename(n, "Idea B").unwrap());
+    let again = VersionStore::open(&d, "song").unwrap();
+    assert_eq!(again.get(a).unwrap().name, "Before the mix");
+    assert_eq!(again.get(n).unwrap().name, "Idea B");
+    assert!(store.rename(a, "").unwrap(), "an empty name clears it");
+    assert_eq!(store.get(a).unwrap().name, "");
+    let cleared = VersionStore::open(&d, "song").unwrap();
+    assert_eq!(cleared.get(a).unwrap().name, "");
+    assert!(!store.rename(99, "x").unwrap(), "no such version");
+    // The text of the version is untouched.
+    assert_eq!(store.read(a).unwrap(), "one");
+}
+
+#[test]
+fn a_rename_that_cannot_be_written_keeps_the_old_name() {
+    let d = dir("rename-fail");
+    let mut store = VersionStore::open(&d, "song").unwrap();
+    let a = store
+        .add(VersionKind::Named, "Keep me", "one", &no_assets(), 10)
+        .unwrap();
+    // A folder where the index is: the index cannot be replaced.
+    fs::remove_file(d.join(INDEX_FILE)).unwrap();
+    fs::create_dir(d.join(INDEX_FILE)).unwrap();
+    assert!(store.rename(a, "New").is_err());
+    assert_eq!(store.get(a).unwrap().name, "Keep me");
+}
+
+#[test]
+fn delete_removes_the_file_and_the_entry_and_nothing_else() {
+    let d = dir("delete");
+    let mut store = VersionStore::open(&d, "song").unwrap();
+    let a = auto(&mut store, "one", 10);
+    let b = auto(&mut store, "two", 20);
+    let c = store
+        .add(VersionKind::Named, "Idea", "three", &no_assets(), 30)
+        .unwrap();
+    fs::write(d.join("notes.txt"), "mine").unwrap();
+    let gone = store.path_of(b).unwrap();
+    assert!(store.delete(b).unwrap());
+    assert!(!gone.exists());
+    assert!(store.get(b).is_none());
+    let again = VersionStore::open(&d, "song").unwrap();
+    let ids: Vec<u32> = again.entries().iter().map(|v| v.id).collect();
+    assert_eq!(ids, [a, c]);
+    assert_eq!(again.read(a).unwrap(), "one");
+    assert!(
+        d.join("notes.txt").exists(),
+        "a file the index does not list stays"
+    );
+    // A named version is deleted on request, and a number is not reused.
+    assert!(store.delete(c).unwrap());
+    let next = auto(&mut store, "four", 40);
+    assert!(next > c);
+    // Deleting what is not listed changes nothing.
+    assert!(!store.delete(99).unwrap());
+}
+
+#[test]
+fn delete_refuses_a_protected_version() {
+    let d = dir("delete-protected");
+    let mut store = VersionStore::open(&d, "song").unwrap();
+    let a = auto(&mut store, "one", 10);
+    store.set_protected(a, true).unwrap();
+    let path = store.path_of(a).unwrap();
+    assert!(!store.delete(a).unwrap());
+    assert!(path.exists() && store.get(a).is_some());
+    store.set_protected(a, false).unwrap();
+    assert!(store.delete(a).unwrap());
+    assert!(!path.exists());
+}
+
+#[test]
+fn a_delete_that_fails_leaves_the_version_listed_with_its_file() {
+    let d = dir("delete-fail");
+    let mut store = VersionStore::open(&d, "song").unwrap();
+    let a = auto(&mut store, "one", 10);
+    let b = auto(&mut store, "two", 20);
+    // The version file is a folder, which a file removal cannot remove.
+    let path = store.path_of(a).unwrap();
+    fs::remove_file(&path).unwrap();
+    fs::create_dir(&path).unwrap();
+    assert!(store.delete(a).is_err());
+    assert!(store.get(a).is_some(), "still listed in the store");
+    let again = VersionStore::open(&d, "song").unwrap();
+    let ids: Vec<u32> = again.entries().iter().map(|v| v.id).collect();
+    assert_eq!(ids, [a, b], "and in the index, in the same place");
+}
+
+#[test]
+fn a_delete_whose_index_cannot_be_written_changes_nothing() {
+    let d = dir("delete-index");
+    let mut store = VersionStore::open(&d, "song").unwrap();
+    let a = auto(&mut store, "one", 10);
+    let path = store.path_of(a).unwrap();
+    fs::remove_file(d.join(INDEX_FILE)).unwrap();
+    fs::create_dir(d.join(INDEX_FILE)).unwrap();
+    assert!(store.delete(a).is_err());
+    assert!(store.get(a).is_some());
+    assert!(
+        path.exists(),
+        "the file stays when the index could not be written"
+    );
+}
