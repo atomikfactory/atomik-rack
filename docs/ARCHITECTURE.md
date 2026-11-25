@@ -5889,8 +5889,8 @@ creation chain in the **Creation chain** bullet.
   every device type has an about line, and list the controls of a window that still fall back to their tooltip.
 - **The manual** (`help.manual`, Help > Manual, Ctrl+F1; [app/src/manual.rs](../crates/app/src/manual.rs),
   [app/src/shell_manual.rs](../crates/app/src/shell_manual.rs), [ui/src/manual/](../crates/ui/src/manual)). The app
-  compiles `docs/README.md` and `docs/KEYBOARD.md` in with `include_str!`, so the manual and the documentation are one
-  text. `atomik_ui::manual::markdown` reads the subset the documents use (decision V: written in the project, no
+  compiles `docs/README.md` and `docs/KEYBOARD.md` (and the translations in `docs/fr/`, shown when the interface is
+  French) in with `include_str!`, so the manual and the documentation are one text. `atomik_ui::manual::markdown` reads the subset the documents use (decision V: written in the project, no
   crate); `Manual::new` cuts each document into pages at its headings of level one and two, builds the table of
   contents and the GitHub-style anchors (`Manual::resolve` reads `#anchor`, `FILE.md#anchor` and addresses), and
   `Manual::search` ranks one hit per section (a heading match above a body match) with a snippet and the matched
@@ -5929,9 +5929,10 @@ creation chain in the **Creation chain** bullet.
   comparison. The per-step whole-`Song` clone of the arrangement sync stays until the song is shared
   (`Arc<Song>`).
 - **Cheat sheet.**
-  `atomik --print-keymap [--os win|mac|linux] [--profile standard|legacy] [--keymap FILE]` writes
-  markdown from the registry and the keymap; [KEYBOARD.md](KEYBOARD.md) is its output and a test
-  keeps them equal (`ATOMIK_UPDATE_GOLDEN=1 cargo test -p atomik-app --lib cli::` regenerates it).
+  `atomik --print-keymap [--os win|mac|linux] [--profile standard|legacy] [--lang en|fr] [--keymap FILE]`
+  writes markdown from the registry and the keymap; [KEYBOARD.md](KEYBOARD.md) is its output (and
+  [fr/KEYBOARD.md](fr/KEYBOARD.md) the French one) and a test keeps them equal
+  (`ATOMIK_UPDATE_GOLDEN=1 cargo test -p atomik-app --lib cli::` regenerates them).
 - **Daily keys: dispatch** ([app/src/shell.rs](../crates/app/src/shell.rs), `Shell::run_command`).
   The app default profile is `standard` (`APP_DEFAULT_PROFILE`); `legacy` stays selectable. Every
   command of a resolved key is offered to the focused view first (`ArrangementView::command`,

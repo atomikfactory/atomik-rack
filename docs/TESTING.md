@@ -1656,7 +1656,9 @@ the followed lane (open though folded, outlined, scrolled into view, a collapsed
 `crates/app/src/shell_macros_tests.rs` drives the menus, the keys (`Ctrl+Shift+P`), the control menu
 (Assign to Macro and Remove from Macro), both panels (keys inside a name and the search do not run
 commands) and the follow switch; `crates/mcp/tests/macros.rs` the tools. The keyboard goldens and
-`docs/KEYBOARD.md` are regenerated with `ATOMIK_UPDATE_GOLDEN=1`.
+`docs/KEYBOARD.md` are regenerated with `ATOMIK_UPDATE_GOLDEN=1`. `docs/fr/KEYBOARD.md` is checked the same way
+(`atomik --print-keymap --lang fr`) by the same test in `crates/app/src/cli.rs`; the French manual keeps every anchor
+of the English one (`docs_hygiene`, `crates/app/src/manual.rs`).
 
 Hand checks, not automated (they need a real window and your ears):
 

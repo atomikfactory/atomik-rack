@@ -204,7 +204,9 @@ impl Manual {
         self.anchors.get(&(doc, anchor.to_owned())).copied()
     }
 
-    /// The first heading whose text is `title` (ignoring case), in reading order.
+    /// The first heading whose text is `title` (ignoring case), in reading order. A title that
+    /// no heading has is tried as an anchor: a translated manual keeps the anchors of the
+    /// English headings, so the English name of a section (the one Help Mode links to) finds it.
     pub fn find_heading(&self, title: &str) -> Option<Location> {
         let want = title.trim().to_lowercase();
         for (p, page) in self.pages.iter().enumerate() {
@@ -216,7 +218,8 @@ impl Manual {
                 }
             }
         }
-        None
+        let anchor = markdown::slug(title);
+        (0..self.docs.len()).find_map(|d| self.anchor_location(d, &anchor))
     }
 
     /// The headings down to `max_level`, as (text, place, document index), in reading order.
