@@ -29,7 +29,7 @@ ctrlc.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
-atomik-testkit.workspace = true
+atomik-testkit = { workspace = true, features = ["backend"] }
 
 [lints]
 workspace = true

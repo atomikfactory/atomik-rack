@@ -109,6 +109,8 @@ pub mod surface;
 pub mod tab_file;
 pub mod tap_tempo;
 pub mod target;
+#[cfg(test)]
+pub(crate) mod test_backend;
 pub mod text_clipboard;
 pub mod themes;
 pub mod themes_tab;

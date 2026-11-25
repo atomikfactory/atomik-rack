@@ -19,6 +19,12 @@ may break APIs and the patch and project formats.
   recovery copies are neither read nor written), no audio device, no plugins loaded or scanned and no project
   reopened, so a setting, a device or a plugin that stops a normal start cannot. The window title ends in
   `[Safe mode]` and a message says so. It cannot be combined with `--settings`.
+- **One scriptable fake audio backend for the tests.** The session tests of the app and the lifecycle tests of the
+  player used to carry a fake audio host each; they now share one (`atomik_testkit::backend`, behind a `backend`
+  feature that no shipped program enables) whose script can change the device's rate, change the buffer size under
+  a running stream, unplug and plug back a device, stall the callbacks, make each callback cost a given time, and
+  which counts the starts, stops and listings. New tests use it for a rate change, an unplug and replug, a stall
+  longer than the watchdog and callbacks that overrun their period. Nothing in the program changes.
 - **A plugin load and overhead sweep for the test suite.** `cargo test -p atomik-plugin-hostd --test sweep --
   --ignored --nocapture` loads 1, 10 and 30 instances of the null, CLAP and VST3 test plugins with the sandbox off
   and in each of its three process modes, and prints the load time, the private bytes, threads, handles and child

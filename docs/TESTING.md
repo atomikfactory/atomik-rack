@@ -64,6 +64,38 @@ Tests are named for what they check, in snake case (`a_panicking_device_is_conta
 Fakes (`ConstantSource`, `ImpulseOnNote`, `Passthrough`, `NoteThru`, `CallLog`, `DropProbe`,
 `Allocator`, `RecordingSink`) are in [crates/testkit/src/fakes.rs](../crates/testkit/src/fakes.rs).
 
+## The fake audio backend
+
+[crates/testkit/src/backend.rs](../crates/testkit/src/backend.rs) (`atomik_testkit::backend`, behind the testkit's
+`backend` feature, which only the dev-dependencies of `atomik-app` and `atomik-play` switch on, so no shipped program
+and no other crate's test build pays for it) is the one fake audio host. `FakeAudio` clones share one state: hand a
+clone to the code under test and keep one to script it and to read the counts. Both programs have a trait for the
+outside world (`AudioBackend` in `session.rs`, `Backend` in `atomik-play`) and implement it in their tests as a thin
+adapter that answers `list_audio`, `list_midi` and `start` with the calls of the same names; the app does it once for
+all its test modules in `crates/app/src/test_backend.rs`, and a test that also needs MIDI ports to play notes into
+wraps `FakeAudio` and opens its own ports (`session_tests.rs`, `shell_audio_setup_tests.rs`).
+
+Time is simulated: nothing in it sleeps or reads a clock. A stream's callbacks happen when the test runs them, and the
+code under test that reads wall time (the liveness check) takes it as an argument (`LiveSession::poll_at`), so a test
+passes instants.
+
+| Call | What the code under test sees |
+|---|---|
+| `run_callbacks(n)`, `advance(duration)` | `n` callbacks, or the whole periods of `duration`; `callbacks_per_read(n)` runs `n` on every telemetry read |
+| `set_rate(hz)` | the device's native rate changes: a running stream is lost (a stream error, `device_lost`), the listing offers only `hz`, a start at another rate is `UnsupportedConfig` |
+| `set_buffer(frames)` | the callbacks arrive in blocks of `frames` from the next one on, in `Telemetry::buffer_frames`; nothing restarts |
+| `unplug()`, `replug()` | the stream's device is lost and leaves the listing, a start naming it is `DeviceNotFound`; replugging lists and opens it again, an old stream stays lost |
+| `stall()`, `resume()`, `stall_for(duration)`, `stall_callbacks(n)` | the callbacks stop coming without a loss |
+| `callback_cost_ns(ns)` | each callback takes `ns` of simulated render time against its period; above the period it is a render overrun and an xrun; the load figures cover the callbacks since the previous read |
+| `set_telemetry(t)` | pins the figures: every read returns exactly `t` |
+| `fail_next_start`, `fail_starts`, `break_device`, `fail_input`, `limit_host_inputs`, `fail_list`, `accept_buffer` | the failures and refusals a host can answer |
+| `start_calls()`, `starts()`, `stops()`, `lists()`, `midi_lists()`, `open_streams()`, `with_engine(f)` | what the code under test did; `with_engine` runs `f` on the open stream's engine as the callback would |
+
+`crates/testkit/tests/fake_backend.rs` tests the knobs themselves (run it with `--features backend`). The scenarios are
+at the end of `session_tests.rs`: a rate change under a running stream, a buffer change, an unplug and replug during
+playback, a stall longer than the threshold (and a shorter one that is not reported), and callbacks that overrun
+their period.
+
 ## Allocation guard (HI-1)
 
 [crates/testkit/src/no_alloc.rs](../crates/testkit/src/no_alloc.rs) provides a counting global

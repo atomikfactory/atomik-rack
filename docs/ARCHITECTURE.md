@@ -26,7 +26,8 @@ the screen is kept off the audio thread.
       atomik-app also uses atomik-dsp (onset detection on a worker);
       atomik-render dev-depends on it (the slicer demo test)
 
-      atomik-testkit: dev-dependency only (core + device-sdk)
+      atomik-testkit: dev-dependency only (core + device-sdk; with its `backend` feature also
+      engine and audio-io, switched on by the dev-dependencies of atomik-app and atomik-play)
 ```
 
 The picture shows the main arrows only; the table below is exact.
@@ -61,7 +62,7 @@ The picture shows the main arrows only; the table below is exact.
 | `atomik-ui` | [crates/ui](../crates/ui) | audio-file, library, core, device-sdk, dsp (the wavetable panel's frame display and the table editor's maths), devices (the headphone panel draws the device's own curve snapshot), model, tab (the chord diagram and the tab editor draw its voicings and techniques) | none | Platform-independent views, widgets, display lists, theme |
 | `atomik-app` | [crates/app](../crates/app) | core, device-sdk, devices, dsp, engine, model, tab, audio-file, library, video, update, vision, stems, render, ui, audio-io, midi-io, plugin-host, plugin-scan, plugin-hostd, plugin-sandbox | `src/platform/cursor.rs`, `src/platform/memory.rs`, `src/platform/native_child.rs` | The `atomik` application: `AppCore`, `Shell`, background workers (import, onset detection, file browser), the window |
 | `atomik-mcp` | [crates/mcp](../crates/mcp) | core, audio-file, device-sdk, library, model, render, app, ui (feature `cpu-canvas`), plugin-host | none | Development tool, not shipped: the MCP server (bin `atomik-mcp`) that bounces, measures and compares audio and drives a headless `Shell` for QA; see [MCP.md](MCP.md) |
-| `atomik-testkit` | [crates/testkit](../crates/testkit) | core, device-sdk | `src/no_alloc.rs` | Test-only: fakes, signal analysis, the allocation guard, the bench recorder (`bench.rs`) |
+| `atomik-testkit` | [crates/testkit](../crates/testkit) | core, device-sdk, audio-io (feature `backend`), engine (feature `backend`) | `src/no_alloc.rs` | Test-only: fakes, signal analysis, the allocation guard, the bench recorder (`bench.rs`), the scriptable fake audio backend (`backend.rs`, feature `backend`) |
 
 Rules (all hold in the `Cargo.toml` files today):
 
