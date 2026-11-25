@@ -8347,13 +8347,19 @@ A bug in a device must cost that device, not the session. The rules:
   time is the `Instant` the shell polls with, so tests move it. Nothing of this runs on the audio thread.
   The callback also wraps the whole render in `catch_unwind` as a last line: a panic outside any
   device (the engine's own code) silences the stream and sets `Telemetry::faulted`.
-- **A quiescent device is skipped** ([plan.rs](../crates/engine/src/plan.rs), `Node::skippable`). After each `process`
-  of a single-stage device the node asks `Device::quiescent`. While the answer stands, a batch is not run when the gather
-  delivered only bitwise `+0.0` on every audio and CV input, no note, no playback batch, and the transport only
+- **A quiescent device is skipped** ([plan.rs](../crates/engine/src/plan.rs), `Node::skippable`). After the last stage of
+  each `process` the node asks `Device::quiescent`. While the answer stands, a batch (or, for a multi-stage device, a
+  stage of it) is not run when the gather delivered only bitwise `+0.0` on every cabled audio and CV input of the stage
+  (less the sockets `Device::idle_ignored_inputs` names), no note, no playback batch, and the transport only
   advanced since the node's last batch (same tempo, playing state, time signature, loop, tune and harmony, the frame one
   batch on, the position still or one batch of ticks on, no loop wrap); a faulted node and a node on its own preview
   clock are never skipped. The gather ran, so the outputs are `+0.0` and the node's note outputs are empty; the device
-  only gets `Device::idle_advance(BATCH)` (inside the same `catch_unwind`, so a panic there is a fault like any other).
+  only gets `Device::idle_advance_stage(stage, BATCH)` (`idle_advance` for a single-stage device; inside the same
+  `catch_unwind`, so a panic there is a fault like any other). The stages of a multi-stage device are decided one by
+  one: a stage that runs ends the answer for the stages after it in the batch (they run too, and the device is asked
+  again after the last), a skipped stage leaves the later ones to their own inputs (the time of the batch is kept by
+  the last stage, so the stages of one batch all compare with the batch before it), and a stage the device says
+  publishes its own state (`Device::idle_stage_runs`) is called every batch without waking the others.
   A skipped batch is not timed and does not feed the cost the load rule reads. Any call that can change the device
   (`set_param`, a hand-off through `Node::contain`) and every routing swap clear the answer; the reads of meters and
   latency (`Node::ask`) do not. The decision is a pure function of the node and of the gathered inputs, so it is the
@@ -8363,11 +8369,23 @@ A bug in a device must cost that device, not the session. The rules:
   devices that answer `quiescent` are the stereo delay, the echo, the reverb, the space reverb and the modulation
   effect (the bypass wrapper forwards for every effect it wraps), and the instruments: the organ, the sampler, the
   granular synth, the FM synth, the wavetable synth and the poly synth (so the mono bass, which is the same engine;
-  the dual layer is not skipped); each one has a unit test that skipping equals processing
-  and an engine-level render test
+  the dual layer is not skipped), and the channel and bus strips; each one has a unit test that skipping equals
+  processing and an engine-level render test
   ([idle_stereo_delay.rs](../crates/render/tests/idle_stereo_delay.rs),
   [idle_effects.rs](../crates/render/tests/idle_effects.rs),
-  [idle_instruments.rs](../crates/render/tests/idle_instruments.rs)).
+  [idle_instruments.rs](../crates/render/tests/idle_instruments.rs),
+  [idle_strips.rs](../crates/render/tests/idle_strips.rs)).
+  A strip ([channel.rs](../crates/devices/src/channel.rs), `Channel::at_rest`; the bus is the same strip) answers
+  `quiescent` only when every stage is at rest: no CV is cabled and live, the look-ahead is off, the input gain is
+  positive (a negative gain makes `-0.0`, which is not what a skipped batch leaves), every gain smoother of the
+  second stage is settled and non-negative (a hard right pan is a hair below zero), the gate is off, the filters, the
+  EQ and the compressors are either off and skipped or on and settled with a zero history (the compressors may still
+  be letting their release stage fall: `Compressor::is_quiet` and `skip_silent`, which `idle_advance_stage` calls),
+  the parallel compressor is off or likewise at rest, and the latency line has taken a ring of silent samples (counted
+  once a batch at the start of the second stage; a sounding strip is told by its first sample). The analyser tap
+  still gets its silent block, the hand-over buffers between the stages are zeroed, and the follow input of the
+  gain of a bus above (which only scales the sends) is left out of the silence test; the bus's own follow stage runs
+  every batch while its output is cabled. `perf/BASELINE.md` has the figures.
 - `catch_unwind` costs nothing while nothing panics, so HI-1 holds. The panic path allocates (the
   payload, the default hook's message); it runs once per faulted device and is a documented
   exception. The panic hook ([§6n](#6n-logs-crash-reports-and-diagnostics)) does no file I/O on the

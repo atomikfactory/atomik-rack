@@ -152,6 +152,31 @@
 //!   both are on. A panel can ask for the pre-fader point too ([`ScopeTap::set_pre`]): with the
 //!   live flag on and the pre flag on, the same push after the EQ, the inserts and the parallel
 //!   compressor is made and the output push is skipped.
+//!
+//! ## Idle skip
+//! A strip that has gone silent is not called ([`Device::quiescent`]): the engine skips each
+//! stage whose inputs are silent while the strip is at rest, and [`Device::idle_advance_stage`]
+//! does what a silent stage would have done to the state. Each stage rests on its own rule, and
+//! a strip that cannot prove a rule cheaply simply never rests while it is broken, so a skipped
+//! batch is the processed batch bit for bit:
+//! * **Input and fader stage:** the input gains are settled and positive (a negative gain turns
+//!   silence into `-0.0`), no CV is cabled and live, the look-ahead is off (its lines are not
+//!   watched), and the latency line has taken a ring of silent samples (counted once a batch).
+//! * **Filters, EQ, compressor:** each is off and skipped, or on, settled and holding a zero
+//!   history ([`atomik_dsp::PassFilter::is_at_rest`], [`atomik_dsp::SmoothedBiquad::is_at_rest`]).
+//!   The compressors may still be letting their release stage fall: that is advanced by
+//!   [`atomik_dsp::Compressor::skip_silent`], as long as the reduction is already zero. A gate
+//!   that is on never rests (it closes on silence and shows it on `gr_cv_out`).
+//! * **Parallel compressor, insert, width, fader, mute, pan and sends:** the section is off or
+//!   settled, every smoother is settled and non-negative (the hard right pan is a hair below
+//!   zero), so the sends, the outputs and the gain reduction are `+0.0`, exactly what the engine
+//!   leaves in a skipped stage's outputs.
+//! * **Hand-overs:** a skipped first stage zeroes the signal, the key copy and the gain reduction
+//!   it hands to the second (which may still run, with a return that sounds); the analyser tap
+//!   takes its silent block where the second stage would have pushed it.
+//! * **Bus:** the follow input (the gain of the bus above) only scales the sends, so the engine
+//!   leaves it out of the silence test ([`Device::idle_ignored_inputs`]); the follow stage runs
+//!   every batch while `follow_out` is cabled ([`Device::idle_stage_runs`]).
 
 use crate::bus::S_FOLLOW_OUT;
 use crate::cv_in::batch_mean;
@@ -874,6 +899,17 @@ impl Section {
     pub(crate) fn next(&mut self) -> f32 {
         self.mix.next_value()
     }
+
+    /// The state a silent block leaves alone: `Some(false)` while the section is off and
+    /// skipped, `Some(true)` while it is on and its crossfade has arrived; `None` while it is
+    /// changing (a ramp, or a switch that [`Section::begin`] has not acted on yet).
+    pub(crate) fn steady(&self) -> Option<bool> {
+        match (self.active, self.mix.target() > 0.0) {
+            (false, false) => Some(false),
+            (true, true) if self.mix.is_settled() => Some(true),
+            _ => None,
+        }
+    }
 }
 
 /// Runs a stereo filter section in place with its on/off crossfade.
@@ -989,6 +1025,14 @@ pub struct Channel {
     /// The analyser ring (allocated in `prepare`): written with the signal after the EQ and
     /// before the fader while `internal.tap_live` is on.
     tap: Option<Arc<ScopeTap>>,
+    /// How many zero samples have been written to the latency lines in a row (every sample of
+    /// the signal that went in was bitwise `+0.0`), counted a batch at a time and saturating;
+    /// `usize::MAX` for lines that were just cleared. The ring holds only zeros once this
+    /// reaches its length.
+    delay_quiet: usize,
+    /// The bus's `follow_out` was cabled the last time its follow stage ran: that stage then
+    /// publishes the bus gain every batch, also while the rest of the strip is skipped.
+    follow_live: bool,
 }
 
 impl Default for Channel {
@@ -1066,6 +1110,8 @@ impl Channel {
             fresh: true,
             fresh_insert: true,
             tap: None,
+            follow_live: false,
+            delay_quiet: usize::MAX,
         };
         for i in 0..PARAM_COUNT {
             c.apply(i);
@@ -1232,8 +1278,13 @@ impl Channel {
                 // Positive: a real delay, not reported. Negative: no delay, reported as
                 // phantom latency so the engine's PDC delays every other channel instead.
                 self.latency = n.max(0.0) as u32;
+                let ring = self.delay_l.ring_len();
                 self.delay_l.grow(self.latency as usize);
                 self.delay_r.grow(self.latency as usize);
+                if self.delay_l.ring_len() != ring {
+                    // A line that grows is cleared.
+                    self.delay_quiet = usize::MAX;
+                }
                 self.phantom_latency = (-n).max(0.0) as u32;
             }
             // Routing switches, key and insert bypass are read in `process`.
@@ -1495,6 +1546,94 @@ impl Channel {
         }
     }
 
+    /// Whether a silent batch would write only `+0.0` and leave the strip exactly as it is (the
+    /// answer of [`Device::quiescent`]; the module docs list the rule stage by stage). The tests
+    /// that fail while a signal flows come first, so a busy strip pays for one.
+    fn at_rest(&self) -> bool {
+        // A positive gain on silence gives `+0.0` (a negative one gives `-0.0`).
+        let steady = |s: &Smoother| s.is_settled() && s.value().is_sign_positive();
+        let section_rest = |s: &Section, filter: &PassFilter| match s.steady() {
+            Some(on) => !on || filter.is_at_rest(),
+            None => false,
+        };
+        self.delay_quiet >= self.delay_l.ring_len()
+            && self.look == 0
+            && !self.fresh
+            && !self.fresh_insert
+            && !self.cv_live.iter().any(|&live| live)
+            && steady(&self.input)
+            && steady(&self.input_r)
+            && steady(&self.insert)
+            && steady(&self.width)
+            && steady(&self.fader)
+            && steady(&self.pan_l)
+            && steady(&self.pan_r)
+            && steady(&self.audible)
+            && self.send_pre.iter().all(steady)
+            && self.send_post.iter().all(steady)
+            && section_rest(&self.hpf_on, &self.hpf)
+            && section_rest(&self.lpf_on, &self.lpf)
+            // A gate that is on closes on silence and then reports it on `gr_cv_out`.
+            && self.gate_on.steady() == Some(false)
+            && match self.comp_on.steady() {
+                Some(on) => !on || (self.comp.is_quiet() && self.comp_makeup.is_settled()),
+                None => false,
+            }
+            && match self.eq_on.steady() {
+                Some(on) => !on || self.eq.iter().all(SmoothedBiquad::is_at_rest),
+                None => false,
+            }
+            && if self.pcomp_active {
+                self.pcomp_mix.target() > 0.0
+                    && self.pcomp_mix.is_settled()
+                    && self.pcomp_makeup.is_settled()
+                    && self.pcomp.is_quiet()
+            } else {
+                self.pcomp_mix.target() <= 0.0
+            }
+    }
+
+    /// What a silent stage 0 does to the strip: it hands zeros to stage 1 (the insert point,
+    /// the key copy and the dynamics' gain reduction) and, with the dynamics before the inserts,
+    /// lets the compressor's release stage decay.
+    fn idle_stage0(&mut self) {
+        self.key = [0.0; BATCH];
+        self.gr = [0.0; BATCH];
+        self.mid = ([0.0; BATCH], [0.0; BATCH]);
+        self.insert_pre = self.on(P_INSERT_PRE);
+        if !self.insert_pre {
+            self.idle_dynamics();
+        }
+    }
+
+    /// The compressor of the dynamics section over a silent batch (it rests quiet, see
+    /// [`Channel::at_rest`]): its release stage decays while the section is on.
+    fn idle_dynamics(&mut self) {
+        if self.comp_on.steady() == Some(true) {
+            self.comp.skip_silent(BATCH);
+        }
+    }
+
+    /// What a silent stage 1 does beyond the zeros the engine wrote to the outputs: the
+    /// compressors' release stages decay (the dynamics section's too, with the inserts before
+    /// it, and the parallel compressor's) and the analyser tap takes its silent block exactly
+    /// where stage 1 would have pushed one.
+    fn idle_stage1(&mut self) {
+        if self.insert_pre {
+            self.idle_dynamics();
+        }
+        if self.pcomp_active {
+            self.pcomp.skip_silent(BATCH);
+        }
+        let Some(tap) = &self.tap else { return };
+        let zero = [0.0f32; BATCH];
+        // Stage 1 pushes once: before the fader when the switch is on or the panel asked for that
+        // point, after the pan otherwise, and not at all unless one of the two is on.
+        if self.on(P_TAP_LIVE) || tap.is_live() {
+            tap.push(&zero, &zero);
+        }
+    }
+
     /// Stage 0: input → gain/phase → filters (→ dynamics/EQ unless `route.insert_pre`) →
     /// `insert_send_*`.
     fn stage0(&mut self, ctx: &mut ProcessContext<'_>) {
@@ -1527,7 +1666,8 @@ impl Channel {
     /// the gain of the bus above), written to `follow_out` for the strips that play into it.
     /// The smoothers run ahead on copies, so the audio stages see the same values.
     fn follow_stage(&mut self, ctx: &mut ProcessContext<'_>) {
-        if !ctx.is_connected(SocketId(S_FOLLOW_OUT)) {
+        self.follow_live = ctx.is_connected(SocketId(S_FOLLOW_OUT));
+        if !self.follow_live {
             return;
         }
         if self.fresh {
@@ -1555,6 +1695,16 @@ impl Channel {
         self.insert_return(&mut l, &mut r, ret_on.then_some((&ret_l, &ret_r)));
         // Latency adjust (the lines always record, so changing the delay replays history).
         let d = self.latency as f32;
+        // A sounding strip is told by its first sample (the rest is looked at only when it is zero).
+        let written = match l[0].to_bits() | r[0].to_bits() {
+            0 => bits_or(&l) | bits_or(&r),
+            first => first,
+        };
+        self.delay_quiet = if written == 0 {
+            self.delay_quiet.saturating_add(BATCH)
+        } else {
+            0
+        };
         for n in 0..BATCH {
             let (x, y) = (l[n], r[n]);
             if self.latency > 0 {
@@ -1637,6 +1787,12 @@ impl Channel {
     }
 }
 
+/// The bitwise OR of every sample of a block: zero exactly when every sample is `+0.0`.
+#[inline]
+fn bits_or(block: &Block) -> u32 {
+    block.iter().fold(0, |a, x| a | x.to_bits())
+}
+
 /// Reads a stereo input pair with the mono fallback (one connected side feeds both).
 /// Returns `(l, r, any_connected)`.
 pub(crate) fn stereo_in(ctx: &ProcessContext<'_>, l: u16, r: u16) -> (Block, Block, bool) {
@@ -1715,6 +1871,7 @@ impl Device for Channel {
         self.delay_r.clear();
         self.look_l.clear();
         self.look_r.clear();
+        self.delay_quiet = usize::MAX;
         self.mid = ([0.0; BATCH], [0.0; BATCH]);
         self.gr = [0.0; BATCH];
     }
@@ -1739,6 +1896,32 @@ impl Device for Channel {
         true
     }
 
+    fn quiescent(&self) -> bool {
+        self.at_rest()
+    }
+
+    fn idle_advance(&mut self, _frames: usize) {
+        self.idle_stage0();
+        self.idle_stage1();
+    }
+
+    fn idle_advance_stage(&mut self, stage: u8, _frames: usize) {
+        match stage.checked_sub(self.lead) {
+            Some(0) => self.idle_stage0(),
+            Some(1) => self.idle_stage1(),
+            _ => {}
+        }
+    }
+
+    fn idle_ignored_inputs(&self) -> &'static [SocketId] {
+        static IGNORED: [SocketId; 1] = [SocketId(S_FOLLOW_IN)];
+        &IGNORED
+    }
+
+    fn idle_stage_runs(&self, stage: u8) -> bool {
+        self.lead > 0 && stage == 0 && self.follow_live
+    }
+
     /// Runs both stages (for hosts that do not split stages, e.g. the test harness).
     fn process(&mut self, ctx: &mut ProcessContext<'_>) {
         if self.lead > 0 {
@@ -1760,5 +1943,7 @@ impl Device for Channel {
     }
 }
 
+#[cfg(test)]
+mod idle_tests;
 #[cfg(test)]
 mod tests;
