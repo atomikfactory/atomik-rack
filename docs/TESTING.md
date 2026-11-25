@@ -2046,8 +2046,9 @@ modes of the sandbox (a shared child holds 16 instances, then another starts). `
 
 - `load ms`, `per ms`: the whole run of N blocking `instantiate` calls, and the median of one call. The library of a
   format is loaded by its first instance, so the row of N = 1 carries that cost alone.
-- `children`, `consoles`: the processes below the test process, and the hidden console hosts Windows starts for the
-  children that have no window (one each; they are not plugin processes and are counted in the other columns).
+- `children`, `consoles`: the processes below the test process, and the console hosts below it (Windows starts one
+  for a child that has a console; the sandbox's children are detached and have none, so the column is 0; a console
+  host is not a plugin process and is counted in the other columns).
 - `MB`, `thr`, `hdl`: what N instances added to the test process and everything below it, per instance: private bytes
   (resident bytes on macOS), threads (not on macOS) and open handles (Windows) or file descriptors (Linux, not macOS).
 - `cpu parent`, `cpu child`: the share of one core the test process and the children used while the N instances
@@ -2060,7 +2061,7 @@ file free of `unsafe`. The rows of the reference machine are in [perf/BASELINE.m
 
 The ordinary test of the file, `three_instances_have_the_expected_child_processes_and_threads`, asserts what does not
 depend on the machine, with three instances of the `null` gain: three children in the default mode and one in the
-per-file and shared modes (counted by the backend and by the process table), at most one console host per child, the
+per-file and shared modes (counted by the backend and by the process table), no console host for a child, the
 same thread count in each of three children, one more thread in a shared child for each instance, and no process or
 thread of the test process left after the instances are gone. Absolute thread counts are not asserted: the system's
 loader starts helper threads by the number of cores. Times and bytes stay in the sweep. What the sweep leaves to a
