@@ -2022,6 +2022,47 @@ path), run `-Scenario all` once with the laptop on mains power and idle, and sen
 Export Diagnostics writes (home folders are already hidden in it). The CSV rows and the adapter line are enough to
 compare that machine with the reference rows of `perf/BASELINE.md`.
 
+### Plugin load and overhead sweep
+
+`crates/plugin-hostd/tests/sweep.rs` loads N instances of a gain plugin through the real host path (a plugin manager
+over the sandbox backend, or over the plugin formats in the test process) and prints one row per shell, sandbox mode
+and N. It is a manual benchmark, ignored by default; release gives honest times:
+
+```text
+cargo test --release -p atomik-plugin-hostd --test sweep -- --ignored --nocapture
+ATOMIK_SWEEP_COUNTS=1,3 cargo test -p atomik-plugin-hostd --test sweep -- --ignored --nocapture
+```
+
+The shells are the built-in `null` plugins (sandbox only, they live in the child) and the test CLAP and VST3
+libraries. "in process" is the sandbox off; "child each", "child per file" and "one shared child" are the three process
+modes of the sandbox (a shared child holds 16 instances, then another starts). `ATOMIK_SWEEP_COUNTS` changes the counts
+(default `1,10,30`) and `ATOMIK_SWEEP_ONLY` keeps the rows whose "shell where" label contains its text (for example
+`vst3 child each`). A full run takes about four minutes, and the machine should be otherwise idle. The columns:
+
+- `load ms`, `per ms`: the whole run of N blocking `instantiate` calls, and the median of one call. The library of a
+  format is loaded by its first instance, so the row of N = 1 carries that cost alone.
+- `children`, `consoles`: the processes below the test process, and the hidden console hosts Windows starts for the
+  children that have no window (one each; they are not plugin processes and are counted in the other columns).
+- `MB`, `thr`, `hdl`: what N instances added to the test process and everything below it, per instance: private bytes
+  (resident bytes on macOS), threads (not on macOS) and open handles (Windows) or file descriptors (Linux, not macOS).
+- `cpu parent`, `cpu child`: the share of one core the test process and the children used while the N instances
+  processed silence for four seconds at 48 kHz, in 256-frame callbacks (four 64-frame batches of every instance), the
+  normal block path of the manager. The test process paces and runs the batches itself, so its figure includes the
+  host side of the round trips.
+
+The numbers come from the process table (`powershell` on Windows, `/proc` on Linux, `ps` on macOS), which keeps the
+file free of `unsafe`. The rows of the reference machine are in [perf/BASELINE.md](../perf/BASELINE.md).
+
+The ordinary test of the file, `three_instances_have_the_expected_child_processes_and_threads`, asserts what does not
+depend on the machine, with three instances of the `null` gain: three children in the default mode and one in the
+per-file and shared modes (counted by the backend and by the process table), at most one console host per child, the
+same thread count in each of three children, one more thread in a shared child for each instance, and no process or
+thread of the test process left after the instances are gone. Absolute thread counts are not asserted: the system's
+loader starts helper threads by the number of cores. Times and bytes stay in the sweep. What the sweep leaves to a
+person: running the windowed app with `--stress-plugins` and the sandbox on and off (`scripts/perf/sample-app.ps1`
+scenario `stress-plugins`) adds the part of the cost that lives in the app: the editor windows, the interface's own
+memory and the GPU, which the host path here does not exercise.
+
 ## Graphics device loss
 
 The decisions are unit-tested without a GPU: the back-off schedule, the surface size clamp, the forced-loss period,
