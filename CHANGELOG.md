@@ -134,6 +134,10 @@ may break APIs and the patch and project formats.
   handling of a driver that never lets go are as before, and quitting while the stream opens still returns within
   ten seconds. A call made while the stream opens does not wait for the engine: the plugin devices of a project come
   in once the stream is up, as after any restart of the audio. Rendered audio and projects do not change.
+- **A device that stays silent costs the engine less.** A skipped device no longer has its outputs and unused inputs
+  zeroed again in every batch (they were left at zero by the batch before), and the test that its inputs are silent
+  reads only the inputs, not every socket. An idle channel strip takes about 0.2 us a batch instead of 0.4 us, an
+  idle bus about 0.3 us instead of 0.5 us. Rendered audio does not change, byte for byte.
 
 ### Fixed
 - **Exporting a patch, a MIDI file or MIDI mappings, a tab or chord sheet, the device list or the diagnostics report

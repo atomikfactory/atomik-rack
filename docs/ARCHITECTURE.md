@@ -8386,7 +8386,10 @@ A bug in a device must cost that device, not the session. The rules:
   (less the sockets `Device::idle_ignored_inputs` names), no note, no playback batch, and the transport only
   advanced since the node's last batch (same tempo, playing state, time signature, loop, tune and harmony, the frame one
   batch on, the position still or one batch of ticks on, no loop wrap); a faulted node and a node on its own preview
-  clock are never skipped. The gather ran, so the outputs are `+0.0` and the node's note outputs are empty; the device
+  clock are never skipped. The gather ran, so the outputs are `+0.0` and the node's note outputs are empty (a node
+  skipped in the batch before is not zeroed again: `Node::clean`, one bit per stage, is set by a skipped stage and
+  cleared by every `process`, every `Node::contain`, and every routing install, so a buffer the device or a cable may
+  have written is always zeroed afresh; summing inputs are zeroed every batch); the device
   only gets `Device::idle_advance_stage(stage, BATCH)` (`idle_advance` for a single-stage device; inside the same
   `catch_unwind`, so a panic there is a fault like any other). The stages of a multi-stage device are decided one by
   one: a stage that runs ends the answer for the stages after it in the batch (they run too, and the device is asked
