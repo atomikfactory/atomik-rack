@@ -2366,7 +2366,7 @@ as long as a hung open).
 
 **Status.** Decided by the owner on 2026-11-25.
 
-## BX. A theme's glow is a few stacked translucent shapes, off at Low power, and only a theme that says so has it
+## BY. A theme's glow is a few stacked translucent shapes, off at Low power, and only a theme that says so has it
 
 **Decision.** A theme file may have a `glow` section (enabled, `accent` or one colour, intensity 0 to 1, radius 0 to 16
 pixels). The halo is four widening translucent rounded shapes drawn behind the thing that glows (`Glow::halo`): the lit
@@ -2390,7 +2390,7 @@ copy made by the program writes it).
 
 **Status.** Default (not yet confirmed). Decided by: none yet.
 
-## BY. The pictures on the start screen's cards are made on a worker thread and kept by the content of the file
+## BZ. The pictures on the start screen's cards are made on a worker thread and kept by the content of the file
 
 **Decision.** A card picture is the song's arrangement seen from far away: one row per track, one block per clip, the
 colours kept as "the clip's, the lane's, the track's, else the device type's accent" so the picture takes the theme in
