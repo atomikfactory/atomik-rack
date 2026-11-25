@@ -1,5 +1,5 @@
 == song
-panel 180.0 16.0 720.0 470.0
+panel 180.0 16.0 720.0 502.0
 EXPORT SONG AS AUDIO FILE
 my song.wav
 PRESET
@@ -11,6 +11,7 @@ QUALITY
 TAIL
 MIX DOWN
 LOUDNESS
+CEILING
 EXTRA FILE
 From the start to the End marker; the tail is kept while audible. 24-bit needs no dither.
 Project rate 48 kHz
@@ -41,6 +42,10 @@ OFF
 -16 LUFS
 -14 LUFS
 -9 GUIDE
+CUSTOM
+-1 dBTP
+-2 dBTP
+CUSTOM
 ONE FILE
 MP3 320 kbps
 EXPORT
@@ -50,10 +55,10 @@ SAVE PRESET...: 484.0 81.0 594.0 103.0
 DELETE PRESET: 600.0 81.0 700.0 103.0
 STEREO: 298.0 305.0 378.0 327.0
 -14 LUFS: 448.0 337.0 528.0 359.0
-MP3 320 kbps: 380.0 369.0 510.0 391.0
+MP3 320 kbps: 380.0 401.0 510.0 423.0
 after Streaming: Streaming
 == loop
-panel 180.0 16.0 720.0 438.0
+panel 180.0 16.0 720.0 470.0
 EXPORT LOOP AS AUDIO FILE
 my song.wav
 PRESET
@@ -64,6 +69,7 @@ FILE FORMAT
 QUALITY
 MIX DOWN
 LOUDNESS
+CEILING
 EXTRA FILE
 Exactly from the left to the right locator, with no tail. 24-bit needs no dither.
 Project rate 48 kHz
@@ -93,6 +99,10 @@ OFF
 -16 LUFS
 -14 LUFS
 -9 GUIDE
+CUSTOM
+-1 dBTP
+-2 dBTP
+CUSTOM
 ONE FILE
 MP3 320 kbps
 EXPORT
@@ -102,10 +112,10 @@ SAVE PRESET...: 484.0 81.0 594.0 103.0
 DELETE PRESET: 600.0 81.0 700.0 103.0
 STEREO: 298.0 273.0 378.0 295.0
 -14 LUFS: 448.0 305.0 528.0 327.0
-MP3 320 kbps: 380.0 337.0 510.0 359.0
+MP3 320 kbps: 380.0 369.0 510.0 391.0
 after Streaming: Streaming
 == stems
-panel 180.0 16.0 720.0 438.0
+panel 180.0 16.0 720.0 534.0
 EXPORT STEMS
 my song.wav
 PRESET
@@ -117,6 +127,9 @@ QUALITY
 TAIL
 CHANNELS
 RANGE
+LOUDNESS
+CEILING
+STEM GAIN
 One file per strip, in order, lined up with the master. 24-bit needs no dither.
 Project rate 48 kHz
 (NONE)
@@ -145,9 +158,20 @@ DRY SOURCE
 WHOLE SONG
 BETWEEN LOCATORS
 SELECTION
+OFF
+-16 LUFS
+-14 LUFS
+-9 GUIDE
+CUSTOM
+-1 dBTP
+-2 dBTP
+CUSTOM
+SAME GAIN FOR ALL
+EACH STEM
 EXPORT
 CANCEL
 (NONE): 298.0 81.0 478.0 103.0
 SAVE PRESET...: 484.0 81.0 594.0 103.0
 DELETE PRESET: 600.0 81.0 700.0 103.0
+-14 LUFS: 448.0 369.0 528.0 391.0
 after Streaming: Streaming

@@ -6,8 +6,9 @@ mod support;
 
 use atomik_ui::kurbo::{Point, Rect};
 use atomik_ui::{
-    DisplayList, EncoderState, ExportAction, ExportDepth, ExportDither, ExportFile, ExportQuality,
-    ExportScope, ExportValues, ExportView, Key, Modifiers, Theme, UiAction, UiEvent,
+    DisplayList, EncoderState, ExportAction, ExportDepth, ExportDither, ExportFile, ExportLoudness,
+    ExportQuality, ExportScope, ExportValues, ExportView, ImeEvent, Key, Modifiers, Theme,
+    UiAction, UiEvent,
 };
 use support::*;
 
@@ -504,21 +505,34 @@ fn a_remembered_compressed_format_falls_back_to_wav_when_ffmpeg_is_missing() {
 }
 
 #[test]
-fn stems_are_never_compressed() {
+fn stems_can_be_compressed_with_ffmpeg_and_the_buttons_are_greyed_without_it() {
+    // A remembered compressed format stays for stems when FFmpeg is there.
     let remembered = ExportValues {
         file: ExportFile::Aac,
+        aac: 256,
         ..ExportValues::default()
     };
     let mut v = ExportView::new(Theme::dark());
     v.set_bounds(BOUNDS);
     v.open(ExportScope::Stems, "stems", 48_000, remembered);
-    assert_eq!(v.values().file, ExportFile::Wav);
+    assert_eq!(v.values().file, ExportFile::Aac);
     for label in ["MP3", "AAC", "OPUS"] {
         click(&mut v, label);
-        assert_eq!(v.values().file, ExportFile::Wav, "{label}");
-        let tip = v.help_at(center(&v, label)).unwrap();
-        assert!(tip.text.contains("WAV, AIFF or FLAC"), "{}", tip.text);
+        assert!(v.values().file.is_lossy(), "{label}");
     }
+    click(&mut v, "MP3");
+    click(&mut v, "V2");
+    let started = start_values(click(&mut v, "EXPORT"));
+    assert_eq!(started.file, ExportFile::Mp3);
+    assert_eq!(started.mp3, ExportQuality::Vbr(2));
+    // Without FFmpeg they are greyed with the setup line, as for a song.
+    v.set_encoder(EncoderState::Missing(MISSING.to_owned()));
+    assert_eq!(v.values().file, ExportFile::Wav);
+    click(&mut v, "AAC");
+    assert_eq!(v.values().file, ExportFile::Wav);
+    let tip = v.help_at(center(&v, "AAC")).unwrap();
+    assert_eq!(tip.text, MISSING);
+    assert!(has(&texts(&v), MISSING));
 }
 
 #[test]
@@ -584,4 +598,160 @@ fn a_warning_shows_under_the_options_until_a_choice_changes() {
     v.set_warning(Some("x".to_owned()));
     v.open(ExportScope::Song, "a.wav", 48_000, ExportValues::default());
     assert!(v.warning().is_none());
+}
+
+fn loudness_of(v: &ExportView) -> ExportLoudness {
+    v.values().loudness
+}
+
+/// Opens the CUSTOM box number `which` (0: the loudness row, 1: the ceiling row), types `text`
+/// and presses Enter.
+fn type_custom(v: &mut ExportView, which: usize, text: &str) {
+    let p = v.custom_rect(which == 1).center();
+    v.handle(&down(p));
+    v.handle(&up(p));
+    assert!(v.wants_text(), "the field has the keys");
+    v.handle(&UiEvent::Ime(ImeEvent::Commit(text.to_owned())));
+    key(v, Key::Enter);
+}
+
+#[test]
+fn a_custom_loudness_target_is_typed_in_a_box_and_taken_with_enter() {
+    for scope in [ExportScope::Song, ExportScope::Stems] {
+        let mut v = view(scope);
+        assert_eq!(loudness_of(&v), ExportLoudness::Off);
+        type_custom(&mut v, 0, "-12.5");
+        assert_eq!(loudness_of(&v), ExportLoudness::Custom(-125));
+        assert!(!v.wants_text());
+        // The box shows the value, lit.
+        assert!(has(&texts(&v), "-12.5 LUFS"));
+        // A whole number without a sign is negative, a comma is a point.
+        type_custom(&mut v, 0, "23");
+        assert_eq!(loudness_of(&v), ExportLoudness::Custom(-230));
+        type_custom(&mut v, 0, "-18,5");
+        assert_eq!(loudness_of(&v), ExportLoudness::Custom(-185));
+        // The fixed buttons still work, and replace it.
+        click(&mut v, "-14 LUFS");
+        assert_eq!(loudness_of(&v), ExportLoudness::Target(-14));
+        let started = start_values(click(&mut v, "EXPORT"));
+        assert_eq!(started.loudness, ExportLoudness::Target(-14), "{scope:?}");
+    }
+}
+
+#[test]
+fn a_custom_target_out_of_range_or_not_a_number_is_refused_and_escape_drops_it() {
+    let mut v = view(ExportScope::Song);
+    click(&mut v, "-16 LUFS");
+    for bad in ["-3", "-45", "1.2.3", "-", "--"] {
+        type_custom(&mut v, 0, bad);
+        assert!(v.wants_text(), "{bad:?}: the field stays open");
+        assert_eq!(loudness_of(&v), ExportLoudness::Target(-16), "{bad:?}");
+        assert!(
+            v.warning().is_some_and(|w| w.contains("-40 to -5 LUFS")),
+            "{bad:?}"
+        );
+        // Escape drops the entry and does not close the panel.
+        assert!(key(&mut v, Key::Escape).is_empty());
+        assert!(!v.wants_text());
+    }
+    // Typing a good value after a refusal clears the line.
+    type_custom(&mut v, 0, "-9.5");
+    assert_eq!(loudness_of(&v), ExportLoudness::Custom(-95));
+    assert!(v.warning().is_none());
+    // A click elsewhere takes a valid number, then does what it was for.
+    let at = v.custom_rect(false).center();
+    v.handle(&down(at));
+    v.handle(&up(at));
+    v.handle(&UiEvent::Ime(ImeEvent::Commit("-20".to_owned())));
+    let mono = center(&v, "MONO");
+    v.handle(&down(mono));
+    v.handle(&up(mono));
+    assert_eq!(loudness_of(&v), ExportLoudness::Custom(-200));
+    assert!(v.values().mono);
+}
+
+#[test]
+fn the_ceiling_has_two_buttons_and_a_box_and_matters_to_a_target_only() {
+    for scope in [ExportScope::Song, ExportScope::Stems] {
+        let mut v = view(scope);
+        assert!(has(&texts(&v), "CEILING"));
+        assert_eq!(v.values().ceiling, -10, "-1 dBTP by default");
+        // Greyed while the level is not touched: a press does nothing.
+        click(&mut v, "-2 dBTP");
+        assert_eq!(v.values().ceiling, -10);
+        click(&mut v, "-14 LUFS");
+        click(&mut v, "-2 dBTP");
+        assert_eq!(v.values().ceiling, -20);
+        click(&mut v, "-1 dBTP");
+        assert_eq!(v.values().ceiling, -10);
+        type_custom(&mut v, 1, "-1,5");
+        assert_eq!(v.values().ceiling, -15);
+        assert!(has(&texts(&v), "-1.5 dBTP"));
+        type_custom(&mut v, 1, "-12");
+        assert_eq!(v.values().ceiling, -15, "out of range: kept");
+        assert!(v.warning().is_some_and(|w| w.contains("-9 to 0 dBTP")));
+        key(&mut v, Key::Escape);
+        // A guide has no ceiling.
+        click(&mut v, "-9 GUIDE");
+        click(&mut v, "-2 dBTP");
+        assert_eq!(v.values().ceiling, -15);
+        assert!(v.help_at(center(&v, "-2 dBTP")).is_some());
+    }
+}
+
+#[test]
+fn stems_have_a_loudness_a_ceiling_and_a_gain_row_the_mix_has_not_the_gain() {
+    let mut v = view(ExportScope::Stems);
+    let t = texts(&v);
+    for want in [
+        "LOUDNESS",
+        "CEILING",
+        "STEM GAIN",
+        "SAME GAIN FOR ALL",
+        "EACH STEM",
+    ] {
+        assert!(has(&t, want), "{want} in {t:?}");
+    }
+    assert!(!has(&t, "MIX DOWN") && !has(&t, "EXTRA FILE"));
+    let song = texts(&view(ExportScope::Song));
+    assert!(!has(&song, "STEM GAIN") && has(&song, "LOUDNESS") && has(&song, "CEILING"));
+    // One gain for all is the default; the choice is greyed without a loudness.
+    assert!(v.values().stems_together);
+    click(&mut v, "EACH STEM");
+    assert!(
+        v.values().stems_together,
+        "inert while the level is not touched"
+    );
+    click(&mut v, "-14 LUFS");
+    click(&mut v, "EACH STEM");
+    assert!(!v.values().stems_together);
+    click(&mut v, "SAME GAIN FOR ALL");
+    assert!(v.values().stems_together);
+    // The loudness reaches the app with the stems (it used to be dropped for stems); the
+    // mix-down and the extra file still do not.
+    click(&mut v, "EACH STEM");
+    let started = start_values(click(&mut v, "EXPORT"));
+    assert_eq!(started.loudness, ExportLoudness::Target(-14));
+    assert!(!started.stems_together && !started.mono && !started.also_mp3);
+    for label in ["SAME GAIN FOR ALL", "EACH STEM", "CUSTOM"] {
+        let tip = v.help_at(center(&v, label)).unwrap();
+        assert!(tip.text.len() <= 90, "{label}: {}", tip.text);
+    }
+}
+
+#[test]
+fn the_panel_with_the_new_rows_fits_its_window_and_the_boxes_fit_their_rows() {
+    for scope in [ExportScope::Song, ExportScope::Stems] {
+        let v = view(scope);
+        let panel = v.panel();
+        assert!(panel.y1 <= BOUNDS.y1, "{scope:?}: {panel:?}");
+        for r in [v.custom_rect(false), v.custom_rect(true)] {
+            assert!(r.x1 <= panel.x1 - 14.0 + 0.5, "{r:?} of {panel:?}");
+        }
+        for label in ["SAME GAIN FOR ALL", "-2 dBTP"] {
+            if let Some(r) = v.button_rect(label) {
+                assert!(r.x1 <= panel.x1 - 14.0 + 0.5, "{label}");
+            }
+        }
+    }
 }

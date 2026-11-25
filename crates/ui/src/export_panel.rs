@@ -12,7 +12,8 @@
 //!   QUALITY     [ 128 kbps ] [ 192 kbps ] [ 256 kbps ] [ 320 kbps ] [ V0 ] [ V2 ] [ V4 ]
 //!   TAIL        [ KEEP EFFECT TAIL ]
 //!   MIX DOWN    [ STEREO ] [ MONO ]
-//!   LOUDNESS    [ OFF ] [ -16 LUFS ] [ -14 LUFS ] [ -9 GUIDE ]
+//!   LOUDNESS    [ OFF ] [ -16 LUFS ] [ -14 LUFS ] [ -9 GUIDE ] [ CUSTOM ]
+//!   CEILING     [ -1 dBTP ] [ -2 dBTP ] [ CUSTOM ]
 //!   EXTRA FILE  [ ONE FILE ] [ MP3 320 kbps ]
 //!   Renders to the End marker, then keeps the tail while it is audible.
 //!                                                          [ EXPORT ] [ CANCEL ]
@@ -26,7 +27,7 @@
 //! strip or dry, and a RANGE row: the whole song, only what lies between the locators, or the time
 //! range selected on the lanes). MP3, AAC and Opus are encoded by the user's FFmpeg: the app says
 //! through [`ExportView::set_encoder`] whether it can be used, and without it the three buttons
-//! are greyed with a line that says how to set FFmpeg up (stems are always WAV, AIFF or FLAC). A
+//! are greyed with a line that says how to set FFmpeg up (stems too: each stem is encoded). A
 //! compressed file has no bit depth or dither, so those rows grey out, and its QUALITY row
 //! offers the bitrates of the format (MP3 also three variable-bitrate qualities). FLAC
 //! holds 16-bit and 24-bit audio, so the 32-bit float button is inert while FLAC is chosen (and
@@ -38,7 +39,13 @@
 //! ([`ExportView::preset_changed`]). SAVE PRESET... swaps the row for a name entry and emits
 //! [`ExportAction::SavePreset`] on Enter; DELETE PRESET (a preset of the user's only) emits
 //! [`ExportAction::DeletePreset`]. A preset that needs FFmpeg is disabled without it. The
-//! MIX DOWN, LOUDNESS and EXTRA FILE rows are for the mix, not for stems. In the **progress** mode
+//! MIX DOWN and EXTRA FILE rows are for the mix, not for stems. The LOUDNESS row has a CUSTOM box
+//! that takes a target of your own (a number of LUFS from -40 to -5, a tenth allowed) and the
+//! CEILING row the true-peak ceiling of a target (-1, -2 dBTP or a number from -9 to 0 of your
+//! own); a click on a CUSTOM box opens a field, Enter or a click elsewhere takes the number and
+//! Esc drops it. A stems export also has a STEM GAIN row: with a loudness target, one gain for
+//! all the stems (from the loudness of the mix, so they still add up to it) or each stem to the
+//! target on its own. In the **progress** mode
 //! ([`ExportView::show_progress`]) a bar shows the fraction the app feeds with
 //! [`ExportView::set_progress`], and CANCEL (or Esc) emits [`ExportAction::Cancel`] to stop the
 //! render. The view never closes itself: the app drops it when the export is over.
@@ -171,8 +178,9 @@ pub enum ExportDither {
 /// The sample rates the panel offers besides the project's, in Hz.
 pub const EXPORT_RATES: [u32; 4] = [44_100, 48_000, 88_200, 96_000];
 
-/// What an export does about loudness. A whole number of LUFS is all the presets and the panel
-/// need; the true-peak ceiling of a target is [`ExportLoudness::CEILING_DBTP`].
+/// What an export does about loudness. The fixed choices are a whole number of LUFS; a custom
+/// target has a tenth of a LUFS. The true-peak ceiling of a target is
+/// [`ExportValues::ceiling`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ExportLoudness {
     /// Leave the level as the song has it.
@@ -181,15 +189,50 @@ pub enum ExportLoudness {
     /// Bring the integrated loudness to this many LUFS with the true peak under the ceiling
     /// (limiting if the gain needs it).
     Target(i8),
+    /// A target typed by the user, in tenths of a LUFS (`-145` is -14.5 LUFS), within
+    /// [`CUSTOM_LUFS_TENTHS`]; it works as [`Self::Target`].
+    Custom(i16),
     /// Only a guide: measure, report the distance and warn when the peaks clip; change nothing.
     Guide(i8),
 }
 
-impl ExportLoudness {
-    /// The true-peak ceiling of a loudness target, in dBTP.
-    pub const CEILING_DBTP: f32 = -1.0;
+/// The custom loudness targets the panel takes, in tenths of a LUFS: -40.0 to -5.0.
+pub const CUSTOM_LUFS_TENTHS: std::ops::RangeInclusive<i16> = -400..=-50;
 
-    /// The choices the panel offers, in order.
+/// The true-peak ceilings the panel takes, in tenths of a dBTP: -9.0 to 0.0.
+pub const CEILING_TENTHS: std::ops::RangeInclusive<i16> = -90..=0;
+
+/// The default true-peak ceiling of a loudness target, in tenths of a dBTP (-1.0).
+pub const DEFAULT_CEILING_TENTHS: i16 = -10;
+
+/// The ceilings the panel has a button for, in tenths of a dBTP (-1.0 and -2.0).
+pub const CEILING_CHOICES: [i16; 2] = [-10, -20];
+
+/// A number typed in a custom field, in tenths: a decimal comma is a point, and a number without
+/// a sign is taken as negative (both ranges are below zero). `None` when it is not a number or
+/// lies outside `range`.
+pub fn parse_tenths(text: &str, range: &std::ops::RangeInclusive<i16>) -> Option<i16> {
+    let value: f64 = text.trim().replace(',', ".").parse().ok()?;
+    if !value.is_finite() {
+        return None;
+    }
+    let tenths = (-value.abs() * 10.0).round();
+    (f64::from(*range.start())..=f64::from(*range.end()))
+        .contains(&tenths)
+        .then_some(tenths as i16)
+}
+
+/// A level in tenths as text: `-14` for -140, `-14.5` for -145.
+pub fn tenths_text(tenths: i16) -> String {
+    if tenths % 10 == 0 {
+        format!("{}", tenths / 10)
+    } else {
+        format!("{:.1}", f32::from(tenths) / 10.0)
+    }
+}
+
+impl ExportLoudness {
+    /// The choices the panel offers as buttons, in order.
     pub const CHOICES: [Self; 4] = [
         Self::Off,
         Self::Target(-16),
@@ -197,12 +240,22 @@ impl ExportLoudness {
         Self::Guide(-9),
     ];
 
-    /// The button label: `OFF`, `-14 LUFS`, `-9 GUIDE`.
+    /// The button label: `OFF`, `-14 LUFS`, `-14.5 LUFS`, `-9 GUIDE`.
     pub fn label(self) -> String {
         match self {
             Self::Off => "OFF".to_owned(),
             Self::Target(l) => format!("{l} LUFS"),
+            Self::Custom(t) => format!("{} LUFS", tenths_text(t)),
             Self::Guide(l) => format!("{l} GUIDE"),
+        }
+    }
+
+    /// The integrated loudness a target aims for, in LUFS; `None` for off and for a guide.
+    pub fn target_lufs(self) -> Option<f32> {
+        match self {
+            Self::Target(l) => Some(f32::from(l)),
+            Self::Custom(t) => Some(f32::from(t) / 10.0),
+            Self::Off | Self::Guide(_) => None,
         }
     }
 }
@@ -236,8 +289,14 @@ pub struct ExportValues {
     pub opus: u16,
     /// Mix every channel into one before writing.
     pub mono: bool,
-    /// What to do about the loudness of the mix (not for stems).
+    /// What to do about the loudness of the mix, or of the stems.
     pub loudness: ExportLoudness,
+    /// The true-peak ceiling of a loudness target, in tenths of a dBTP ([`CEILING_TENTHS`]).
+    pub ceiling: i16,
+    /// Stems only: with a loudness target, one gain for every stem, from the loudness of the mix
+    /// they add up to, so they still sum to the mix; else each stem is brought to the target on
+    /// its own.
+    pub stems_together: bool,
     /// Also write an MP3 at [`ALSO_MP3_KBPS`] next to a lossless file, from the same render (not
     /// for stems).
     pub also_mp3: bool,
@@ -274,6 +333,8 @@ impl Default for ExportValues {
             opus: 128,
             mono: false,
             loudness: ExportLoudness::Off,
+            ceiling: DEFAULT_CEILING_TENTHS,
+            stems_together: true,
             also_mp3: false,
         }
     }
@@ -295,7 +356,7 @@ pub struct PresetChoice {
 impl PresetChoice {
     /// Whether the preset writes a compressed file, which FFmpeg encodes.
     pub fn needs_ffmpeg(&self) -> bool {
-        !self.stems && (self.values.file.is_lossy() || self.values.also_mp3)
+        self.values.file.is_lossy() || (!self.stems && self.values.also_mp3)
     }
 }
 
@@ -321,6 +382,22 @@ enum RangeChoice {
     Selection,
 }
 
+/// What a custom field takes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Typed {
+    /// A loudness target in LUFS.
+    Lufs,
+    /// A true-peak ceiling in dBTP.
+    Ceiling,
+}
+
+/// A number being typed in a custom field.
+#[derive(Debug)]
+struct Entry {
+    kind: Typed,
+    field: TextField,
+}
+
 /// A button of the panel.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Hit {
@@ -334,6 +411,10 @@ enum Hit {
     Range(RangeChoice),
     Mono(bool),
     Loudness(ExportLoudness),
+    /// The box that takes a typed target or ceiling.
+    Custom(Typed),
+    Ceiling(i16),
+    Together(bool),
     Extra(bool),
     PresetList,
     PresetSave,
@@ -374,6 +455,8 @@ pub struct ExportView {
     home: ExportScope,
     list: Option<PickList>,
     naming: Option<TextField>,
+    /// A custom loudness or ceiling being typed.
+    entry: Option<Entry>,
     selecting: bool,
 }
 
@@ -405,6 +488,7 @@ impl ExportView {
             home: ExportScope::Song,
             list: None,
             naming: None,
+            entry: None,
             selecting: false,
         }
     }
@@ -446,6 +530,7 @@ impl ExportView {
         self.preset = None;
         self.list = None;
         self.naming = None;
+        self.entry = None;
         self.settle_file();
         self.repaint = true;
     }
@@ -475,19 +560,16 @@ impl ExportView {
         }
     }
 
-    /// The compressed formats cannot be chosen for stems or without FFmpeg: the choice falls back
-    /// to WAV.
+    /// The compressed formats cannot be chosen without FFmpeg: the choice falls back to WAV.
     fn settle_file(&mut self) {
-        let unusable =
-            self.scope == ExportScope::Stems || matches!(self.encoder, EncoderState::Missing(_));
-        if self.values.file.is_lossy() && unusable {
+        if self.values.file.is_lossy() && matches!(self.encoder, EncoderState::Missing(_)) {
             self.values.file = ExportFile::Wav;
         }
     }
 
     /// Whether the compressed formats can be pressed now.
     fn lossy_enabled(&self) -> bool {
-        self.scope != ExportScope::Stems && !matches!(self.encoder, EncoderState::Missing(_))
+        !matches!(self.encoder, EncoderState::Missing(_))
     }
 
     /// Switches to the progress bar (the render has started).
@@ -633,7 +715,7 @@ impl ExportView {
 
     /// Whether a text field has the keys (the name of a preset).
     pub fn wants_text(&self) -> bool {
-        self.naming.is_some()
+        self.naming.is_some() || self.entry.is_some()
     }
 
     /// Whether the preset list is open.
@@ -666,9 +748,13 @@ impl ExportView {
         if self.scope == ExportScope::Stems {
             rows.push("CHANNELS");
             rows.push("RANGE");
+            rows.push("LOUDNESS");
+            rows.push("CEILING");
+            rows.push("STEM GAIN");
         } else {
             rows.push("MIX DOWN");
             rows.push("LOUDNESS");
+            rows.push("CEILING");
             rows.push("EXTRA FILE");
         }
         rows
@@ -771,6 +857,14 @@ impl ExportView {
                 .min(list.len.saturating_sub(list.max_rows));
         }
         list
+    }
+
+    /// The box that takes a typed loudness target or ceiling.
+    fn typed_rect(&self, kind: Typed) -> Rect {
+        match kind {
+            Typed::Lufs => self.button_at(self.row_of("LOUDNESS"), 322.0, 86.0),
+            Typed::Ceiling => self.button_at(self.row_of("CEILING"), 172.0, 86.0),
+        }
     }
 
     /// The name field of a new preset.
@@ -993,23 +1087,77 @@ impl ExportView {
                     true,
                 ));
             }
-            let loud_row = self.row_of("LOUDNESS");
-            let mut offset = 0.0;
-            for choice in ExportLoudness::CHOICES {
-                let width = if choice == ExportLoudness::Off {
-                    58.0
-                } else {
-                    80.0
-                };
+        }
+        let loud_row = self.row_of("LOUDNESS");
+        let mut offset = 0.0;
+        for choice in ExportLoudness::CHOICES {
+            let width = if choice == ExportLoudness::Off {
+                58.0
+            } else {
+                80.0
+            };
+            out.push((
+                Hit::Loudness(choice),
+                self.button_at(loud_row, offset, width),
+                choice.label(),
+                v.loudness == choice,
+                true,
+            ));
+            offset += width + BTN_GAP;
+        }
+        let custom = matches!(v.loudness, ExportLoudness::Custom(_));
+        out.push((
+            Hit::Custom(Typed::Lufs),
+            self.typed_rect(Typed::Lufs),
+            if custom {
+                v.loudness.label()
+            } else {
+                "CUSTOM".to_owned()
+            },
+            custom,
+            true,
+        ));
+        // The ceiling matters to a target only: a guide and off change no level.
+        let targeted = v.loudness.target_lufs().is_some();
+        let ceiling_row = self.row_of("CEILING");
+        for (i, tenths) in CEILING_CHOICES.into_iter().enumerate() {
+            out.push((
+                Hit::Ceiling(tenths),
+                self.button(ceiling_row, i, 80.0),
+                format!("{} dBTP", tenths_text(tenths)),
+                targeted && v.ceiling == tenths,
+                targeted,
+            ));
+        }
+        let own = !CEILING_CHOICES.contains(&v.ceiling);
+        out.push((
+            Hit::Custom(Typed::Ceiling),
+            self.typed_rect(Typed::Ceiling),
+            if own {
+                format!("{} dBTP", tenths_text(v.ceiling))
+            } else {
+                "CUSTOM".to_owned()
+            },
+            targeted && own,
+            targeted,
+        ));
+        if self.scope == ExportScope::Stems {
+            let gain_row = self.row_of("STEM GAIN");
+            let any = v.loudness != ExportLoudness::Off;
+            for (together, label, offset, width) in [
+                (true, "SAME GAIN FOR ALL", 0.0, 150.0),
+                (false, "EACH STEM", 156.0, 100.0),
+            ] {
                 out.push((
-                    Hit::Loudness(choice),
-                    self.button_at(loud_row, offset, width),
-                    choice.label(),
-                    v.loudness == choice,
-                    true,
+                    Hit::Together(together),
+                    self.button_at(gain_row, offset, width),
+                    label.to_owned(),
+                    any && v.stems_together == together,
+                    any,
                 ));
-                offset += width + BTN_GAP;
             }
+        }
+        if self.scope != ExportScope::Stems {
             let extra_row = self.row_of("EXTRA FILE");
             let extra_on = !v.file.is_lossy() && self.lossy_enabled();
             out.push((
@@ -1060,6 +1208,12 @@ impl ExportView {
             .map(|b| b.1)
     }
 
+    /// The box that takes a typed loudness target (`ceiling` false) or ceiling, for tests and for
+    /// the headless session to press.
+    pub fn custom_rect(&self, ceiling: bool) -> Rect {
+        self.typed_rect(if ceiling { Typed::Ceiling } else { Typed::Lufs })
+    }
+
     fn hit(&self, pos: Point) -> Option<Hit> {
         self.buttons()
             .into_iter()
@@ -1079,10 +1233,12 @@ impl ExportView {
                 if let Some(list) = &mut self.list {
                     list.hover = list.row_at(*pos);
                 }
-                if self.selecting
-                    && let Some(field) = &mut self.naming
-                {
-                    field.drag(*pos);
+                if self.selecting {
+                    if let Some(field) = &mut self.naming {
+                        field.drag(*pos);
+                    } else if let Some(entry) = &mut self.entry {
+                        entry.field.drag(*pos);
+                    }
                 }
                 self.repaint = true;
             }
@@ -1115,15 +1271,52 @@ impl ExportView {
                         field.press(*pos, *clicks, modifiers.shift);
                         self.selecting = true;
                     }
-                } else if let Some(hit) = self.hit(*pos) {
-                    out.extend(self.press(hit).map(UiAction::Export));
+                } else if self
+                    .entry
+                    .as_ref()
+                    .is_some_and(|e| self.typed_rect(e.kind).contains(*pos))
+                {
+                    if let Some(entry) = &mut self.entry {
+                        entry.field.press(*pos, *clicks, modifiers.shift);
+                        self.selecting = true;
+                    }
+                } else {
+                    // A click anywhere else takes what was typed, then does what it was for.
+                    self.finish_entry(false);
+                    if let Some(hit) = self.hit(*pos) {
+                        out.extend(self.press(hit).map(UiAction::Export));
+                    }
                 }
             }
             UiEvent::Ime(ime) => {
-                if let Some(field) = &mut self.naming
+                let field = match (&mut self.naming, &mut self.entry) {
+                    (Some(field), _) => Some(field),
+                    (None, Some(entry)) => Some(&mut entry.field),
+                    (None, None) => None,
+                };
+                if let Some(field) = field
                     && field.handle_ime(ime)
                 {
                     self.repaint = true;
+                }
+            }
+            UiEvent::Key {
+                key,
+                modifiers,
+                pressed: true,
+            } if self.entry.is_some() && self.naming.is_none() => {
+                self.repaint = true;
+                let used = self
+                    .entry
+                    .as_mut()
+                    .map(|e| e.field.handle_key(key, *modifiers))
+                    .is_some_and(|u| u.handled());
+                if !used {
+                    match key {
+                        Key::Escape => self.entry = None,
+                        Key::Enter => self.finish_entry(true),
+                        _ => {}
+                    }
                 }
             }
             UiEvent::Key {
@@ -1213,6 +1406,12 @@ impl ExportView {
             }
             Hit::Mono(m) => self.values.mono = m,
             Hit::Loudness(l) => self.values.loudness = l,
+            Hit::Ceiling(c) => self.values.ceiling = c,
+            Hit::Together(t) => self.values.stems_together = t,
+            Hit::Custom(kind) => {
+                self.begin_entry(kind);
+                return None;
+            }
             Hit::Extra(e) => self.values.also_mp3 = e,
             Hit::Depth(d) => self.values.depth = d,
             Hit::Dither(d) => self.values.dither = d,
@@ -1243,14 +1442,60 @@ impl ExportView {
         None
     }
 
+    /// Starts typing a custom value in the box of `kind`: the field holds the value now, all
+    /// selected, so the first character typed replaces it.
+    fn begin_entry(&mut self, kind: Typed) {
+        let now = match kind {
+            Typed::Lufs => self
+                .values
+                .loudness
+                .target_lufs()
+                .map_or(-140, |l| (l * 10.0).round() as i16),
+            Typed::Ceiling => self.values.ceiling,
+        };
+        let accept: fn(char) -> bool = |c| c.is_ascii_digit() || matches!(c, '-' | '.' | ',');
+        self.entry = Some(Entry {
+            kind,
+            field: TextField::entry(&tenths_text(now), 6, accept),
+        });
+    }
+
+    /// Takes the number typed in the custom field, if one is open. An entry that is not a number
+    /// in range leaves the value as it was and says what is accepted; it stays open when
+    /// `keep_open` (Enter) and closes otherwise (a click elsewhere).
+    fn finish_entry(&mut self, keep_open: bool) {
+        let Some(entry) = self.entry.take() else {
+            return;
+        };
+        let (range, what) = match entry.kind {
+            Typed::Lufs => (&CUSTOM_LUFS_TENTHS, "Type a loudness from -40 to -5 LUFS"),
+            Typed::Ceiling => (&CEILING_TENTHS, "Type a ceiling from -9 to 0 dBTP"),
+        };
+        match parse_tenths(entry.field.text(), range) {
+            Some(tenths) => {
+                match entry.kind {
+                    Typed::Lufs => self.values.loudness = ExportLoudness::Custom(tenths),
+                    Typed::Ceiling => self.values.ceiling = tenths,
+                }
+                self.warning = None;
+            }
+            None => {
+                self.warning = Some(what.to_owned());
+                if keep_open {
+                    self.entry = Some(entry);
+                }
+            }
+        }
+        self.repaint = true;
+    }
+
     /// EXPORT: the values, unless a compressed format waits for FFmpeg to be found.
     fn start(&self) -> Option<ExportAction> {
         let waiting = self.values.file.is_lossy() && self.encoder != EncoderState::Ready;
         let mut values = self.values;
-        // What a row that is not shown or not usable says does not count.
+        // What a row that is not shown or not usable does not count.
         if self.scope == ExportScope::Stems {
             values.mono = false;
-            values.loudness = ExportLoudness::Off;
             values.also_mp3 = false;
         }
         if values.file.is_lossy() {
@@ -1269,7 +1514,6 @@ impl ExportView {
             .map(|b| (b.0, b.1))?;
         if let (Hit::File(file), EncoderState::Missing(why)) = (hit, &self.encoder)
             && file.is_lossy()
-            && self.scope != ExportScope::Stems
         {
             return Some(Help::new(rect, why.clone()));
         }
@@ -1298,9 +1542,6 @@ impl ExportView {
             Hit::File(ExportFile::Aiff) => "Write AIFF files (AIFF-C for 32-bit float)",
             Hit::File(ExportFile::Flac) => {
                 "Write FLAC files: lossless and smaller, at 16 or 24 bits"
-            }
-            Hit::File(_) if self.scope == ExportScope::Stems => {
-                "Stems are written as WAV, AIFF or FLAC files"
             }
             Hit::File(ExportFile::Mp3) => {
                 "Write MP3 files with FFmpeg: small, plays everywhere, lossy"
@@ -1350,11 +1591,24 @@ impl ExportView {
             Hit::Mono(false) => "Keep the channels of the project's output",
             Hit::Mono(true) => "Mix every channel into one before writing",
             Hit::Loudness(ExportLoudness::Off) => "Leave the level as the song has it",
-            Hit::Loudness(ExportLoudness::Target(_)) => {
-                "Set the loudness to this target; a limiter keeps the peaks under -1 dBTP"
+            Hit::Loudness(ExportLoudness::Target(_) | ExportLoudness::Custom(_)) => {
+                "Set the loudness to this target, keeping the true peaks under the ceiling"
             }
             Hit::Loudness(ExportLoudness::Guide(_)) => {
                 "A guide only: report the distance and warn on clipping, change nothing"
+            }
+            Hit::Custom(Typed::Lufs) => {
+                "Type your own loudness target, from -40 to -5 LUFS (a tenth is allowed)"
+            }
+            Hit::Custom(Typed::Ceiling) => {
+                "Type your own true-peak ceiling, from -9 to 0 dBTP (a tenth is allowed)"
+            }
+            Hit::Ceiling(_) => "The true peaks of a loudness target stay under this level",
+            Hit::Together(true) => {
+                "One gain for every stem, from the loudness of the mix: the stems still add up to it"
+            }
+            Hit::Together(false) => {
+                "Bring each stem to the target on its own: the stems no longer add up to the mix"
             }
             Hit::Extra(false) => "Write the one file",
             Hit::Extra(true) => {
@@ -1478,6 +1732,13 @@ impl ExportView {
         }
         let st = &self.st;
         let t = &st.base;
+        if let Some(entry) = &self.entry {
+            let r = self.typed_rect(entry.kind);
+            sp::lcd(c, st, r, Some(t.focus));
+            entry
+                .field
+                .paint(c, r, 10.5, 14.0, FieldColors::of(t), true);
+        }
         if let Some(field) = &self.naming {
             let r = self.name_rect();
             sp::lcd(c, st, r, Some(t.focus));
