@@ -28,6 +28,7 @@ mod roles;
 #[cfg(any(test, feature = "testkit"))]
 pub mod script;
 pub mod sheet;
+mod sheet_fr;
 mod user;
 
 pub use chord::{Chord, ChordError, ChordKey, Mods, Os, PhysChord};
