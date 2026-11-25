@@ -1125,3 +1125,71 @@ Note on the audio row: with the listing worker started before the audio stream, 
 of 46 ms (the driver's first look at the machine slows the opening of the audio device). The shipped change therefore
 starts the worker after the audio stream runs. That placement was not measured (the app was not started again); the
 owner's check: start time with the change, and the audio row.
+
+## A headless edit loop for ten minutes (2026-11-24)
+
+`crates/mcp/tests/soak.rs` (see [docs/TESTING.md](../docs/TESTING.md#the-headless-soak-ignored-by-default)): the
+headless session on `fx-demo` runs a random action of twelve per iteration (add or remove a device, turn a knob,
+scroll and zoom, open and close a panel, select a track, undo and redo, save) with the undo history full from the
+start, and paints the main window on the CPU canvas every iteration. Test profile of the workspace (optimised, debug
+info), Windows, the machine above, no other load. About 12 to 20 iterations a second. Private memory is private bytes
+from `Get-Process`; the slope is a least squares line through the samples after the first 20 % of the run.
+
+One 600 second run (every seventh row of the table; the second 600 second run is within 15 % of it):
+
+```text
+   t(s)  iteration  resident(MiB)  private(MiB)  threads  undo-depth
+    0.3          1           35.5          16.1        5        1000
+   54.7        824           52.0          30.6        3        1000
+  109.1       1466           50.3          27.9        2        1000
+  164.0       2074           57.9          35.4        2         999
+  218.5       2786           60.0          37.8        2        1000
+  273.0       3483           61.8          41.8        2        1000
+  327.5       4119           65.9          45.7        4        1000
+  382.7       4740           68.6          46.6        4        1000
+  437.4       5455           68.3          45.9        2        1000
+  492.7       6055           71.5          49.8        2        1000
+  548.1       6621           74.1          52.1        2         996
+  595.5       7153           77.1          54.8        2        1000
+
+warm-up 120 s, 61 samples after it
+private memory slope after warm-up: +2.517 MiB/min
+private memory finish / end of warm-up: 1.592
+```
+
+| Run | Slope after warm-up | Finish / end of warm-up |
+|---|---|---|
+| 600 s, first | +2.885 MiB/min | 1.689 |
+| 600 s, second (the run above) | +2.517 MiB/min | 1.592 |
+| 120 s, first | +4.154 MiB/min | 1.269 |
+| 120 s, second | +5.383 MiB/min | 1.336 |
+| 120 s, third | +4.275 MiB/min | 1.214 |
+
+The bounds of the test are 12 MiB a minute and 2.5 times: about twice the worst 120 second run (a short run has few
+samples after its warm-up and its slope varies by a MiB or two), and above the 1.9 times that a 900 second run with
+this climb is expected to end at. The bounds are meant to go down to 2 MiB a minute and 2 times when the climb below
+is gone.
+
+**A climb that looks like a real leak (reported, not fixed).** The private memory does not settle on the full loop: it
+goes from about 28 MiB at the end of the warm-up to about 53 MiB after ten minutes, 2.5 to 2.9 MiB a minute, about
+3 KB an iteration; the resident memory follows, the thread count stays at 2 to 5. The loop was run again with one
+group of actions at a time (100 or 150 seconds, same machine; slopes of this size are within the noise of a run that
+short):
+
+| Actions | Slope after warm-up |
+|---|---|
+| paint only (a track is selected) | +0.1 MiB/min (the table is flat within 0.3 MiB) |
+| devices (add, remove) | -0.1 MiB/min |
+| params | +0.3 MiB/min |
+| zoom | +0.9 MiB/min (table flat within 0.8 MiB) |
+| panels | +0.2 MiB/min |
+| undo, redo (of the filled history) | +1.2 MiB/min (table flat within 0.4 MiB) |
+| save | +0.4 MiB/min |
+| devices and save | +0.2 MiB/min |
+| devices and undo, redo | +2.0 MiB/min (150 s: from 22 to 27 MiB) |
+| zoom, panels, select, params | -0.01 MiB/min |
+
+The one combination that climbs on its own is adding and removing devices together with undo and redo; it also makes
+up about two thirds of the climb of the full loop. The other groups are flat within the noise of the run. Where the
+memory goes (the device instances the engine builds again, the undo steps, the scope rings, the paint caches) is not
+found; the soak is the tool to bisect it with, through `ATOMIK_SOAK_ACTIONS`.

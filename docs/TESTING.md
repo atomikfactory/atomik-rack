@@ -341,6 +341,74 @@ ignored: [crates/engine/tests/preview_alloc.rs](../crates/engine/tests/preview_a
 the normal suite. A normal `cargo test --workspace` reports these ignored tests besides the
 real-time factor test and the `ignore` code example in the `no_alloc` module docs.
 
+## The headless soak (ignored by default)
+
+`the_headless_session_does_not_leak_under_a_long_edit_loop` in [crates/mcp/tests/soak.rs](../crates/mcp/tests/soak.rs)
+opens the factory `fx-demo` project in the headless session of the QA server (no window, no audio device) and runs a
+scripted loop of user-like actions for a set time while it samples the memory of the process. It is `#[ignore]`
+because it takes minutes:
+
+```sh
+ATOMIK_SOAK_SECONDS=120 cargo test -p atomik-mcp --test soak -- --ignored --nocapture
+```
+
+`ATOMIK_SOAK_SECONDS` is the length (default 120, at least 10; the nightly job uses 900). `ATOMIK_SOAK_TABLE` is a file
+the table is also written to (default `soak-table.txt` in the build's test folder). `ATOMIK_SOAK_ACTIONS` narrows the
+loop to some groups of actions (`devices`, `params`, `zoom`, `panels`, `select`, `undo`, `save`, comma separated) to
+find which kind of action a growth comes from; a frame is painted either way.
+
+Before the loop the undo history is filled to its limit, so the slope below does not measure a history that is still
+growing. Each iteration then does one random action out of twelve, from a fixed seed (the script is the same on every
+run), and paints the main window on the CPU canvas:
+
+- add a device at the end of the rack (a compressor, an equaliser, a reverb, a distortion or a modulation effect, in
+  turn), or remove the oldest of the six it keeps;
+- turn the input gain of a channel strip (`session_set_param`, one undo step each);
+- scroll the arrangement with the wheel (horizontal, and with Ctrl for zoom) and run View > Zoom In or Zoom Out;
+- open a panel (Rack, Mixer, Piano Roll, Browser, Song, Inspector), paint, and close it again;
+- select a track of the song;
+- undo one to three steps, redo up to two;
+- save (the first time a Save As, which makes the project folder; after that File > Save).
+
+The table has one row every `ATOMIK_SOAK_SECONDS / 80` seconds (between 1 and 10): the resident memory (the working
+set on Windows), the private memory (anonymous resident memory on Linux, private bytes on Windows; this is the number
+that is judged), the thread count and the undo depth. Linux reads `/proc/self/status`; Windows asks `Get-Process`
+through PowerShell (no `unsafe`); on macOS there is no reader and the test runs the loop and measures nothing. After a
+warm-up of the first 20 % of the run the test fits a least squares line through the private memory and prints the
+slope in MiB a minute.
+
+The test fails on a clear leak only: a slope above 12 MiB a minute after the warm-up, or private memory at the finish
+(the mean of the last three samples) more than 2.5 times the memory at the end of the warm-up (the mean of the first
+three samples after it). It also fails when the undo history is ever deeper than the document's own step limit. The
+thread count is reported, not judged. The bounds are loose on purpose: adding and removing devices with undo and redo
+makes the private memory climb by 2 to 4 MiB a minute on this loop (the numbers and the runs are in
+[perf/BASELINE.md](../perf/BASELINE.md)), and the bounds sit about twice above the worst run so that the job is green
+with that growth and red when something grows several times faster; when the growth is gone they go down to 2 MiB a
+minute and 2 times. A longer run measures the slope better: a 120 second run has a few samples and its slope varies
+by a MiB or two between runs.
+
+The nightly workflow (`.github/workflows/nightly.yml`, job `soak`) runs it on Linux with `ATOMIK_SOAK_SECONDS=900`
+every night, independent of the build, and keeps the table as the artifact `soak-table` for 30 days. A red soak does
+not hold the nightly publish back.
+
+### Windowed playback soak (hand check)
+
+The 2 to 8 hour soak with the real window and the audio stream is a check for the owner, not for CI: a machine that is
+used for something else cannot run it, and it makes sound. `scripts/perf/sample-app.ps1` measures the running app but
+never plays, so for a long run use its long sampling window and read the growth in its output:
+
+1. Build the release app (`cargo build --release -p atomik-app`) and close other heavy programs.
+2. Run `powershell -ExecutionPolicy Bypass -File scripts\perf\sample-app.ps1 -Scenario stress-audio-fx -Settle 60
+   -Window 7200` (two hours; `-Window 28800` for eight). It starts the app with a fresh settings folder and no audio
+   playback, and reports the working set and private bytes at the end of the window, the thread and handle counts and
+   the UI answer times. Run it once with `-Window 600` first: a long run is judged by the difference between the two.
+3. For the played variant start the app by hand with the same project, press play with the loop on, and note the
+   Private bytes and handle count of `atomik.exe` (Task Manager, Details) at the start, after ten minutes and every
+   hour, plus the CPU of the first and the last ten minutes.
+4. Pass when private bytes and handles are flat after the first ten minutes (a rise of a few MiB over hours is the
+   allocator; a steady climb is not), the CPU of the last ten minutes is within 5 % of the first ten, and no
+   `NOT RESPONDING` or stall line is in the log.
+
 ## Benchmarks and the performance job
 
 A performance claim is checked with one command per crate. The benches use `criterion` (a

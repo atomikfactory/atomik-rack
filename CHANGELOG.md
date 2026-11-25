@@ -19,6 +19,13 @@ may break APIs and the patch and project formats.
   recovery copies are neither read nor written), no audio device, no plugins loaded or scanned and no project
   reopened, so a setting, a device or a plugin that stops a normal start cannot. The window title ends in
   `[Safe mode]` and a message says so. It cannot be combined with `--settings`.
+- **A headless soak test and a nightly job for it.** `crates/mcp/tests/soak.rs` (ignored; `ATOMIK_SOAK_SECONDS` sets
+  the length) opens a factory demo in the headless session and loops through adding and removing devices, turning
+  parameters, scrolling and zooming the arrangement, opening and closing the panels, selecting tracks, undo, redo,
+  saving and painting a frame, sampling the memory, thread count and undo depth of the process, and fails when
+  private memory grows steadily or more than 2.5 times after a warm-up or the undo history passes its limit. The
+  nightly workflow runs it for 15 minutes on Linux and keeps the table of samples. `docs/TESTING.md` also lists the
+  2 to 8 hour windowed playback soak as a hand check, and `perf/BASELINE.md` has the numbers of the first runs.
 
 ### Changed
 - **The rack builds the automation values it shows once, not on every paint.** While an automation lane has points,
