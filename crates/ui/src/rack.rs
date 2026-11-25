@@ -2481,8 +2481,8 @@ impl RackView {
     /// The index of the view of a device. Inside a container `key` may be the local key or the
     /// path key.
     fn device_index(&self, key: &DeviceKey) -> Option<usize> {
-        let key = self.local_key(key);
-        self.devices.iter().position(|d| d.key == key)
+        let name = self.local_name(key);
+        self.devices.iter().position(|d| d.key.0 == name)
     }
 
     /// Centre of a control (logical view coordinates), when it is on screen-side (front,

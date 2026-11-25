@@ -28,9 +28,10 @@
 use std::process::{Child, Command};
 use std::sync::atomic::{AtomicBool, Ordering};
 
-/// CREATE_NO_WINDOW: no console flashes up for every scanned file.
+/// DETACHED_PROCESS: the scan child has no console, so no console host is started for every
+/// scanned file (its standard streams are pipes or null and do not need one).
 #[cfg(windows)]
-const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+const DETACHED_PROCESS: u32 = 0x0000_0008;
 /// BELOW_NORMAL_PRIORITY_CLASS.
 #[cfg(windows)]
 const BELOW_NORMAL_PRIORITY_CLASS: u32 = 0x0000_4000;
@@ -38,12 +39,12 @@ const BELOW_NORMAL_PRIORITY_CLASS: u32 = 0x0000_4000;
 /// The niceness a scanner child gets on Unix (positive is lower priority).
 pub const SCAN_NICE: i32 = 10;
 
-/// The Windows process creation flags of a scan child: no window, below normal priority. Zero
+/// The Windows process creation flags of a scan child: no console, below normal priority. Zero
 /// elsewhere.
 pub fn scan_creation_flags() -> u32 {
     #[cfg(windows)]
     {
-        CREATE_NO_WINDOW | BELOW_NORMAL_PRIORITY_CLASS
+        DETACHED_PROCESS | BELOW_NORMAL_PRIORITY_CLASS
     }
     #[cfg(not(windows))]
     {
@@ -318,7 +319,9 @@ mod tests {
         #[cfg(windows)]
         {
             let flags = scan_creation_flags();
-            assert_ne!(flags & CREATE_NO_WINDOW, 0);
+            assert_ne!(flags & DETACHED_PROCESS, 0);
+            // CREATE_NO_WINDOW would give the child a hidden console host of its own.
+            assert_eq!(flags & 0x0800_0000, 0);
             assert_ne!(flags & BELOW_NORMAL_PRIORITY_CLASS, 0);
         }
         #[cfg(not(windows))]

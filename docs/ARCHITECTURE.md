@@ -5514,6 +5514,11 @@ take the app down; Settings > Plugins can switch back to running plugins inside 
     refuse it, and the app's RELOAD creates a new instance from the document's last captured state
     and the rack's params. A plugin that had run for ten seconds is reloaded this way once by itself
     (`reload_crashed_plugin` in the app); a second crash within five minutes stays CRASHED until RELOAD.
+  - *Process start.* On Windows the child starts with `DETACHED_PROCESS` (`spawn_process` in
+    `plugin-sandbox/src/transport.rs`; the scan child gets it with the lower priority class from
+    `scan_creation_flags`): it has no console, so the system starts no console host for it, which a
+    `CREATE_NO_WINDOW` child would get as a second process. Its three standard streams are pipes (the scan
+    child's stdin is null) and work the same without a console.
   - *Supervision.* A child never outlives the app. On Windows it joins a job object that ends
     its processes when the app's last handle to the job closes, whatever ends the app; every
     child also runs a watchdog thread that ends it a second after its parent's process is gone,

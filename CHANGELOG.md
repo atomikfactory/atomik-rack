@@ -31,6 +31,17 @@ may break APIs and the patch and project formats.
   processes per instance and the idle CPU of the instances processing silence. An ordinary test of the same file
   asserts the counts that do not depend on the machine (children per mode, threads of a shared child, nothing left
   behind). No behaviour of the app changes.
+- **A binary size gate and a way to make the count baselines.** The performance workflow has a job that builds the
+  release `atomik`, `atomik-render` and `atomik-plugin-host` and fails when one is more than 5 % larger than
+  `perf/baseline-sizes.txt` (a notice while the file is missing), and a `baseline_only` run option that runs just
+  the instruction and size jobs so their artifacts can be committed as the baselines. `docs/TESTING.md` lists each
+  count that is gated, where, and its tolerance.
+- **Allocation counts in the test suite.** `crates/render/tests/stress_alloc.rs` renders ten seconds of the stress song
+  and of the stress rack at 48 kHz in blocks of 256 frames, with no worker and with two, after a warm-up: every block
+  runs under the allocation guard on the audio thread and every worker is marked, so a heap operation on either fails
+  the test (measured: none). `crates/app/tests/idle_frame_alloc.rs` counts the heap operations of a frame of the shell
+  with the fx-demo open, idle and while the playhead moves (a fake audio backend whose engine the test renders block by
+  block), and bounds them so they cannot grow.
 - **Kill tests for recovery and for a killed plugin process.** One test ends a running session with a hard kill and
   checks that the next start offers the recovery and opens the edited document; another kills one sandboxed plugin
   process while two play and checks that only that device turns crashed, the other keeps processing and the saved
@@ -90,6 +101,18 @@ may break APIs and the patch and project formats.
 - **A knob turned while a song plays re-applies only the automation of that knob.** Any control message used to make
   every automation lane write its value again at the next batch; now only the lanes of that device and parameter do.
   Rendered audio does not change.
+- **One process fewer per plugin on Windows.** A sandboxed plugin's process and a plugin scan's process now start with
+  no console at all, instead of a hidden one, so the system no longer starts a console host next to each of them.
+  Measured with the plugin sweep, a plugin process of its own costs 2.1 MB, 12 threads and 146 handles per instance
+  (was 3.3 MB, 14 threads and 235 handles). The standard streams, the log lines, crash reports and the scan's output
+  work as before.
+- **An idle window no longer allocates, and a playing one barely does.** With a project open, the console and rack
+  meter feeds built a list and copied a device key per strip every frame (19 heap operations a frame, 38 while playing,
+  the playhead also compiling the tempo table each frame). The feeds now pass references and keep their buffer, the
+  rack looks a device up without building its key, and the arrangement compiles the tempo once per song change, so a
+  tempo edit, an undo or a new song is still picked up on the next frame. An idle frame of the fx-demo project
+  allocates nothing; a playing one only in the frames of the device CPU readout (about five a second). What is shown
+  does not change.
 
 ### Fixed
 - **Exporting a patch, a MIDI file or MIDI mappings, a tab or chord sheet, the device list or the diagnostics report

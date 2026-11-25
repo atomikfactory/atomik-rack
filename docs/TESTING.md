@@ -143,6 +143,21 @@ The guard only sees the current thread, and only code that runs inside the closu
 tests in `crates/render/tests/e2e.rs` run the CLI binary as a child process, which has no guard
 installed. The real demo patch is guarded separately by `render_slice_demo_is_allocation_free`.
 
+Allocation counts of a whole project:
+
+- **The stress projects with workers.**
+  [crates/render/tests/stress_alloc.rs](../crates/render/tests/stress_alloc.rs) builds the stress song
+  and the stress rack, starts an engine with zero and with two workers (each marked with
+  `forbid_on_this_thread`), renders 64 blocks of 256 frames as a warm-up and then ten seconds at 48 kHz
+  under `assert_no_alloc`, and asserts that the workers made no heap operation after the warm-up
+  (`worker_violations`). One test function runs all four renders: the worker counter is process-wide.
+- **The shell's frames.** [crates/app/tests/idle_frame_alloc.rs](../crates/app/tests/idle_frame_alloc.rs)
+  counts the heap operations of `Shell::frame_at` with `allocations_of`: an idle frame allocates nothing
+  (empty shell, a patch, MIDI mappings, analysers on screen or hidden). With the fx-demo project open the
+  console's meter feed still copies device keys, so that count (idle, and while the playhead moves, driven
+  through a fake backend whose engine the test renders) is bounded by the measured figure instead of
+  zero; the figures are in [perf/BASELINE.md](../perf/BASELINE.md).
+
 ## Fuzzing
 
 The readers of files and messages that come from outside have two kinds of test. The ordinary one
@@ -548,6 +563,46 @@ The manual run option "inject regression" inflates the counts by 20 % to show th
 fails. valgrind is Linux only: the instruction gate cannot run on Windows or macOS, and until the
 baseline file is committed from a first run it measures and passes. `scripts/perf-gate.sh compare`
 and `inflate` need no valgrind and can be tried anywhere.
+
+### Gates on counts and sizes
+
+A count that does not move with the load of the machine is gated; a time, a CPU share or a resident size
+is only recorded. Where each one lives:
+
+| What | Where it is checked | Tolerance |
+|------|---------------------|-----------|
+| Heap operations on the audio path (a render block, a device `process`, a bounce loop) | Normal CI: every test run under `atomik_testkit::no_alloc` | None: any allocation fails |
+| Heap operations of an idle UI frame | Normal CI: [idle_frame_alloc.rs](../crates/app/tests/idle_frame_alloc.rs) | None: zero |
+| Child processes of each sandbox mode, threads of each child, a shared child gaining one thread per instance, nothing left behind | Normal CI: `three_instances_have_the_expected_child_processes_and_threads` in [sweep.rs](../crates/plugin-hostd/tests/sweep.rs) | Exact; the process table is read until it settles, within a bounded wait |
+| Instructions of each bench binary (`render_batch`, `process`, `blocks`, `document`) | Performance workflow, job `instruction counts` (weekly and by hand, never on a pull request) | 10 % above `perf/baseline-instructions.txt` |
+| Size of `atomik`, `atomik-render` and `atomik-plugin-host` (release, Linux) | Performance workflow, job `binary sizes` | 5 % above `perf/baseline-sizes.txt` |
+
+Nothing is gated nightly: the nightly workflow builds the release artifacts only. Threads and handles of a
+whole process (as opposed to the sandbox children above) depend on the system's loader and drivers, so they are
+printed by the ignored `sweep` benchmark and not asserted.
+
+Recorded, never gating: the wall-clock output of the criterion benches (artifact `bench-output` of the
+performance workflow, with `runner.txt`), the compile-time report (`build-timings`), the load time, private bytes,
+threads, handles and idle CPU per plugin instance (`cargo test -p atomik-plugin-hostd --test sweep -- --ignored
+--nocapture`, to the terminal), and the CPU and resident size of the windowed app (`scripts/perf/sample-app.ps1`,
+numbers in [perf/BASELINE.md](../perf/BASELINE.md)). The real-time factor of a demo render is the one time that
+fails a job: `realtime_factor_release` must stay at least 50 times real time.
+
+#### Baselines of the count gates
+
+Both gates need numbers from the CI runner (valgrind and the Linux release build), not from a developer machine,
+so the baseline files are made from an artifact:
+
+1. Run the workflow on the branch with only the two baseline jobs:
+   `gh workflow run perf.yml --ref <branch> -f baseline_only=true`.
+2. When it ends, download the artifacts: `gh run download <run-id> -n instruction-counts -n binary-sizes`
+   (each goes into a folder of its own name).
+3. Copy `instruction-counts/instructions.txt` to `perf/baseline-instructions.txt` and `binary-sizes/sizes.txt`
+   to `perf/baseline-sizes.txt`, and commit both.
+
+Until a file exists its job measures, uploads and passes with a notice. After a change that grows a program or a
+bench on purpose, repeat the three steps and commit the new files with the change. `scripts/perf-gate.sh sizes
+compare` and `compare` need no valgrind and no build: they can be tried on two hand-made files anywhere.
 
 The live callback keeps a histogram of its own time and of the level-barrier wait (totals since the
 stream started; recording is two relaxed atomic adds and a maximum, covered by the allocation
@@ -2239,8 +2294,9 @@ modes of the sandbox (a shared child holds 16 instances, then another starts). `
 
 - `load ms`, `per ms`: the whole run of N blocking `instantiate` calls, and the median of one call. The library of a
   format is loaded by its first instance, so the row of N = 1 carries that cost alone.
-- `children`, `consoles`: the processes below the test process, and the hidden console hosts Windows starts for the
-  children that have no window (one each; they are not plugin processes and are counted in the other columns).
+- `children`, `consoles`: the processes below the test process, and the console hosts below it (Windows starts one
+  for a child that has a console; the sandbox's children are detached and have none, so the column is 0; a console
+  host is not a plugin process and is counted in the other columns).
 - `MB`, `thr`, `hdl`: what N instances added to the test process and everything below it, per instance: private bytes
   (resident bytes on macOS), threads (not on macOS) and open handles (Windows) or file descriptors (Linux, not macOS).
 - `cpu parent`, `cpu child`: the share of one core the test process and the children used while the N instances
@@ -2253,7 +2309,7 @@ file free of `unsafe`. The rows of the reference machine are in [perf/BASELINE.m
 
 The ordinary test of the file, `three_instances_have_the_expected_child_processes_and_threads`, asserts what does not
 depend on the machine, with three instances of the `null` gain: three children in the default mode and one in the
-per-file and shared modes (counted by the backend and by the process table), at most one console host per child, the
+per-file and shared modes (counted by the backend and by the process table), no console host for a child, the
 same thread count in each of three children, one more thread in a shared child for each instance, and no process or
 thread of the test process left after the instances are gone. Absolute thread counts are not asserted: the system's
 loader starts helper threads by the number of cores. Times and bytes stay in the sweep. What the sweep leaves to a

@@ -4,8 +4,9 @@ Wall-clock medians and 99th percentiles (21 samples) of the benches in
 [docs/TESTING.md](../docs/TESTING.md#benchmarks-and-the-performance-job), taken once on the
 reference machine below with the default settings (`cargo bench -p <crate> --bench <name>`).
 Re-measure on your own machine before comparing: only numbers from one machine compare.
-Instruction-count baselines (`perf/baseline-instructions.txt`) need valgrind on Linux and are
-committed from the first run of the scheduled workflow.
+Instruction-count baselines (`perf/baseline-instructions.txt`) and binary-size baselines
+(`perf/baseline-sizes.txt`) need the CI runner: how they are made is in
+[docs/TESTING.md](../docs/TESTING.md#baselines-of-the-count-gates).
 
 ## Reference machine
 
@@ -1248,6 +1249,23 @@ outliers and do not repeat in the other rows. The harness thread spins between c
 bounds of a driver's thread (caches and clock stay warm); only a comparison between builds on this machine means
 something.
 
+### Children with no console host (2026-11-25)
+
+The same sweep, the same machine and build, after the sandbox and the scanner started their children with
+`DETACHED_PROCESS` instead of `CREATE_NO_WINDOW`. The `consoles` column (console hosts below this process) is 0 in
+every row; it was one per child. One run, per instance, null shell (the clap and vst3 rows differ by the plugin
+library only):
+
+| Row | children | MB (before, after) | threads (before, after) | handles (before, after) |
+|---|---|---|---|---|
+| child each, N = 10 | 10 | 3.3, 2.2 | 14.0, 12.0 | 235, 146 |
+| child each, N = 30 | 30 | 3.3, 2.1 | 14.0, 12.0 | 235, 146 |
+| child per file, N = 30 | 2 | 0.7, 0.7 | 4.9, 4.7 | 23.1, 17.1 |
+| one shared child, N = 30 | 2 | 0.7, 0.6 | 4.9, 4.7 | 23.1, 17.1 |
+
+Load per instance, CPU and the plugin libraries' own bytes did not change beyond the run-to-run spread (child each
+40 ms before, 30 ms after on this run; one run of each, not a claimed gain).
+
 ## Thin LTO for the shipped programs: measured, not adopted (2026-11-24)
 
 Release build vs the same build with `lto = "thin"` (codegen-units unchanged). atomik-render, `--loop-count 4`, median of 5, process CPU ms:
@@ -1276,6 +1294,28 @@ Headless, the MCP screenshot path (`paint_in(Main, CpuCanvas)` + `finish()`), re
 | stress rack (rack view) | 47.4 / 48.1 | 57.1 / 62.7 |
 
 Recording (path-to-strip work while painting) dominates: 13-43 ms; rasterising 3-5 ms. The CPU canvas has no display-list cache (the GPU canvas caches by id and revision). Harness kept outside the repo: orchestration/spike56_frame_time.rs.
+
+## Heap operations per audio block and per UI frame (2026-11-25)
+
+Counted with the testkit's allocator (`forbid_on_this_thread`, `assert_no_alloc`, `allocations_of`), 48 kHz.
+
+| What | Count |
+|---|---|
+| stress song, 10 s, blocks of 256, 0 and 2 workers, audio thread | 0 per block |
+| stress song, same, worker threads | 0 |
+| stress rack (100 devices, 300 cables), same | 0 per block, 0 on the workers |
+| idle shell frame, empty, patch open, MIDI mappings, analysers shown or hidden | 0 |
+| idle shell frame, fx-demo open (console meter feed) | 19 per frame (570 over 30 frames), now 0 |
+| playing shell frame, fx-demo, 60 frames a second, playhead moving | 38 per frame (2263 over 60 frames), now 715 over 60 frames |
+
+Where the fx-demo frames allocated: `console_readings_with` (the list of channel readings and a key clone per strip), `ConsoleView::set_meters`
+and `RackView::set_mix_meters` / `set_device_meter_values` (a key clone each to look the device up), and, only while playing,
+`tempo_lane::tempo_at`, which built a tempo table for the playhead position. The meter feed now keeps its readings in a buffer
+(`AppCore::console_readings_into`) and hands the console the keys of `meter_points` by reference (`ConsoleView::set_meters_of`),
+the rack looks a device up by the borrowed text of its key (`RackView::local_name`), and the arrangement compiles its tempo
+once per song change (`tempo_lane::TempoCurve`). What remains while playing happens in five of the sixty frames, one per
+window of the device CPU readout (`AppCore::feed_cpu_loads` rebuilding each track's chain summary, about 140 heap operations
+a pass); `crates/app/tests/idle_frame_alloc.rs` bounds both counts (0 idle, 800 playing).
 ## A headless edit loop for ten minutes (2026-11-24)
 
 `crates/mcp/tests/soak.rs` (see [docs/TESTING.md](../docs/TESTING.md#the-headless-soak-ignored-by-default)): the
