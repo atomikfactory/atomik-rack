@@ -83,6 +83,8 @@ may break APIs and the patch and project formats.
 - **The Workflow tab of the settings scrolls on a short window.** At 728 pixels high the last row (Master keyboard) ran
   under the Cancel and Apply buttons. The rows now scroll with the wheel when they do not fit; nothing changes when
   they do.
+- **The piano roll header no longer draws the CUT chip over the SNAP label.** The four tool chips sat about 4 pixels
+  over the label ("CUT P"). They now sit 30 pixels further left, clear of it, at every window size.
 
 ## [0.5.0-rc.2] - 2026-11-24
 
