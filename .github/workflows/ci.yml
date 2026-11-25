@@ -4,6 +4,8 @@ on:
   push:
     branches: [main]
   pull_request:
+    # `labeled`: adding the `full-ci` label starts the release test legs (see the test job).
+    types: [opened, synchronize, reopened, labeled]
   workflow_dispatch:
     inputs:
       sandbox_only:
@@ -135,9 +137,13 @@ jobs:
       # A documents-only change skips the steps below, not the job: a matrix job that is skipped
       # as a whole never reports the names a required check waits for. The release legs take 45
       # to 70 minutes, so a pull request runs the debug legs only (on its affected packages); the
-      # release legs run on main after the merge and on a manual run.
+      # release legs run on main after the merge, on a manual run and on a pull request that
+      # carries the `full-ci` label (adding the label starts them, later pushes rerun them). The
+      # example-song renders (the eight test programs excluded from the debug legs of a pull
+      # request below) run in the release legs, and in every debug leg outside a pull request.
       RUN_CODE: >-
-        ${{ (matrix.profile == 'release' && github.event_name == 'pull_request')
+        ${{ (matrix.profile == 'release' && github.event_name == 'pull_request'
+             && !contains(github.event.pull_request.labels.*.name, 'full-ci'))
             && 'false' || needs.changes.outputs.code }}
       # `--workspace`, or the affected packages as `-p name ...` on a pull request.
       PACKAGES: ${{ needs.changes.outputs.packages }}
@@ -167,16 +173,40 @@ jobs:
           # shellcheck disable=SC2086
           cargo build $flags $packages
           echo "ATOMIK_TEST_PLUGINS_PREBUILT=1" >> "$GITHUB_ENV"
+      # scripts/ci-test.sh builds the test programs once and runs several of them at the same
+      # time (`cargo test` runs them one after the other, and cargo-nextest, which starts a
+      # process per test, was slower on the 19 000 small tests of this workspace). Each program
+      # still runs as libtest threads in one process with the environment and working directory
+      # cargo gives it, no test is retried, and every program runs even if one fails.
+      # On a pull request without the `full-ci` label the eight example-song renders are left out
+      # of the debug legs (they run in the release legs). Everywhere else (main, nightly, a manual
+      # run, a labelled pull request) the debug legs run them too, so macOS, which has no release
+      # leg, renders every example song on each push to main. Keep the list of the eight programs
+      # (in scripts/ci-test.py) equal to the one in docs/TESTING.md.
       - name: cargo test (debug)
         if: env.RUN_CODE == 'true' && matrix.profile == 'debug'
         shell: bash
+        env:
+          SKIP_RENDERS: >-
+            ${{ github.event_name == 'pull_request'
+                && !contains(github.event.pull_request.labels.*.name, 'full-ci') }}
         # shellcheck disable=SC2086
-        run: cargo test $PACKAGES --no-fail-fast
+        run: sh scripts/ci-test.sh debug $PACKAGES
       - name: cargo test (release)
         if: env.RUN_CODE == 'true' && matrix.profile == 'release'
         shell: bash
         # shellcheck disable=SC2086
-        run: cargo test $PACKAGES --release --no-fail-fast
+        run: sh scripts/ci-test.sh release $PACKAGES
+      - name: doc tests (debug)
+        if: env.RUN_CODE == 'true' && matrix.profile == 'debug'
+        shell: bash
+        # shellcheck disable=SC2086
+        run: cargo test --doc $PACKAGES --no-fail-fast
+      - name: doc tests (release)
+        if: env.RUN_CODE == 'true' && matrix.profile == 'release'
+        shell: bash
+        # shellcheck disable=SC2086
+        run: cargo test --doc $PACKAGES --release --no-fail-fast
       # A pixel golden that fails leaves the actual, golden and diff images here.
       - name: Upload the pixel diff images
         if: failure() && env.RUN_CODE == 'true'

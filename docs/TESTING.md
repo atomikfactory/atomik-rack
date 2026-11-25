@@ -20,8 +20,39 @@ sh scripts/check-public.sh                 # repository hygiene (no local paths,
 - Lints are set in the root `Cargo.toml` (`unsafe_code = "deny"`, clippy `all = deny`,
   `float_cmp = deny`) and in [clippy.toml](../clippy.toml) (bans `HashMap`, `HashSet`,
   `Instant::now` and `SystemTime::now`).
-- CI also runs `cargo test --workspace --release` on Linux and on Windows (the Windows leg includes the
-  exact-hash goldens), because optimisation can change floating-point behaviour.
+- CI also runs the tests in release (`sh scripts/ci-test.sh release --workspace`) on Linux and on Windows (the Windows
+  leg includes the exact-hash goldens), because optimisation can change floating-point behaviour.
+- CI runs the tests with [scripts/ci-test.sh](../scripts/ci-test.sh) (Python 3, no other tool), not one `cargo test`.
+  `cargo test` runs the test programs one after the other, and most of this workspace's 19 000 tests are small, so one
+  program seldom keeps every core busy. (cargo-nextest, which starts a process per test, was tried and was slower:
+  the process starts cost what the overlap gained.) The script builds everything once (`cargo test --no-run`), then
+  runs the programs three at a time at most (the CPU count when lower), each with libtest's own threads in one process
+  (`RUST_TEST_THREADS` is the CPU count divided by the programs at once, at least 2), the working directory and the
+  environment `cargo test` gives it (the package root, `CARGO_MANIFEST_DIR`, the `CARGO_PKG_*` variables,
+  `CARGO_TARGET_TMPDIR`, `CARGO_BIN_EXE_*`, and the library search path), and its own log file. The tests that start
+  and kill real plugin child processes or read the process table run last, one program at a time: `e2e_kill`,
+  `e2e_watch`, `orphan`, `sweep` and the leak loop `leak_loops` of `atomik-plugin-hostd`, `kill_recovery` of
+  `atomik-app`, `leak` of `atomik-plugin-clap` and `leak_loop` of `atomik-mcp` (the leak loops compare the thread
+  and handle counts of their own process, which another busy program can disturb). No test is retried,
+  every program runs even if another fails, and the end shows a table (program, seconds, result) and the full output
+  of each failed program. The doc tests follow with `cargo test --doc` on the same packages. To run what CI runs:
+
+  ```sh
+  sh scripts/ci-test.sh debug --workspace              # or: release --workspace; or: debug atomik-engine atomik-app
+  cargo test --doc --workspace
+  ```
+
+  `SKIP_RENDERS=true` leaves out the eight example-song programs (below); `CI_TEST_JOBS=n` sets the programs at once.
+  Plain `cargo test` works as ever.
+- A pull request without the `full-ci` label leaves the example-song renders out of its debug legs: eight test
+  programs of `atomik-render`, `fx_demo`, `plugin_demo`, `plugin_demo_vst3`, `character_demo`,
+  `container_demo`, `determinism_examples`, `player_demo` and `drum_demo`, each rendering whole example projects
+  (together over half of the macOS debug leg's test time). They run everywhere else: in the release legs (Linux and
+  Windows), which every push to `main`, every manual run and every pull request with the `full-ci` label start
+  (adding the label starts them, later pushes rerun them), and in the debug legs of those same runs, so macOS, which
+  has no release leg, renders every example song on each push to `main`. Run them by hand with
+  `cargo test -p atomik-render --test fx_demo` (and the others). The list is `RENDER_PROGRAMS` in
+  [ci-test.py](../scripts/ci-test.py): change it there when a test program is added or moved.
 - Coverage is the slowest job, so a pull request does not run it unless it carries the `coverage` label. It runs on
   every push to `main`, nightly and by hand ([coverage.yml](../.github/workflows/coverage.yml)): `cargo llvm-cov`
   fails below 90 % of lines for the workspace (binary entry points and GPU or audio-device glue are excluded; the
