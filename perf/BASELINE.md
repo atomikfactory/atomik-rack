@@ -4,8 +4,9 @@ Wall-clock medians and 99th percentiles (21 samples) of the benches in
 [docs/TESTING.md](../docs/TESTING.md#benchmarks-and-the-performance-job), taken once on the
 reference machine below with the default settings (`cargo bench -p <crate> --bench <name>`).
 Re-measure on your own machine before comparing: only numbers from one machine compare.
-Instruction-count baselines (`perf/baseline-instructions.txt`) need valgrind on Linux and are
-committed from the first run of the scheduled workflow.
+Instruction-count baselines (`perf/baseline-instructions.txt`) and binary-size baselines
+(`perf/baseline-sizes.txt`) need the CI runner: how they are made is in
+[docs/TESTING.md](../docs/TESTING.md#baselines-of-the-count-gates).
 
 ## Reference machine
 

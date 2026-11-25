@@ -11,6 +11,14 @@
 #                                         scale every count of IN by FACTOR (1.2 = 20 % more): the
 #                                         injected regression the gate must catch
 #
+#   scripts/perf-gate.sh sizes measure OUT [DIR]
+#                                         write one `<program> <bytes>` line per release program
+#                                         (atomik, atomik-render, atomik-plugin-host) found in DIR
+#                                         (default target/release) to OUT
+#   scripts/perf-gate.sh sizes compare BASELINE CURRENT [PERCENT]
+#                                         the same comparison as `compare`, default 5 %: exit 1
+#                                         when a program grew more than PERCENT over BASELINE
+#
 # `measure` needs valgrind (Linux) and the bench binaries built with `cargo bench --no-run`. A
 # bench binary runs one pass of every scenario when ATOMIK_BENCH_ONCE is set, which is what
 # makes its instruction count repeatable. The count is of the whole pass, build of the
@@ -18,6 +26,7 @@
 set -eu
 
 BENCHES="render_batch process blocks document"
+PROGRAMS="atomik atomik-render atomik-plugin-host"
 
 find_bench() {
   # The newest executable of the bench named $1 in target/release/deps (not its .d file).
@@ -66,6 +75,22 @@ compare() {
     }' "$baseline" "$current"
 }
 
+sizes_measure() {
+  out=$1
+  dir=${2:-target/release}
+  : >"$out"
+  for prog in $PROGRAMS; do
+    exe="$dir/$prog"
+    [ -f "$exe" ] || exe="$dir/$prog.exe"
+    if [ ! -f "$exe" ]; then
+      echo "perf-gate: no release program $prog in $dir (run cargo build --release first)" >&2
+      exit 2
+    fi
+    echo "$prog $(wc -c <"$exe" | tr -d ' ')" >>"$out"
+  done
+  cat "$out"
+}
+
 inflate() {
   awk -v f="$3" '{ printf "%s %.0f\n", $1, $2 * f }' "$1" >"$2"
 }
@@ -74,5 +99,11 @@ case "${1:-}" in
   measure) [ $# -eq 2 ] || { echo "usage: $0 measure OUT" >&2; exit 2; }; measure "$2" ;;
   compare) [ $# -ge 3 ] && [ $# -le 4 ] || { echo "usage: $0 compare BASELINE CURRENT [PERCENT]" >&2; exit 2; }; compare "$2" "$3" "${4:-10}" ;;
   inflate) [ $# -eq 4 ] || { echo "usage: $0 inflate IN OUT FACTOR" >&2; exit 2; }; inflate "$2" "$3" "$4" ;;
-  *) echo "usage: $0 measure OUT | compare BASELINE CURRENT [PERCENT] | inflate IN OUT FACTOR" >&2; exit 2 ;;
+  sizes)
+    case "${2:-}" in
+      measure) [ $# -ge 3 ] && [ $# -le 4 ] || { echo "usage: $0 sizes measure OUT [DIR]" >&2; exit 2; }; sizes_measure "$3" "${4:-target/release}" ;;
+      compare) [ $# -ge 4 ] && [ $# -le 5 ] || { echo "usage: $0 sizes compare BASELINE CURRENT [PERCENT]" >&2; exit 2; }; compare "$3" "$4" "${5:-5}" ;;
+      *) echo "usage: $0 sizes measure OUT [DIR] | sizes compare BASELINE CURRENT [PERCENT]" >&2; exit 2 ;;
+    esac ;;
+  *) echo "usage: $0 measure OUT | compare BASELINE CURRENT [PERCENT] | inflate IN OUT FACTOR | sizes measure|compare ..." >&2; exit 2 ;;
 esac
