@@ -37,12 +37,13 @@ sh scripts/check-public.sh                 # repository hygiene (no local paths,
   ```
 
   `cargo test` and `cargo nextest run` without a profile work as ever.
-- The example-song renders run in the release legs only. The debug legs (a pull request runs those) leave out eight
-  test programs of `atomik-render`, `fx_demo`, `plugin_demo`, `plugin_demo_vst3`, `character_demo`,
-  `container_demo`, `determinism_examples`, `player_demo` and `drum_demo`: each renders whole example projects, and
-  together they were over half of the macOS debug leg's test time. They run on Linux and Windows in the release
-  legs, which every push to `main`, every manual run and every pull request with the `full-ci` label start (adding
-  the label starts them, later pushes rerun them). Run them by hand with
+- A pull request without the `full-ci` label leaves the example-song renders out of its debug legs: eight test
+  programs of `atomik-render`, `fx_demo`, `plugin_demo`, `plugin_demo_vst3`, `character_demo`,
+  `container_demo`, `determinism_examples`, `player_demo` and `drum_demo`, each rendering whole example projects
+  (together over half of the macOS debug leg's test time). They run everywhere else: in the release legs (Linux and
+  Windows), which every push to `main`, every manual run and every pull request with the `full-ci` label start
+  (adding the label starts them, later pushes rerun them), and in the debug legs of those same runs, so macOS, which
+  has no release leg, renders every example song on each push to `main`. Run them by hand with
   `cargo test -p atomik-render --test fx_demo` (and the others). The list is in the debug step of
   [ci.yml](../.github/workflows/ci.yml): change it there when a test program is added or moved.
 - Coverage is the slowest job, so a pull request does not run it unless it carries the `coverage` label. It runs on

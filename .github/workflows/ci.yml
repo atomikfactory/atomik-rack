@@ -139,8 +139,8 @@ jobs:
       # to 70 minutes, so a pull request runs the debug legs only (on its affected packages); the
       # release legs run on main after the merge, on a manual run and on a pull request that
       # carries the `full-ci` label (adding the label starts them, later pushes rerun them). The
-      # example-song renders (the eight test programs excluded from the debug legs below) run in
-      # the release legs only.
+      # example-song renders (the eight test programs excluded from the debug legs of a pull
+      # request below) run in the release legs, and in every debug leg outside a pull request.
       RUN_CODE: >-
         ${{ (matrix.profile == 'release' && github.event_name == 'pull_request'
              && !contains(github.event.pull_request.labels.*.name, 'full-ci'))
@@ -183,20 +183,25 @@ jobs:
       # The debug legs leave out the example-song renders: whole example projects rendered one or
       # more times, minutes of the macOS leg. The release legs run them, so every push to main
       # still runs them. Keep this list equal to the one in docs/TESTING.md.
+      # On a pull request without the `full-ci` label the eight example-song renders are left out
+      # of the debug legs (they run in the release legs). Everywhere else (main, nightly, a manual
+      # run, a labelled pull request) the debug legs run them too, so macOS, which has no release
+      # leg, renders every example song on each push to main.
       - name: cargo nextest (debug)
         if: env.RUN_CODE == 'true' && matrix.profile == 'debug'
         shell: bash
+        env:
+          SKIP_RENDERS: >-
+            ${{ github.event_name == 'pull_request'
+                && !contains(github.event.pull_request.labels.*.name, 'full-ci') }}
         # shellcheck disable=SC2086
-        run: >-
-          cargo nextest run --profile ci $PACKAGES --no-fail-fast --no-tests=pass
-          -E 'not (binary_id(atomik-render::fx_demo)
-          | binary_id(atomik-render::plugin_demo_vst3)
-          | binary_id(atomik-render::plugin_demo)
-          | binary_id(atomik-render::character_demo)
-          | binary_id(atomik-render::container_demo)
-          | binary_id(atomik-render::determinism_examples)
-          | binary_id(atomik-render::player_demo)
-          | binary_id(atomik-render::drum_demo))'
+        run: |
+          filter='all()'
+          if [ "$SKIP_RENDERS" = "true" ]; then
+            filter='not (binary_id(atomik-render::fx_demo) | binary_id(atomik-render::plugin_demo_vst3) | binary_id(atomik-render::plugin_demo) | binary_id(atomik-render::character_demo) | binary_id(atomik-render::container_demo) | binary_id(atomik-render::determinism_examples) | binary_id(atomik-render::player_demo) | binary_id(atomik-render::drum_demo))'
+          fi
+          echo "test filter: $filter"
+          cargo nextest run --profile ci $PACKAGES --no-fail-fast --no-tests=pass -E "$filter"
       - name: cargo nextest (release)
         if: env.RUN_CODE == 'true' && matrix.profile == 'release'
         shell: bash
