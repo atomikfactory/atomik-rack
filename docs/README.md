@@ -510,9 +510,17 @@ in the rack and in the strip menu of the mixer (Duck from...), and in Track > Qu
 
 The start screen (File > Start Screen, and at start-up) lists New, Open, the templates and the recent songs. The first
 six templates ship with the program: **Ambient**, **Hip-Hop Boom Bap**, **House**, **Lo-fi**, **Synthwave** and
-**Techno**. Point at one to see its card (tempo, meter and tracks), click it to start a new song from it. File > New
-from Template lists the same templates, with your own after them (at most sixteen in all). A template opens as an
-untitled song, so Save asks for a place and the template itself is never changed.
+**Techno**. Point at one to see its card (a small picture of the song, then tempo, meter and tracks), click it to
+start a new song from it. File > New from Template lists the same templates, with your own after them (at most sixteen
+in all). A template opens as an untitled song, so Save asks for a place and the template itself is never changed.
+
+The picture on a template card and on each example card is the song seen from far away: one row per track, with a
+block for every clip in the track's colour (the colour of the clip or its lane when it has one). It is made from the
+song's file in the background, so the box never waits for it: a quiet placeholder shows until it is ready, and a card
+whose file cannot be read has no picture. Pictures are kept in the `cards` folder beside the video proxies in the
+per-user cache folder, one small file for each project file, named by a hash of the file's content: a file that did
+not change finds its picture ready, a file that changed gets a new one, and the oldest are removed past two hundred.
+The folder can be deleted at any time; the pictures are made again.
 
 - **What is in one.** A tempo and a song key, eight sections on an 8-bar grid over 64 bars (Intro, Verse or Build,
   Chorus or Drop, Break, Outro), shown as ranges in the arrangement. Six named, coloured tracks: a kick and the rest of

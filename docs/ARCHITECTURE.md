@@ -5766,6 +5766,13 @@ creation chain in the **Creation chain** bullet.
   Start Screen opens it at any time. A template under the pointer or the keys has a card with its
   `TemplatePreview` (`AppCore::template_preview` loads the file without opening it, once per
   template while the box is open), and a pin button on a recent row returns `StartOutcome::TogglePin`.
+  The template card and each example card also show a small picture of the song
+  ([card_picture.rs](../crates/app/src/card_picture.rs)): `CardPicture` keeps a row per track with its clips as
+  shares of the song, `PictureStore` caches it as a text file named by a hash of the project file's content in the
+  `cards` folder beside the video proxy folder (`AppCore::card_cache_dir`), and a `PictureWorker` thread makes
+  them, so the interface thread only asks (`Shell::request_card_pictures`, from `StartScreen::pictures_wanted`)
+  and collects (`poll_card_pictures`, a frame step that does nothing while the box is closed). A placeholder
+  shows until a picture arrives, and a file with no picture leaves its card as it was.
   The genre templates of the factory `Templates` folder come first in `AppCore::templates` (then the
   user's own, sixteen in all) and open like any template.
   The headless and MCP sessions never call `start_without_project`, so they never show it. The shell

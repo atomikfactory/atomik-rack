@@ -407,3 +407,62 @@ fn without_a_factory_folder_the_strip_is_just_the_guide_card() {
     assert!(screen.examples().is_empty() && screen.show_guide());
     assert!(screen.cards_shown(s.size()));
 }
+
+#[test]
+fn the_example_cards_get_their_pictures_from_the_worker_and_the_cache() {
+    use crate::card_picture::Slot;
+    use crate::start_screen::PictureOf;
+    let d = Dir::new("pictures");
+    let mut s = with_factory(&d, "{}");
+    s.core_mut()
+        .set_video_cache(d.0.join("cache").join("video"));
+    s.execute(AppCommand::StartScreen);
+    // Asked for at once, and the frames keep coming until they are there.
+    assert!(s.start_screen().unwrap().pictures_pending());
+    assert!(s.wants_fast_frames(0.0));
+    // A generous bound (two minutes of waits), however slow the machine is.
+    for _ in 0..12_000 {
+        if !s.start_screen().is_some_and(|b| b.pictures_pending()) {
+            break;
+        }
+        s.frame_at(1.0);
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    assert!(
+        !s.start_screen().unwrap().pictures_pending(),
+        "the pictures never came"
+    );
+    assert!(
+        !s.wants_fast_frames(0.0),
+        "nothing keeps the frames going once they are there"
+    );
+    let screen = s.start_screen().unwrap();
+    for i in 0..3 {
+        match screen.picture(PictureOf::Example(i)) {
+            Slot::Ready(p) => assert!(p.rows.iter().any(|r| !r.clips.is_empty()), "example {i}"),
+            other => panic!("example {i}: {other:?}"),
+        }
+    }
+    let cached = |d: &Dir| {
+        std::fs::read_dir(d.0.join("cache").join("cards"))
+            .unwrap()
+            .flatten()
+            .count()
+    };
+    let first = cached(&d);
+    assert!(first >= 3, "one file for each picture made: {first}");
+    // Opened again, the pictures come back and nothing new is written.
+    s.execute(AppCommand::StartScreen);
+    for _ in 0..12_000 {
+        if !s.start_screen().is_some_and(|b| b.pictures_pending()) {
+            break;
+        }
+        s.frame_at(2.0);
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    assert!(
+        !s.start_screen().unwrap().pictures_pending(),
+        "the pictures never came back"
+    );
+    assert_eq!(cached(&d), first);
+}

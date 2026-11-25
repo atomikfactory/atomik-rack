@@ -18,6 +18,11 @@ may break APIs and the patch and project formats.
   the section loads unchanged. The theme editor has a Glow group at the end of its list (ON / OFF, ACCENT or a
   colour from the picker, strength and reach sliders) that shows at once and has undo. At Low power the glow is not
   drawn.
+- **A picture of the song on the start screen's cards.** The template card and each example card show the song seen
+  from far away: a row for each track with a block for every clip in the track's colour. The picture is made from the
+  song's file on a background thread, so the box never waits (a quiet placeholder shows meanwhile; a file that cannot
+  be read leaves its card without a picture) and is kept in a `cards` folder in the per-user cache area, named by a
+  hash of the file's content: made once, reused while the file does not change, made again when it does.
 
 ## [0.5.0-rc.3] - 2026-11-25
 

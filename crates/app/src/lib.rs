@@ -68,6 +68,7 @@ pub mod master_keyboard;
 pub mod memory_limits;
 pub mod performance;
 pub use atomik_ui::menu_layout;
+pub mod card_picture;
 pub mod language_tab;
 pub mod listen;
 pub mod menubar;

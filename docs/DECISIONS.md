@@ -2389,3 +2389,27 @@ equal for little); giving every theme based on Synthwave its glow (a theme file 
 copy made by the program writes it).
 
 **Status.** Default (not yet confirmed). Decided by: none yet.
+
+## BY. The pictures on the start screen's cards are made on a worker thread and kept by the content of the file
+
+**Decision.** A card picture is the song's arrangement seen from far away: one row per track, one block per clip, the
+colours kept as "the clip's, the lane's, the track's, else the device type's accent" so the picture takes the theme in
+use. It is made by a worker thread (`PictureWorker`) that reads the project file, loads it with the registry and keeps
+only the shares of the song each clip covers. The picture is cached in a text file named by a hash of the project file's
+content (FNV-1a over the bytes, and the length) in a `cards` folder beside the video proxies; past two hundred files the
+oldest go. The interface thread asks once for each card (all the example cards, and the template card that shows) and
+collects what is done in the frame step; a placeholder shows meanwhile, and a file that gives no picture leaves its
+card without one.
+
+**Why.** Loading a project belongs off the interface thread (a template with many devices takes noticeable time), and
+a content hash is the one key that is right for a file edited in place, replaced by a newer factory file, or copied:
+the same content has the same picture. A small text file needs no dependency and can be read and checked by hand; a
+damaged or old-format file is simply made again. A hash that is not cryptographic is enough: a collision would show
+the picture of another song on a card, nothing more, and the file is the user's own.
+
+**Rejected.** A rendered bitmap of the arrangement (a second renderer to keep in step with the theme, and a file for
+every theme); keying by modification time (a copy or a restore keeps the old picture); building the pictures in the
+frame step in small slices (a slice of a project load cannot be cut); one cache file for all cards (a rewrite for each
+change).
+
+**Status.** Default (not yet confirmed). Decided by: none yet.

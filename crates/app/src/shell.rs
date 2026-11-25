@@ -160,7 +160,7 @@ use crate::palette::Runner;
 use crate::session::{AudioBackend, LiveSession, SettingsChange};
 use crate::settings::{self, AudioSettings, LastGood, SurfaceSettings};
 use crate::settings_dialog::{DeviceLists, DialogOutcome, SettingsDialog};
-use crate::start_screen::{ExampleCard, RecentRow, StartOutcome, StartScreen};
+use crate::start_screen::{ExampleCard, PictureOf, RecentRow, StartOutcome, StartScreen};
 use crate::status::{AudioStatus, OverloadStats, status_text};
 use crate::stress::{STRESS_CABLES, STRESS_DEVICES, stress_doc, stress_song_doc};
 use crate::ui_state::UiState;
@@ -612,6 +612,11 @@ pub struct Shell<B: AudioBackend> {
     about: Option<AboutBox>,
     /// The start screen, while it is open.
     start_screen: Option<StartScreen>,
+    /// The thread that makes the pictures of the start screen's cards (started with the first
+    /// request and kept; it sleeps while nothing is asked).
+    card_pictures: Option<crate::card_picture::PictureWorker>,
+    /// The example and template file each picture request number stands for.
+    card_requests: Vec<(u32, PictureOf)>,
     /// The controller set-up wizard, while it is open.
     controller_wizard: Option<crate::controller_wizard_view::ControllerWizardView>,
     /// The first-run audio and MIDI setup, while it shows (see `shell_audio_setup`).
@@ -1072,6 +1077,8 @@ impl<B: AudioBackend> Shell<B> {
             sound_analyst: None,
             wavetable: None,
             start_screen: None,
+            card_pictures: None,
+            card_requests: Vec::new(),
             controller_wizard: None,
             audio_setup: None,
             first_run,
@@ -2867,6 +2874,63 @@ impl<B: AudioBackend> Shell<B> {
         }
     }
 
+    /// Asks the worker for the pictures the start screen wants (once each).
+    fn request_card_pictures(&mut self) {
+        let Some(screen) = &self.start_screen else {
+            return;
+        };
+        let wanted = screen.pictures_wanted();
+        if wanted.is_empty() {
+            return;
+        }
+        if self.card_pictures.is_none() {
+            let store = crate::card_picture::PictureStore::new(self.core.card_cache_dir());
+            self.card_pictures = crate::card_picture::PictureWorker::start(store);
+        }
+        let examples = self.core.examples();
+        for of in wanted {
+            let path = match of {
+                PictureOf::Template(i) => self.core.templates().get(i).map(|t| t.path.clone()),
+                PictureOf::Example(i) => examples.get(i).map(|e| e.path.clone()),
+            };
+            let id = self.card_requests.len() as u32;
+            let (Some(path), Some(worker), Some(screen)) =
+                (path, &self.card_pictures, &mut self.start_screen)
+            else {
+                // No file or no thread: the card has no picture.
+                if let Some(screen) = &mut self.start_screen {
+                    screen.set_picture(of, None);
+                }
+                continue;
+            };
+            self.card_requests.push((id, of));
+            screen.mark_picture_asked(of);
+            worker.request(id, path);
+        }
+    }
+
+    /// Takes the pictures the worker finished into the start screen. Costs nothing while the
+    /// box is closed.
+    fn poll_card_pictures(&mut self) {
+        let (Some(worker), Some(screen)) = (&self.card_pictures, &mut self.start_screen) else {
+            return;
+        };
+        for reply in worker.poll() {
+            if let Some((_, of)) = self.card_requests.iter().find(|(id, _)| *id == reply.id) {
+                screen.set_picture(*of, reply.picture);
+                self.repaint = true;
+            }
+        }
+        self.request_card_pictures();
+    }
+
+    /// Whether a picture of a card is being made: the frames go on until it is there.
+    pub(super) fn card_pictures_pending(&self) -> bool {
+        self.start_screen
+            .as_ref()
+            .is_some_and(StartScreen::pictures_pending)
+    }
+
     /// Opens the start screen with the templates and the recent songs as they are now.
     fn open_start_screen(&mut self) {
         self.core.reload_templates();
@@ -2893,6 +2957,8 @@ impl<B: AudioBackend> Shell<B> {
             .with_cards(examples, self.workflow.show_guide_card),
         );
         self.fill_template_preview();
+        self.card_requests.clear();
+        self.request_card_pictures();
         self.repaint = true;
     }
 
@@ -2931,6 +2997,7 @@ impl<B: AudioBackend> Shell<B> {
         let outcome = screen.handle(event, size);
         if matches!(outcome, StartOutcome::Open) {
             self.fill_template_preview();
+            self.request_card_pictures();
         }
         match outcome {
             StartOutcome::Open => Vec::new(),
@@ -11025,6 +11092,7 @@ impl<B: AudioBackend> Shell<B> {
             self.repaint = true;
         }
         self.core.transport_frame(now_seconds);
+        self.poll_card_pictures();
         self.save_click_level();
         self.core.plugin_tick(now_seconds);
         // A plugin window closed somewhere new: the position is kept for next time.
