@@ -1342,6 +1342,7 @@ fn the_strip_menu_runs_the_channel_settings_commands_on_the_selection() {
         "Duplicate strip",
         "Copy settings",
         "Paste settings",
+        "Lock / unlock channel",
         "Reset channel",
         "Clear inserts",
         "Create parallel channel",
@@ -1451,4 +1452,41 @@ fn the_colour_plate_asks_for_the_colour_of_the_track_when_the_source_has_one() {
     // The middle of the name plate is still the name.
     let name = v.name_center(&ch).unwrap();
     assert!(click(&mut v, &doc, &reg, name).is_empty());
+}
+
+#[test]
+fn the_lock_icon_toggles_the_strip_and_a_locked_strip_does_not_react() {
+    let (mut doc, reg, mut v) = setup();
+    let lead = key("ch-lead");
+    let p = v
+        .lock_button_center(&lead)
+        .expect("a lock icon on every strip");
+    let mut a = v.handle(&down(p), &doc, &reg);
+    a.extend(v.handle(&up(p), &doc, &reg));
+    let lock = [ConsoleCommand::SetLocked {
+        strips: vec![lead.clone()],
+        locked: true,
+    }];
+    assert_eq!(console_cmds(&a), lock);
+    // The document takes the lock; the view then reads it, drops every control press and offers
+    // the unlock.
+    doc.console.locked.push(lead.clone());
+    v.sync(&doc, &reg);
+    let f = v.control_center(&lead, "fader").unwrap();
+    let mut a = v.handle(&down(f), &doc, &reg);
+    a.extend(v.handle(&up(f), &doc, &reg));
+    assert!(set_params(&a).is_empty(), "{a:?}");
+    assert!(v.notice().is_some_and(|n| n.ends_with("is locked")));
+    let mut a = v.handle(&down(p), &doc, &reg);
+    a.extend(v.handle(&up(p), &doc, &reg));
+    assert_eq!(
+        console_cmds(&a),
+        [ConsoleCommand::SetLocked {
+            strips: vec![lead],
+            locked: false
+        }]
+    );
+    // The master has its own icon.
+    let master = doc.console.master.clone().expect("master");
+    assert!(v.lock_button_center(&master).is_some());
 }

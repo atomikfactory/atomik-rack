@@ -186,6 +186,8 @@ fn console_label(c: &ConsoleCommand) -> &'static str {
         }
         ConsoleCommand::SetSnapshotMarker { .. } => "Snapshot Marker",
         ConsoleCommand::CompareStrip { .. } => "Compare Strip",
+        ConsoleCommand::SetLocked { locked: true, .. } => "Lock Channel",
+        ConsoleCommand::SetLocked { locked: false, .. } => "Unlock Channel",
         _ => DEFAULT_LABEL,
     }
 }

@@ -10387,6 +10387,10 @@ impl<B: AudioBackend> Shell<B> {
                 self.core.paste_strip_settings(self.live_pane(self.focus));
                 Vec::new()
             }
+            AppCommand::LockChannel => {
+                self.core.toggle_strip_lock(self.live_pane(self.focus));
+                Vec::new()
+            }
             AppCommand::ResetStrip => {
                 self.core.reset_strips(self.live_pane(self.focus));
                 Vec::new()

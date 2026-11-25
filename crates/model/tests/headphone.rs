@@ -241,7 +241,7 @@ fn the_field_is_refused_on_other_devices_unknown_keys_and_when_malformed() {
 fn an_older_file_without_the_field_still_loads() {
     let (d, r) = with_device();
     let current = text(&d);
-    let old = current.replacen("\"version\": 45", "\"version\": 44", 1);
+    let old = current.replacen("\"version\": 46", "\"version\": 44", 1);
     let loaded = load_project(&old, &r).expect("a version 44 file loads");
     assert!(loaded.devices.iter().all(|x| x.headphone_data().is_none()));
 }

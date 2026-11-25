@@ -27,7 +27,7 @@ fn a_new_project_has_neither_list_and_saves_no_field() {
     let t = text(&d);
     assert!(!t.contains("inserts_folded\": ["), "{t}");
     assert!(!t.contains("spectrum_curves\": ["), "{t}");
-    assert_eq!(PROJECT_VERSION, 45, "the format does not change");
+    assert_eq!(PROJECT_VERSION, 46, "the format does not change");
 }
 
 #[test]
@@ -116,7 +116,7 @@ fn the_fields_are_unknown_in_a_version_44_file_without_the_header() {
     let (mut d, r) = doc();
     let (a, _) = pair(&d);
     one_step(&mut d, &r, Command::SetInsertsFolded(vec![a]));
-    let old = text(&d).replacen("\"version\": 45", "\"version\": 44", 1);
+    let old = text(&d).replacen("\"version\": 46", "\"version\": 44", 1);
     assert!(load_project(&old, &r).is_err());
 }
 

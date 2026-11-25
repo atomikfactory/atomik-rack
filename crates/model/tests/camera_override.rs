@@ -38,7 +38,7 @@ fn a_new_project_has_no_camera_settings_and_saves_no_field() {
     let (d, _) = doc();
     assert!(d.doc().camera.is_none());
     assert!(!text(&d).contains("\"camera\": {"));
-    assert_eq!(PROJECT_VERSION, 45, "the format does not change");
+    assert_eq!(PROJECT_VERSION, 46, "the format does not change");
 }
 
 #[test]
@@ -103,7 +103,7 @@ fn the_field_is_ignorable_so_an_older_reader_may_drop_it() {
 fn the_field_is_unknown_in_a_version_44_file_without_the_header() {
     let (mut d, r) = doc();
     one_step(&mut d, &r, Command::SetCameraOverride(Some(settings())));
-    let old = text(&d).replacen("\"version\": 45", "\"version\": 44", 1);
+    let old = text(&d).replacen("\"version\": 46", "\"version\": 44", 1);
     assert!(load_project(&old, &r).is_err());
 }
 

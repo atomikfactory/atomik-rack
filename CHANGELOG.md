@@ -61,6 +61,17 @@ may break APIs and the patch and project formats.
   it is unprotected (the button is off and its tooltip says why), and a failure leaves the version listed with its
   file. A right-click on a row opens a menu with Restore, Compare, Rename, Protect and Delete. The project file and the
   project format do not change; the song is never a version and is never deleted.
+- **Lock a mixer channel.** A small padlock on the name plate of each console strip (channels, buses and the master)
+  and on the name strip of the strip's rack panel locks it; a click on it unlocks. A locked strip refuses every edit
+  of its own values and structure from every source (the mouse, the keyboard, the wheel, MIDI learn, macros, paste,
+  reset, clearing inserts, snapshot recall, the MCP server): the fader, pan, width, sends, input, filters, EQ,
+  dynamics, mute and solo, the inserts (add, remove, reorder, bypass and the effects' own params), the name, the
+  colour and the strip's removal. A command on several strips (a ganged fader move, a recall, Clear Mutes, a paste,
+  Reset Channel on a selection) skips the locked ones and changes the others. Automation still plays on a locked
+  strip, and a macro that already drives one keeps driving it. The controls are drawn dimmed, the meters stay live and
+  "Channel <name> is locked" is shown once per gesture. Mixer > Channel Strip > Lock / Unlock Channel (no default key)
+  and the strip's right-click menu do the same for the selection. The lock is an undoable edit and is saved in the
+  project (a new optional field, project format 46, which older builds ignore: they open the mix unlocked).
 
 ### Changed
 - **The device CPU readout no longer allocates in a playing window.** Each pass (about five a second) rebuilt every

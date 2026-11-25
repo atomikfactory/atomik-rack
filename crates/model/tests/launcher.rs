@@ -457,18 +457,18 @@ fn pasting_a_ready_clip_gives_it_a_new_id() {
 
 #[test]
 fn a_newer_file_that_allows_skipping_keeps_the_launcher_this_reader_knows() {
-    // A file of version 46 that a reader of 45 may open: the launcher is a field of 45, so it is
+    // A file of version 47 that a reader of 46 may open: the launcher is a field of 45, so it is
     // read, and what is unknown to this reader (listed as ignorable) is dropped.
     let reg = registry();
     let mut d = doc(&reg);
     new_clip(&mut d, &reg, "synth", 0);
     let text = save_project(d.doc());
     let newer = text
-        .replacen("\"version\": 45", "\"version\": 46", 1)
-        .replacen("\"compat\": 44", "\"compat\": 45", 1)
+        .replacen("\"version\": 46", "\"version\": 47", 1)
+        .replacen("\"compat\": 44", "\"compat\": 46", 1)
         .replacen(
             "\"ignorable\": {",
-            "\"ignorable\": {\n    \"song.future\": 46,",
+            "\"ignorable\": {\n    \"song.future\": 47,",
             1,
         );
     let loaded = load_project(&newer, &reg).unwrap();
@@ -480,7 +480,7 @@ fn a_version_45_file_without_a_launcher_reads_as_before() {
     let reg = registry();
     let d = doc(&reg);
     let text = save_project(d.doc());
-    assert!(text.contains("\"version\": 45,") && text.contains("\"compat\": 44,"));
+    assert!(text.contains("\"version\": 46,") && text.contains("\"compat\": 44,"));
     assert!(
         text.contains("\"song.launcher\": 45"),
         "listed for older readers"

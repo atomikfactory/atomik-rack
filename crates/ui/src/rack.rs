@@ -227,6 +227,8 @@ enum Hit {
     Plugin(usize, PluginButton),
     /// The BYPASS switch of a built-in effect's name strip.
     Bypass(usize),
+    /// The lock button of a console strip's name strip.
+    StripLock(usize),
     /// The play (preview) button of a note player's name strip.
     Preview(usize),
     /// A part of the patch strip on the foot of a name plate.
@@ -309,6 +311,7 @@ impl Hit {
             | Hit::MacroName(i, _)
             | Hit::Plugin(i, _)
             | Hit::Bypass(i)
+            | Hit::StripLock(i)
             | Hit::Preview(i)
             | Hit::Patch(i, _)
             | Hit::Control(i, _)
@@ -392,6 +395,9 @@ struct DeviceView {
     automated: Vec<String>,
     /// Container panel: the console already has a channel fed by this container.
     has_channel: bool,
+    /// The strip of this panel is locked (a channel, a bus or the master; see
+    /// `atomik_model::console_lock`): its lock button is closed and its controls are dimmed.
+    locked: bool,
     /// Plugin panel: what the app knows about the live instance.
     plugin_status: PluginDeviceStatus,
     /// Plugin panel: identity of the descriptor the panel was built from (0 for none), so a
@@ -458,6 +464,10 @@ impl DeviceView {
                 .desc
                 .as_ref()
                 .is_some_and(|d| crate::mix_panel::has_mix_top(d.type_id))
+    }
+    /// The panel is a console strip (a channel, a bus or the master): it has the lock button.
+    fn has_lock(&self) -> bool {
+        self.is_mix() || self.is_master()
     }
     /// The panel is the master section panel.
     fn is_master(&self) -> bool {
@@ -1373,16 +1383,19 @@ impl RackView {
             let driven = self.driven_for(&d.key);
             let automated = self.automated_for(&d.key);
             let has_channel = doc.console.channel_of(&d.key).is_some();
+            let locked = doc.console.is_locked(&d.key);
             let v = &mut self.devices[i + 1];
             if (!same_doc && v.device.as_ref() != Some(d))
                 || v.driven != driven
                 || v.automated != automated
+                || v.locked != locked
                 || v.has_channel != has_channel
             {
                 renewed |= v.device.as_ref().is_some_and(|old| old.name != d.name);
                 v.driven = driven;
                 v.automated = automated;
                 v.has_channel = has_channel;
+                v.locked = locked;
                 v.name.clone_from(&d.name);
                 v.accent = self.theme.accent_for(d);
                 v.device = Some(d.clone());
@@ -1726,6 +1739,7 @@ impl RackView {
             driven: Vec::new(),
             automated: Vec::new(),
             has_channel: false,
+            locked: false,
             plugin_status: PluginDeviceStatus::default(),
             desc_id: 0,
             socket_device: None,
@@ -1830,6 +1844,7 @@ impl RackView {
             let driven = self.driven_for(&d.key);
             let automated = self.automated_for(&d.key);
             let has_channel = doc.console.channel_of(&d.key).is_some();
+            let locked = doc.console.is_locked(&d.key);
             let mut prev = old.remove(&d.key);
             let meters = prev.as_ref().map(|p| p.meters.clone()).unwrap_or_default();
             let match_db = prev.as_ref().and_then(|p| p.match_db);
@@ -1879,6 +1894,7 @@ impl RackView {
                         && p.driven == driven
                         && p.automated == automated
                         && p.has_channel == has_channel
+                        && p.locked == locked
                         && p.pad == pad
                         && p.pad_names == pad_names
                         && p.pad_cabled == pad_cabled
@@ -1930,6 +1946,7 @@ impl RackView {
                 driven,
                 automated,
                 has_channel,
+                locked,
                 plugin_status,
                 desc_id,
                 socket_device: None,
@@ -1990,6 +2007,7 @@ impl RackView {
                 driven: Vec::new(),
                 automated: Vec::new(),
                 has_channel: false,
+                locked: false,
                 plugin_status: PluginDeviceStatus::default(),
                 desc_id: 0,
                 socket_device: Some(DeviceKey(BOUNDARY_KEY.to_string())),
@@ -2067,6 +2085,14 @@ impl RackView {
                     Hit::Fold(i),
                     false,
                 );
+                if d.has_lock() && !d.folded && self.flip == Flip::Front {
+                    tree.add(
+                        pn,
+                        paint::lock_button_rect(d.height) + off,
+                        Hit::StripLock(i),
+                        false,
+                    );
+                }
                 if d.has_strip_bypass() {
                     let bypass = if d.has_preview() {
                         paint::player_bypass_rect(d.height, d.folded)
@@ -3389,6 +3415,14 @@ impl RackView {
                         PatchOp::Save => "Save this device as a patch".to_string(),
                     })
                 }
+                Some(Hit::StripLock(i)) if self.button_tips => Some(
+                    if self.devices[i].locked {
+                        "Unlock channel"
+                    } else {
+                        "Lock channel (blocks every edit; automation still plays)"
+                    }
+                    .to_string(),
+                ),
                 Some(Hit::Preview(i)) if self.button_tips => {
                     Some(if self.previewing.as_ref() == Some(&self.devices[i].key) {
                         "Click to stop the preview".to_string()
@@ -4153,7 +4187,17 @@ impl RackView {
         }
         let Some(hit) = self.hit(pos) else { return };
         let rp = self.view_to_rack(pos);
+        // A locked strip takes no edit: its controls and mix parts do not react.
+        if button == PointerButton::Primary
+            && matches!(hit, Hit::Control(..) | Hit::Mix(..))
+            && let Some(i) = hit.device()
+            && self.devices[i].locked
+        {
+            self.notify_rejected(format!("Channel {} is locked", self.devices[i].name));
+            return;
+        }
         match (hit, button) {
+            (Hit::StripLock(i), PointerButton::Primary) => self.lock_down(i, out),
             (Hit::Fold(i), PointerButton::Primary) if modifiers.alt => {
                 // Alt folds or unfolds the whole column the device is in, to the state the
                 // click would give this device.
@@ -4468,6 +4512,18 @@ impl RackView {
     fn preview_down(&mut self, i: usize, out: &mut Vec<UiAction>) {
         self.select(i, out);
         out.push(UiAction::PreviewPlayer(self.devices[i].key.clone()));
+    }
+
+    /// A press on the lock button of a console strip: locks it, or unlocks it when it is locked.
+    fn lock_down(&mut self, i: usize, out: &mut Vec<UiAction>) {
+        self.select(i, out);
+        let d = &self.devices[i];
+        out.push(UiAction::Command(Command::Console(
+            ConsoleCommand::SetLocked {
+                strips: vec![d.key.clone()],
+                locked: !d.locked,
+            },
+        )));
     }
 
     fn bypass_down(&mut self, i: usize, out: &mut Vec<UiAction>) {
@@ -5457,6 +5513,7 @@ impl RackView {
             song_chord: self.song_harmony.1.as_deref(),
             sampling: self.sampling.as_ref() == Some(&d.key),
             previewing: self.previewing.as_ref() == Some(&d.key),
+            lock: d.has_lock().then_some(d.locked),
             match_db: d.match_db,
             grain: crate::granular_panel::GrainInfo {
                 meters: &d.meters,

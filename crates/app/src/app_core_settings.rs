@@ -76,12 +76,41 @@ impl<S: EngineSink> AppCore<S> {
         .is_ok()
     }
 
+    /// Mixer > Lock / Unlock Channel: the selected strips are locked, or unlocked when every one
+    /// of them already is (one undo step). False, with a message, when nothing is selected.
+    pub fn toggle_strip_lock(&mut self, pane: Pane) -> bool {
+        let strips = self.settings_strips(pane);
+        if strips.is_empty() {
+            self.reject("Select one or more channels to lock".into());
+            return false;
+        }
+        let locked = !strips.iter().all(|s| self.doc().console.is_locked(s));
+        self.apply_command(Command::Console(ConsoleCommand::SetLocked {
+            strips,
+            locked,
+        }))
+        .is_ok()
+    }
+
+    /// The strips that are not locked; the locked ones are left out and reported once.
+    fn leave_out_locked(&mut self, strips: Vec<DeviceKey>) -> Vec<DeviceKey> {
+        let (locked, free): (Vec<_>, Vec<_>) = strips
+            .into_iter()
+            .partition(|s| self.doc().console.is_locked(s));
+        self.report_locked(&locked);
+        free
+    }
+
     /// Mixer > Reset Channel: every selected strip back to a fresh one, its routing kept, in one
     /// undo step. False, with a message, when nothing is selected.
     pub fn reset_strips(&mut self, pane: Pane) -> bool {
         let strips = self.settings_strips(pane);
         if strips.is_empty() {
             self.reject("Select one or more channels to reset".into());
+            return false;
+        }
+        let strips = self.leave_out_locked(strips);
+        if strips.is_empty() {
             return false;
         }
         let commands = strips
@@ -102,6 +131,10 @@ impl<S: EngineSink> AppCore<S> {
         let strips = self.settings_strips(pane);
         if strips.is_empty() {
             self.reject("Select one or more channels to clear the inserts of".into());
+            return false;
+        }
+        let strips = self.leave_out_locked(strips);
+        if strips.is_empty() {
             return false;
         }
         let commands = strips

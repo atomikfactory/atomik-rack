@@ -47,7 +47,7 @@ The picture shows the main arrows only; the table below is exact.
 | `atomik-download` | [crates/download](../crates/download) | none (sha2, ureq, thiserror) | none | The one-time download of model files, shared by the hand models and the stem models: `ModelFile` (name, one fixed HTTPS address, exact size and SHA-256, all constants in the crate that owns the files), `ModelStore` (`status`, `verified_paths` which checks again before a file is loaded, and `download`, which writes under temporary names, checks each file and only then renames them all into place, so a failure, a mismatch or a cancel leaves nothing behind), the `Fetcher` trait with `UreqFetcher` (rustls, HTTPS only, no redirect, a generic User-Agent, nothing about the user or the machine) and `FakeFetcher` for tests |
 | `atomik-stems` | [crates/stems](../crates/stems) | none (thiserror) | none | Stem separation by signal processing, pure and deterministic, with no model and no download: an STFT (`Stft`, 2048 points, hop 512) and `separate`: chunks of 20 s with 1 s of context and a linear crossfade, a harmonic/percussive split by median filters across time and across frequency (soft masks) for the drums, the harmonic part below a 150 Hz crossover for the bass, the centred harmonic part above it for the vocals (a mono input gets the 200 Hz to 5 kHz band at a lower weight) and the residual for the other stem, so the four add up to the mix; a progress callback, a cancel flag and a `StemSink` that receives the finished samples in order |
 | `atomik-tab` | [crates/tab](../crates/tab) | core (thiserror, quick-xml, flate2, pdf-writer) | none | Fretted-instrument tablature, pure and headless: the instrument catalogue (`instrument.rs`: strings in tab order with re-entrant tunings, the banjo drone with its start fret, doubled courses, capo and partial capo, custom tunings of 1 to 12 strings), cost-based fretting with a Viterbi pass over sequences (`fretting.rs`), the spelled chord-name grammar (`chord.rs`) and key-aware transposer with capo shapes (`transpose.rs`), the grader of a played pass (`grade.rs`: verdicts, accuracy, session, latency calibration), the chord trainer's chord sets, timed and listen drills and best scores per chord pair (`trainer.rs`, see 6zb), the voicing generator for any tuning with fingers, barres, ranking and a cache (`voicing.rs`), chord sheets in the chords-over-lyrics and bracket forms (`sheet.rs`), the neutral `TabScore` with tracks, notes and techniques (`score.rs`), ASCII tab read and write (`ascii.rs`), the Guitar Pro readers for `.gp3`, `.gp4`, `.gp5`, `.gpx` and `.gp` (`gp/`, see 6t) and MusicXML read and write (`musicxml/`, see 6v), and the PDF printouts of a tab and of a chord sheet (`pdf/`, see 6zc) |
-| `atomik-model` | [crates/model](../crates/model) | core, device-sdk, tab | none | The document: rack, cables, console, song, sample pool, sampler zones, clip step grids; commands, undo, `.atomik` files (format v45), track folders, colours and comments (`organise.rs`), the music theory of the note editors (`theory.rs`), sequencer patterns (`steps.rs`), auto-mapping, pad helpers and slicing helpers (`slices.rs`), the generated documents of the stress options and benches (`stress.rs`), the tab sidecar of note clips (`tab_data.rs`), its edit operations (`tab_edit.rs`) and the technique renderer (`tab_render.rs`), the song chord sheets (`chord_sheets.rs`) |
+| `atomik-model` | [crates/model](../crates/model) | core, device-sdk, tab | none | The document: rack, cables, console, song, sample pool, sampler zones, clip step grids; commands, undo, `.atomik` files (format v46), track folders, colours and comments (`organise.rs`), the music theory of the note editors (`theory.rs`), sequencer patterns (`steps.rs`), auto-mapping, pad helpers and slicing helpers (`slices.rs`), the generated documents of the stress options and benches (`stress.rs`), the tab sidecar of note clips (`tab_data.rs`), its edit operations (`tab_edit.rs`) and the technique renderer (`tab_render.rs`), the song chord sheets (`chord_sheets.rs`) |
 | `atomik-audio-io` | [crates/audio-io](../crates/audio-io) | core, engine | none | cpal streams driving the engine, duplex input, telemetry |
 | `atomik-midi-io` | [crates/midi-io](../crates/midi-io) | core, device-sdk, engine | none | MIDI input and exact event timing, the timed MIDI output scheduler (`out`: a queue per port, the frame-to-time conversion and the output thread), the parser of the control path (`parse_message`), raw ports for control surfaces (`ports`), the control-surface drivers (`surface`: pure, bytes in, actions out, bytes out) and the Standard MIDI File reader and writer (`smf`, pure bytes) |
 | `atomik-plugin-host` | [crates/plugin-host](../crates/plugin-host) | core, device-sdk | `src/fpenv.rs`, `src/ole.rs`, `src/procgroup.rs` | Format-neutral plugin hosting: `PluginDevice`, `PluginManager`, slot and hand-shake, scan, cache, catalog, journal, settings, stand-ins |
@@ -264,7 +264,8 @@ WAV ◄──wav::write── Vec<Vec<f32>> ◄──render_offline── Engine
   (`view.toggle_rack_navigator`, no default key) toggles it; the choice is `show_rack_navigator` in
   `ui-state.json` (default on). A new `RackView` has it off, so hosts and goldens that do not ask
   for it are unchanged.
-- **Project files** are `.atomik` JSON, format version 45 (older versions still load; version 45 files say
+- **Project files** are `.atomik` JSON, format version 46 (older versions still load; version 46 adds the console
+  `"locked"` list, ignorable and written only when a strip is locked; version 45 files say
   `"compat": 44` and list the root `"headphone"` map (the data imported into Headphone Correction devices, keyed by the device's
   path key, written only when a device has any; see `crates/model/src/headphone.rs`), the launcher, the per-note
   expression, a note clip's `"tab"`, the song's `"sheets"` (see 6s) and the song's `"key"`, `"key_changes"` and
@@ -3563,6 +3564,25 @@ planned on a scratch copy.
   strip without the link is bit for bit the old strip, so the flag off reproduces the old bounce.
   See the bus section of the device reference for the timing.
 
+### Locked strips (model, console, rack and app)
+
+- **State.** `Console::locked` holds the keys of the locked channels, buses and master (sorted, saved as the console
+  field `"locked"`, format 46, an ignorable row of the schema table). `ConsoleCommand::SetLocked` swaps the whole
+  list (`Swap::Locks`), one undo step.
+- **One enforcement point.** `Document::apply` screens the planned edit with `console_lock::screen` before it
+  performs it: an edit of a param, name, colour, plugin data or macro assignment of a locked strip or of an effect on
+  its insert chain (the chain is derived from the cables), an insert or removal, a cable at an `insert_*` socket or at
+  such an effect, a change of the strip's console entry, is refused with `ModelError::Locked` and the document is
+  unchanged. In a command that edits several strips the plain value edits of locked strips are left out instead
+  (`Document::take_lock_skips` names the strips), and `console_lock::trim_command` takes locked strips out of a paste.
+  Undo, redo, automation playback and the lane writes of recording are not edits of the strip and never come here.
+  No source writes a strip's engine params around the document: MIDI learn and the wheel apply `SetParam`, a bank
+  macro that already drives a param keeps driving it through the expansion (like automation), and assigning or
+  ranging a locked param is refused.
+- **UI.** The console name plate and the rack panel's name strip have the padlock (`paint::padlock`); locked controls
+  are drawn under a veil and the console and the rack do not react to them. The app shows "Channel <name> is locked"
+  once per gesture (`AppCore::note_locked`, cleared by `UiAction::EndMerge` or a command that goes through).
+
 ### Output buses (console, rack and app)
 
 - **Model helper.** `console::output_options(doc, strip)` lists the destinations a strip's selector
@@ -5702,7 +5722,7 @@ the context menus in the **Clipboard, selection and context menus** bullet, and 
 creation chain in the **Creation chain** bullet.
 
 - **Registry and keymap data** ([ui/src/keymap](../crates/ui/src/keymap), pure, no window system).
-  `Registry::bundled()` lists every command (664) by a stable dotted id with label, group, default
+  `Registry::bundled()` lists every command (665) by a stable dotted id with label, group, default
   context, an optional choice argument, and the flags `repeatable`, `menu` and `can_decline`.
   `default_keymap.json` (embedded) holds two profiles, `standard` and `legacy` (the keys of earlier
   versions), as `{ command, arg?, context, chords, os? }`. `Cmd` in a chord is the logical primary
