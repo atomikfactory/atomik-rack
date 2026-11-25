@@ -1248,6 +1248,23 @@ outliers and do not repeat in the other rows. The harness thread spins between c
 bounds of a driver's thread (caches and clock stay warm); only a comparison between builds on this machine means
 something.
 
+### Children with no console host (2026-11-25)
+
+The same sweep, the same machine and build, after the sandbox and the scanner started their children with
+`DETACHED_PROCESS` instead of `CREATE_NO_WINDOW`. The `consoles` column (console hosts below this process) is 0 in
+every row; it was one per child. One run, per instance, null shell (the clap and vst3 rows differ by the plugin
+library only):
+
+| Row | children | MB (before, after) | threads (before, after) | handles (before, after) |
+|---|---|---|---|---|
+| child each, N = 10 | 10 | 3.3, 2.2 | 14.0, 12.0 | 235, 146 |
+| child each, N = 30 | 30 | 3.3, 2.1 | 14.0, 12.0 | 235, 146 |
+| child per file, N = 30 | 2 | 0.7, 0.7 | 4.9, 4.7 | 23.1, 17.1 |
+| one shared child, N = 30 | 2 | 0.7, 0.6 | 4.9, 4.7 | 23.1, 17.1 |
+
+Load per instance, CPU and the plugin libraries' own bytes did not change beyond the run-to-run spread (child each
+40 ms before, 30 ms after on this run; one run of each, not a claimed gain).
+
 ## Thin LTO for the shipped programs: measured, not adopted (2026-11-24)
 
 Release build vs the same build with `lto = "thin"` (codegen-units unchanged). atomik-render, `--loop-count 4`, median of 5, process CPU ms:

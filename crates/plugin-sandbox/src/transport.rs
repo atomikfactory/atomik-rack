@@ -129,8 +129,10 @@ pub(crate) fn spawn_process(
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
-        // CREATE_NO_WINDOW: no console flashes up for every plugin process.
-        cmd.creation_flags(0x0800_0000);
+        // DETACHED_PROCESS: the child has no console, so the system starts no console host for
+        // it (CREATE_NO_WINDOW would give it a hidden one: a second process per plugin). The
+        // three standard streams are pipes and work the same without a console.
+        cmd.creation_flags(0x0000_0008);
     }
     let mut child = cmd.spawn()?;
     // The child ends with the app, however the app ends. A child that cannot be bound still

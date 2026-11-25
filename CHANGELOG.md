@@ -96,6 +96,11 @@ may break APIs and the patch and project formats.
 - **A knob turned while a song plays re-applies only the automation of that knob.** Any control message used to make
   every automation lane write its value again at the next batch; now only the lanes of that device and parameter do.
   Rendered audio does not change.
+- **One process fewer per plugin on Windows.** A sandboxed plugin's process and a plugin scan's process now start with
+  no console at all, instead of a hidden one, so the system no longer starts a console host next to each of them.
+  Measured with the plugin sweep, a plugin process of its own costs 2.1 MB, 12 threads and 146 handles per instance
+  (was 3.3 MB, 14 threads and 235 handles). The standard streams, the log lines, crash reports and the scan's output
+  work as before.
 - **An idle window no longer allocates, and a playing one barely does.** With a project open, the console and rack
   meter feeds built a list and copied a device key per strip every frame (19 heap operations a frame, 38 while playing,
   the playhead also compiling the tempo table each frame). The feeds now pass references and keep their buffer, the
