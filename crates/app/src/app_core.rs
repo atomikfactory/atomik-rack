@@ -319,6 +319,9 @@ pub struct AppCore<S: EngineSink> {
     open_stages: Stages,
     target: Arc<NoteTarget>,
     rejection: Option<String>,
+    /// The last "channel is locked" message shown: not shown again until a gesture ends or a command
+    /// goes through, so a drag on a locked fader reports once.
+    lock_notice: Option<String>,
     /// A safe-mode run (`--safe`): only the window title reads it.
     safe_mode: bool,
     arrangement: ArrangementView,
@@ -697,6 +700,7 @@ impl<S: EngineSink> AppCore<S> {
             recent_path: None,
             target,
             rejection: None,
+            lock_notice: None,
             safe_mode: false,
             arrangement: ArrangementView::new(theme.clone()),
             piano_roll: PianoRollView::new(theme.clone()),
@@ -1227,10 +1231,20 @@ impl<S: EngineSink> AppCore<S> {
                 if !moved_notes.is_empty() {
                     self.report(moved_notes.join(" "));
                 }
+                let skipped = self.document.take_lock_skips();
+                if skipped.is_empty() {
+                    self.lock_notice = None;
+                } else {
+                    self.report_locked(&skipped);
+                }
                 Ok(())
             }
             Err(e) => {
-                self.reject(e.to_string());
+                if let ModelError::Locked(message) = &e {
+                    self.note_locked(message.clone());
+                } else {
+                    self.reject(e.to_string());
+                }
                 Err(e)
             }
         }
@@ -1274,6 +1288,7 @@ impl<S: EngineSink> AppCore<S> {
                 self.history_goto(row);
             }
             UiAction::EndMerge => {
+                self.lock_notice = None;
                 if let Some(id) = self.keep_pending.take() {
                     self.complete_note_edit(id);
                 }
@@ -3006,6 +3021,26 @@ impl<S: EngineSink> AppCore<S> {
     /// rejection.
     pub fn report(&mut self, message: impl Into<String>) {
         self.reject(message.into());
+    }
+
+    /// Tells the user, once per gesture, that locked strips were left out of an edit.
+    pub(super) fn report_locked(&mut self, strips: &[DeviceKey]) {
+        let Some(first) = strips.first() else {
+            return;
+        };
+        let name = self
+            .doc()
+            .device(first)
+            .map_or_else(|| first.0.clone(), |d| d.name.clone());
+        self.note_locked(format!("Channel {name} is locked"));
+    }
+
+    fn note_locked(&mut self, message: String) {
+        if self.lock_notice.as_ref() == Some(&message) {
+            return;
+        }
+        self.lock_notice = Some(message.clone());
+        self.reject(message);
     }
 
     fn reject(&mut self, message: String) {

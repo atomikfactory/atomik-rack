@@ -1917,6 +1917,13 @@ const COMMANDS: &[CommandDef] = &[
     .menu(),
     cmd("mixer.reset_strip", "Reset Channel", G::Mixer, C::Global).menu(),
     cmd(
+        "mixer.lock_channel",
+        "Lock / Unlock Channel",
+        G::Mixer,
+        C::Global,
+    )
+    .menu(),
+    cmd(
         "mixer.route_folder",
         "Route Folder to New Bus",
         G::Mixer,

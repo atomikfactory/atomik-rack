@@ -217,6 +217,7 @@ fn the_mixer_menu_and_the_view_menu_without_a_console_devices_switch() {
             ("Copy Channel Settings", None),
             ("Paste Channel Settings", None),
             ("Reset Channel", None),
+            ("Lock / Unlock Channel", None),
             ("Store Snapshot", None),
             ("Update Snapshot", None),
             ("Recall Snapshot", None),

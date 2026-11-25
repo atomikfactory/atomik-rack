@@ -473,6 +473,9 @@ pub struct PanelInfo<'a> {
     pub sampling: bool,
     /// The preview of this note player runs: its play button on the name strip is lit.
     pub previewing: bool,
+    /// A console strip panel (a channel, a bus or the master): `Some(locked)` draws the lock button
+    /// in the name strip and, while locked, dims the controls.
+    pub lock: Option<bool>,
     /// The loudness match of this effect is on and applies this gain, in dB (drawn above the
     /// BYPASS switch).
     pub match_db: Option<f32>,
@@ -589,6 +592,35 @@ pub fn player_bypass_rect(height: f64, folded: bool) -> Rect {
         b
     } else {
         Rect::new(b.x0 + PREVIEW_W + 2.0, b.y0, b.x1, b.y1)
+    }
+}
+
+/// The lock button of a console strip's name strip, in panel coordinates: a small square where the
+/// BYPASS switch of an effect sits.
+pub fn lock_button_rect(height: f64) -> Rect {
+    let b = bypass_button_rect(height, false);
+    Rect::new(b.x0, b.y0, b.x0 + 22.0, b.y1)
+}
+
+/// A padlock: the shackle closed and the body filled while locked, the shackle open and the lines
+/// faint while not.
+pub fn padlock<C: Canvas + ?Sized>(c: &mut C, theme: &Theme, r: Rect, locked: bool) {
+    let col = if locked {
+        theme.highlight
+    } else {
+        theme.text_muted.with_alpha(0.7)
+    };
+    let body = Rect::new(r.x0 + 1.0, r.y0 + 5.5, r.x1 - 1.0, r.y1 - 0.5);
+    let (l, rt) = (body.x0 + 2.0, body.x1 - 2.0);
+    let top = r.y0 + 0.5;
+    c.stroke_with(Line::new(pt(l, body.y0), pt(l, top + 1.5)), 1.2, col);
+    c.stroke_with(Line::new(pt(l, top + 1.5), pt(rt, top + 1.5)), 1.2, col);
+    if locked {
+        c.stroke_with(Line::new(pt(rt, top + 1.5), pt(rt, body.y0)), 1.2, col);
+        c.fill_with(RoundedRect::from_rect(body, 1.5), col);
+    } else {
+        c.stroke_with(Line::new(pt(rt, top + 1.5), pt(rt, top + 3.0)), 1.2, col);
+        c.stroke_with(RoundedRect::from_rect(body, 1.5), 1.0, col);
     }
 }
 
@@ -827,6 +859,17 @@ fn plate<C: Canvas + ?Sized>(c: &mut C, theme: &Theme, info: &PanelInfo<'_>) {
         );
     }
     // The TUNER switch of an audio track (front only: the back is for the sockets).
+    // The lock button of a console strip (front only), where the BYPASS switch of an effect sits.
+    if let (Some(locked), false, Side::Front) = (info.lock, info.folded, info.side) {
+        let r = lock_button_rect(info.height);
+        crate::plugin_panel::led_button(c, theme, r, "", None, true, info.accent);
+        padlock(
+            c,
+            theme,
+            Rect::from_center_size(r.center(), (11.0, 12.0)),
+            locked,
+        );
+    }
     let tuner = tuner_plate(info) && !info.folded && info.side == Side::Front;
     if tuner {
         crate::plugin_panel::led_button(
@@ -1111,6 +1154,18 @@ fn section_title<C: Canvas + ?Sized>(c: &mut C, theme: &Theme, s: &Section) {
 
 /// Records one device panel.
 pub fn record_panel<C: Canvas + ?Sized>(c: &mut C, theme: &Theme, info: &PanelInfo<'_>) {
+    record_panel_body(c, theme, info);
+    // A locked strip is drawn dimmed: still readable, and it does not react.
+    if info.lock == Some(true) && !info.folded {
+        let plate = plate_rect(info.height, false);
+        c.fill_with(
+            Rect::new(plate.x1, 0.0, 4000.0, info.height),
+            theme.dim.with_alpha(0.3),
+        );
+    }
+}
+
+fn record_panel_body<C: Canvas + ?Sized>(c: &mut C, theme: &Theme, info: &PanelInfo<'_>) {
     ears(c, theme, info.height, info.seed);
     body(c, theme, info.height, info.side, info.accent);
     plate(c, theme, info);

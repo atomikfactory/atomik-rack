@@ -858,7 +858,7 @@ fn console_with_buses_matches_golden() {
 }
 
 /// What every strip menu ends with: the channel settings commands.
-const SETTINGS_ITEMS: [&str; 13] = [
+const SETTINGS_ITEMS: [&str; 14] = [
     "Cut strip",
     "Copy strip",
     "Paste strip",
@@ -868,6 +868,7 @@ const SETTINGS_ITEMS: [&str; 13] = [
     "Copy sends",
     "Copy inserts",
     "Paste settings",
+    "Lock / unlock channel",
     "Reset channel",
     "Clear inserts",
     "Create parallel channel",
