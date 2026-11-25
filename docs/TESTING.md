@@ -71,7 +71,8 @@ Fakes (`ConstantSource`, `ImpulseOnNote`, `Passthrough`, `NoteThru`, `CallLog`, 
 and no other crate's test build pays for it) is the one fake audio host. `FakeAudio` clones share one state: hand a
 clone to the code under test and keep one to script it and to read the counts. Both programs have a trait for the
 outside world (`AudioBackend` in `session.rs`, `Backend` in `atomik-play`) and implement it in their tests as a thin
-adapter that answers `list_audio`, `list_midi` and `start` with the calls of the same names; the app does it once for
+adapter that answers `list_audio` and `list_midi` with the calls of the same names and `starter` (the call the audio
+worker runs) with a closure over a clone of `FakeAudio`; the app does it once for
 all its test modules in `crates/app/src/test_backend.rs`, and a test that also needs MIDI ports to play notes into
 wraps `FakeAudio` and opens its own ports (`session_tests.rs`, `shell_audio_setup_tests.rs`).
 
@@ -89,6 +90,7 @@ passes instants.
 | `callback_cost_ns(ns)` | each callback takes `ns` of simulated render time against its period; above the period it is a render overrun and an xrun; the load figures cover the callbacks since the previous read |
 | `set_telemetry(t)` | pins the figures: every read returns exactly `t` |
 | `fail_next_start`, `fail_starts`, `break_device`, `fail_input`, `limit_host_inputs`, `fail_list`, `accept_buffer` | the failures and refusals a host can answer |
+| `hold_starts()`, `hold_stops()`, `fail_stops(error)`, `stop_works()` | a start or a stop that blocks, as a slow driver does, until the returned `Hold` is released (`Hold::waiting()` says a call is blocked; no clock is involved), and a stop that never hands the engine back; the audio worker's tests (`session_start_tests.rs`) use them |
 | `start_calls()`, `starts()`, `stops()`, `lists()`, `midi_lists()`, `open_streams()`, `with_engine(f)` | what the code under test did; `with_engine` runs `f` on the open stream's engine as the callback would |
 
 `crates/testkit/tests/fake_backend.rs` tests the knobs themselves (run it with `--features backend`). The scenarios are
