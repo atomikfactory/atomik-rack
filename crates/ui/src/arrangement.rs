@@ -984,6 +984,9 @@ pub struct ArrangementView {
     samples: BTreeMap<String, Arc<[Vec<f32>]>>,
     assets: BTreeMap<String, AssetMeta>,
     tempo: TempoMap,
+    /// The song's tempo events compiled for the playhead's per-frame lookup; rebuilt with
+    /// `tempo` whenever the song changes.
+    tempo_curve: crate::tempo_lane::TempoCurve,
     /// The meter map: bar lines, beat lines, bar numbers and the snap grid.
     bars: Bars,
     /// Whether the tempo lane is shown between the ruler and the lanes.
@@ -1125,6 +1128,7 @@ impl ArrangementView {
             samples: BTreeMap::new(),
             assets: BTreeMap::new(),
             tempo: TempoMap::default(),
+            tempo_curve: crate::tempo_lane::TempoCurve::default(),
             bars: Bars::default(),
             tempo_lane: false,
             energy_lane: false,
@@ -1213,8 +1217,7 @@ impl ArrangementView {
             if !self.ghosts.is_empty() {
                 self.repaint = true;
             } else if px(old) != px(tick)
-                || crate::tempo_lane::tempo_at(&self.song.tempo, old).to_bits()
-                    != crate::tempo_lane::tempo_at(&self.song.tempo, tick).to_bits()
+                || self.tempo_curve.at(old).to_bits() != self.tempo_curve.at(tick).to_bits()
             {
                 // The cached lanes and track list stay as they are.
                 self.playhead_dirty = true;
@@ -2136,6 +2139,7 @@ impl ArrangementView {
             self.tk.open.clone_from(&self.song.org.open_takes);
         }
         self.tempo = TempoMap::new(&self.song.tempo);
+        self.tempo_curve = crate::tempo_lane::TempoCurve::new(&self.song.tempo);
         self.bars = Bars::of(&self.song);
         self.rebuild_audio_ui();
         self.assets.clone_from(&doc.assets);

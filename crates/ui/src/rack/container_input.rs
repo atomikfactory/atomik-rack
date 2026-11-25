@@ -437,12 +437,28 @@ impl RackView {
 
     /// The view key of a device: a path key inside the scope loses the scope's prefix.
     pub(super) fn local_key(&self, key: &DeviceKey) -> DeviceKey {
-        if let Some(p) = self.scope_path()
-            && let Some(rest) = key.0.strip_prefix(&format!("{}/", p.0))
-        {
-            return DeviceKey(rest.to_string());
+        let name = self.local_name(key);
+        if name.len() == key.0.len() {
+            return key.clone();
         }
-        key.clone()
+        DeviceKey(name.to_string())
+    }
+
+    /// The text of [`Self::local_key`], borrowed from `key`: the per-frame feeds look a device up
+    /// by it without building a key. A key outside the scope (or at the top level) is returned
+    /// whole.
+    pub(super) fn local_name<'a>(&self, key: &'a DeviceKey) -> &'a str {
+        let mut rest = key.0.as_str();
+        for segment in &self.scope {
+            let Some(after) = rest
+                .strip_prefix(segment.0.as_str())
+                .and_then(|r| r.strip_prefix('/'))
+            else {
+                return key.0.as_str();
+            };
+            rest = after;
+        }
+        rest
     }
 
     /// The device views that are real devices (not the boundary panels).

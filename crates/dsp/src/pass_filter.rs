@@ -67,6 +67,12 @@ impl PassFilter {
         self.second.snap();
     }
 
+    /// True when both sections are at rest ([`SmoothedBiquad::is_at_rest`]).
+    #[inline]
+    pub fn is_at_rest(&self) -> bool {
+        self.first.is_at_rest() && self.second.is_at_rest()
+    }
+
     /// Magnitude response in dB of the current coefficients.
     pub fn response_db(&self, freq: f32) -> f32 {
         self.first.response_db(freq) + self.second.response_db(freq)
@@ -154,5 +160,36 @@ mod tests {
             f.process(0.0, 0.0);
         }
         assert!(f.response_db(2_000.0) < -50.0, "arrived");
+    }
+}
+
+#[cfg(test)]
+mod rest_tests {
+    use super::*;
+
+    #[test]
+    fn a_filter_is_at_rest_when_settled_and_its_history_is_clear() {
+        for kind in [PassKind::Highpass, PassKind::Lowpass] {
+            let mut f = PassFilter::new(kind, 800.0, 48_000.0);
+            assert!(f.is_at_rest(), "new");
+            f.process(0.5, -0.5);
+            assert!(!f.is_at_rest(), "{kind:?}: it holds a signal");
+            let mut samples = 0;
+            while !f.is_at_rest() {
+                let (l, r) = f.process(0.0, 0.0);
+                assert!(l.abs() < 1.0 && r.abs() < 1.0);
+                samples += 1;
+                assert!(samples < 200_000, "{kind:?}: it never came to rest");
+            }
+            // At rest a silent sample is `+0.0` and changes nothing.
+            let before = f.clone();
+            let (l, r) = f.process(0.0, 0.0);
+            assert_eq!((l.to_bits(), r.to_bits()), (0, 0));
+            assert!(f == before);
+            f.set_freq(1_000.0);
+            assert!(!f.is_at_rest(), "{kind:?}: the corner is moving");
+            f.reset();
+            assert!(f.is_at_rest());
+        }
     }
 }

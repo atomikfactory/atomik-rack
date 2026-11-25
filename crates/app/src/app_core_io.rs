@@ -164,6 +164,22 @@ impl<S: EngineSink> AppCore<S> {
         &self,
         shared: &[(Endpoint, MeterReading)],
     ) -> Vec<(DeviceKey, ChannelMeters)> {
+        let mut values = Vec::new();
+        self.console_readings_into(shared, &mut values);
+        self.meter_points
+            .iter()
+            .map(|(k, _)| k.clone())
+            .zip(values)
+            .collect()
+    }
+
+    /// [`Self::console_readings_with`] without the keys: `out` gets one reading per entry of
+    /// `meter_points`, in order (a buffer the caller keeps from frame to frame).
+    pub(super) fn console_readings_into(
+        &self,
+        shared: &[(Endpoint, MeterReading)],
+        out: &mut Vec<ChannelMeters>,
+    ) {
         let read = |e: &Endpoint| {
             shared
                 .iter()
@@ -171,10 +187,18 @@ impl<S: EngineSink> AppCore<S> {
                 .map(|(_, r)| *r)
                 .or_else(|| self.sink.read_meter(*e))
         };
-        self.meter_points
-            .iter()
-            .map(|(k, [l, r, g])| (k.clone(), channel_meters(read(l), read(r), read(g))))
-            .collect()
+        out.clear();
+        out.extend(
+            self.meter_points
+                .iter()
+                .map(|(_, [l, r, g])| channel_meters(read(l), read(r), read(g))),
+        );
+    }
+
+    /// The reading of strip `key` in the frame's readings ([`Self::update_console_meters`]).
+    pub(super) fn frame_reading(&self, key: &DeviceKey) -> Option<ChannelMeters> {
+        let i = self.meter_points.iter().position(|(k, _)| k == key)?;
+        self.frame_readings.get(i).copied()
     }
 }
 

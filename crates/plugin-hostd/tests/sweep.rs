@@ -75,7 +75,7 @@ struct Tally {
     /// The processes below this one, not counting console hosts.
     children: usize,
     /// The console hosts below this one: on Windows the system starts a hidden one for each
-    /// child that has no window.
+    /// child that has a console it did not inherit; the children here are detached and have none.
     consoles: usize,
     /// Their names.
     names: Vec<String>,
@@ -236,8 +236,8 @@ fn clock() -> f64 {
     START.get_or_init(Instant::now).elapsed().as_secs_f64()
 }
 
-/// Whether a process is the system's console host (the hidden console of a child without a
-/// window), which is not a plugin process.
+/// Whether a process is the system's console host, which is not a plugin process (and which no
+/// child of the sandbox has on Windows: they start detached from any console).
 fn is_console_host(name: &str) -> bool {
     name.eq_ignore_ascii_case("conhost.exe") || name.eq_ignore_ascii_case("OpenConsole.exe")
 }
@@ -638,10 +638,7 @@ fn three_instances_have_the_expected_child_processes_and_threads() {
             t.children, THREE,
             "one child each: processes below this one"
         );
-        assert!(
-            t.consoles <= t.children,
-            "at most one console host per child: {t:?}"
-        );
+        assert_eq!(t.consoles, 0, "no console host for a child: {t:?}");
         assert!(
             t.child_threads.windows(2).all(|w| w[0] == w[1]),
             "the children of one program have as many threads as each other: {:?}",

@@ -31,6 +31,17 @@ may break APIs and the patch and project formats.
   processes per instance and the idle CPU of the instances processing silence. An ordinary test of the same file
   asserts the counts that do not depend on the machine (children per mode, threads of a shared child, nothing left
   behind). No behaviour of the app changes.
+- **A binary size gate and a way to make the count baselines.** The performance workflow has a job that builds the
+  release `atomik`, `atomik-render` and `atomik-plugin-host` and fails when one is more than 5 % larger than
+  `perf/baseline-sizes.txt` (a notice while the file is missing), and a `baseline_only` run option that runs just
+  the instruction and size jobs so their artifacts can be committed as the baselines. `docs/TESTING.md` lists each
+  count that is gated, where, and its tolerance.
+- **Allocation counts in the test suite.** `crates/render/tests/stress_alloc.rs` renders ten seconds of the stress song
+  and of the stress rack at 48 kHz in blocks of 256 frames, with no worker and with two, after a warm-up: every block
+  runs under the allocation guard on the audio thread and every worker is marked, so a heap operation on either fails
+  the test (measured: none). `crates/app/tests/idle_frame_alloc.rs` counts the heap operations of a frame of the shell
+  with the fx-demo open, idle and while the playhead moves (a fake audio backend whose engine the test renders block by
+  block), and bounds them so they cannot grow.
 - **Kill tests for recovery and for a killed plugin process.** One test ends a running session with a hard kill and
   checks that the next start offers the recovery and opens the edited document; another kills one sandboxed plugin
   process while two play and checks that only that device turns crashed, the other keeps processing and the saved
@@ -90,6 +101,31 @@ may break APIs and the patch and project formats.
 - **A knob turned while a song plays re-applies only the automation of that knob.** Any control message used to make
   every automation lane write its value again at the next batch; now only the lanes of that device and parameter do.
   Rendered audio does not change.
+- **A plugin's parameter list is built when something first needs it, not when the plugin is listed.** The registry
+  kept a full descriptor (parameters, ports, names) for every plugin of the catalogue from the start of the app, about
+  7.3 MiB for 132 plugins of 500 parameters, most of them plugins no project uses. It now holds the scanned layout and
+  builds the descriptor the first time a project, the rack or a stand-in reads it, once, away from the audio thread.
+  The descriptors, their parameter ids and order, the project format and the plugin scan cache are unchanged.
+- **Silent channel and bus strips are no longer processed.** A strip whose inputs are silent and whose filters,
+  equaliser, compressors, smoothers and latency line have all come to rest is left alone for the batch, stage by
+  stage (a return that sounds while the input is silent wakes only the second stage), so a project with many silent
+  tracks costs a fraction of what it did: an idle strip takes about 40 % of its former time and a 64-strip song of
+  silent tracks bounces in a quarter of the time. A gate that is on, a polarity switch, a cabled control voltage, the
+  look-ahead and a hard right pan keep a strip running. The analyser tap still gets its silent blocks. Rendered audio
+  does not change, byte for byte. The compressor's release stage is now flushed to zero once it can no longer reach
+  the gain reduction (it used to stall on the smallest denormal), which changes no sample.
+- **One process fewer per plugin on Windows.** A sandboxed plugin's process and a plugin scan's process now start with
+  no console at all, instead of a hidden one, so the system no longer starts a console host next to each of them.
+  Measured with the plugin sweep, a plugin process of its own costs 2.1 MB, 12 threads and 146 handles per instance
+  (was 3.3 MB, 14 threads and 235 handles). The standard streams, the log lines, crash reports and the scan's output
+  work as before.
+- **An idle window no longer allocates, and a playing one barely does.** With a project open, the console and rack
+  meter feeds built a list and copied a device key per strip every frame (19 heap operations a frame, 38 while playing,
+  the playhead also compiling the tempo table each frame). The feeds now pass references and keep their buffer, the
+  rack looks a device up without building its key, and the arrangement compiles the tempo once per song change, so a
+  tempo edit, an undo or a new song is still picked up on the next frame. An idle frame of the fx-demo project
+  allocates nothing; a playing one only in the frames of the device CPU readout (about five a second). What is shown
+  does not change.
 - **A slow audio driver no longer freezes the window.** Opening and stopping the audio stream, which a driver can take
   seconds to do (up to 5 s each, twice when a fixed buffer size is refused), now happens on a worker thread. The
   window stays alive and the status line says "Starting audio..."; what you edit, play or set meanwhile is kept and
@@ -117,6 +153,14 @@ may break APIs and the patch and project formats.
   parallel shards (`scripts/coverage-shards.txt`; every workspace package is in exactly one, the last shard is every
   package no other lists, and `scripts/coverage-shards.py check` fails otherwise), each writes the report of its
   run, and a final job merges them (`scripts/merge-lcov.py`) and applies the same gate, floors and lcov artifact.
+- **The Workflow tab of the settings scrolls on a short window.** At 728 pixels high the last row (Master keyboard) ran
+  under the Cancel and Apply buttons. The rows now scroll with the wheel when they do not fit; nothing changes when
+  they do.
+- **The piano roll header no longer draws the CUT chip over the SNAP label.** The four tool chips sat about 4 pixels
+  over the label ("CUT P"). They now sit 30 pixels further left, clear of it, at every window size.
+- **The mixer strips scroll with the wheel on a short window.** The wheel over the label under a knob, or over the
+  scrollbar below the strips, now scrolls instead of turning the control under the pointer; over the knob, fader or
+  button it still changes it (Shift: finely, as in the rack), and over a strip's background it scrolled already.
 
 ## [0.5.0-rc.2] - 2026-11-24
 

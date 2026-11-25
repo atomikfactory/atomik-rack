@@ -1862,7 +1862,8 @@ impl PianoRollView {
             TopItem::Snap => Rect::new(b.x1 - 186.0, y, b.x1 - 132.0, y + 18.0),
             TopItem::Tool(t) => {
                 let i = Tool::NOTE.iter().position(|x| *x == t).unwrap_or(0) as f64;
-                let x = b.x1 - 294.0 + i * 25.0;
+                // Left of the SNAP label (about 22 px wide, 6 px before the snap field).
+                let x = b.x1 - 324.0 + i * 25.0;
                 Rect::new(x, y, x + 23.0, y + 18.0)
             }
             scale_bar => {

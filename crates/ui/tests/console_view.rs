@@ -625,6 +625,65 @@ fn upper_sections_scroll_and_strips_scroll_sideways() {
     assert!(max > 0.0 && max < 1e9, "clamped");
 }
 
+fn wheel_event(pos: Point, dy: f64, modifiers: Modifiers) -> UiEvent {
+    UiEvent::Wheel {
+        delta: Vec2::new(0.0, dy),
+        pos,
+        modifiers,
+    }
+}
+
+#[test]
+fn the_wheel_over_a_knobs_label_scrolls_and_over_the_knob_changes_it() {
+    let (doc, reg, mut v) = setup();
+    v.set_bounds(atomik_ui::kurbo::Rect::new(0.0, 0.0, 560.0, 420.0));
+    v.sync(&doc, &reg);
+    assert!(v.scroll_to_control(&key("ch-bass"), "eq.lf.gain"));
+    v.set_scroll_y(v.scroll_y() + 10.0);
+    let knob = v.control_center(&key("ch-bass"), "eq.lf.gain").unwrap();
+    let cell = v
+        .strip_layout()
+        .unwrap()
+        .controls
+        .iter()
+        .find(|c| c.param == "eq.lf.gain")
+        .unwrap()
+        .clone();
+    assert!(!cell.label.is_empty(), "a knob with a label under it");
+    // Over the label, 3 px above the bottom of the cell: no parameter moves, the strip scrolls.
+    let label = Point::new(knob.x, knob.y + cell.rect.height() / 2.0 - 3.0);
+    let before = v.scroll_y();
+    let on_label = v.handle(&wheel_event(label, -1.0, Modifiers::NONE), &doc, &reg);
+    assert!(set_params(&on_label).is_empty(), "{on_label:?}");
+    assert!(v.scroll_y() > before, "the strip scrolled");
+    // Over the knob itself the wheel still changes it, scrolled or not.
+    let knob = v.control_center(&key("ch-bass"), "eq.lf.gain").unwrap();
+    let before = v.scroll_y();
+    let on_knob = v.handle(&wheel_event(knob, 1.0, Modifiers::NONE), &doc, &reg);
+    assert_eq!(set_params(&on_knob).len(), 1, "{on_knob:?}");
+    assert!((v.scroll_y() - before).abs() < 1e-9, "no scrolling");
+    // Shift keeps the fine step over the knob, as in the rack.
+    let fine = v.handle(&wheel_event(knob, 1.0, Modifiers::SHIFT), &doc, &reg);
+    assert_eq!(set_params(&fine).len(), 1, "{fine:?}");
+    // A button (the whole cell is the button) is still the control under the wheel.
+    let b = v.control_center(&key("ch-lead"), "mute");
+    if let Some(b) = b {
+        let w = v.handle(&wheel_event(b, 1.0, Modifiers::NONE), &doc, &reg);
+        assert_eq!(set_params(&w).len(), 1, "{w:?}");
+    }
+}
+
+#[test]
+fn the_wheel_over_the_horizontal_scrollbar_scrolls_the_strips_sideways() {
+    let (doc, reg, mut v) = setup();
+    v.set_bounds(atomik_ui::kurbo::Rect::new(0.0, 0.0, 560.0, 420.0));
+    v.sync(&doc, &reg);
+    let bar = Point::new(20.0, 420.0 - 3.0);
+    v.handle(&wheel_event(bar, -1.0, Modifiers::NONE), &doc, &reg);
+    assert!(v.scroll_x() > 0.0, "sideways");
+    assert!(v.scroll_y().abs() < 1e-9, "not up and down");
+}
+
 // ---------------------------------------------------------------- meters
 
 #[test]
