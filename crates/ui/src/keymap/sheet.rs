@@ -261,6 +261,8 @@ A role is a modifier held during a pointer gesture, not a chord. Settings, Keybo
 
 The places that take a finer step from the modifier on their own (the clip inspector, the macro and plugin panels, the container editor) still use `Shift`.
 
+In the mixer the wheel changes the knob, fader or button under the pointer (a notch moves it a step; with Fine adjust held, a tenth of one). Over the label under a knob, over the background of a strip or over a scrollbar it scrolls the strips instead: the wheel scrolls the upper sections up and down, Shift (or a sideways wheel) scrolls them sideways, and the wheel over the scrollbar below the strips scrolls sideways.
+
 Many European keyboard layouts report AltGr as `Ctrl+Alt` (the default of Disable snap outside macOS): typing a character with AltGr while dragging switches snapping off. Remap Disable snap in Settings, Keyboard if that gets in the way. In a text field AltGr always types its character and never runs a shortcut.
 
 ## Text fields

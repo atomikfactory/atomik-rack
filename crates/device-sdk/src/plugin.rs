@@ -20,7 +20,7 @@ use crate::{
 };
 use atomik_core::{ParamDescriptor, ParamId, Taper, Unit};
 use std::collections::{BTreeMap, BTreeSet};
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 
 /// Upper bound of the plugin params a descriptor carries. A longer table is cut by the
 /// scanner (and recorded there); [`descriptor_for`] refuses one.
@@ -406,6 +406,8 @@ impl PluginLayout {
 
 fn leak_str(s: &str) -> &'static str {
     #[cfg(test)]
+    LEAK_BYTES.with(|n| n.set(n.get() + s.len()));
+    #[cfg(test)]
     LEAKS.with(|n| n.set(n.get() + 1));
     Box::leak(s.to_string().into_boxed_str())
 }
@@ -474,18 +476,24 @@ fn plain_range(format: PluginFormat, p: &PluginParamInfo) -> Result<(f32, f32, f
 #[cfg(test)]
 thread_local! {
     pub(crate) static LEAKS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// The bytes of those leaks (the data itself, not the allocator's rounding).
+    pub(crate) static LEAK_BYTES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 fn leaked<T: ?Sized>(value: Box<T>) -> &'static T {
+    #[cfg(test)]
+    LEAK_BYTES.with(|n| n.set(n.get() + std::mem::size_of_val(&*value)));
     #[cfg(test)]
     LEAKS.with(|n| n.set(n.get() + 1));
     Box::leak(value)
 }
 
-fn build_descriptor(
+/// The checks that need no table: the id, the number of params, duplicate ids and every param's
+/// range. Returns the plain ranges, in the layout's order.
+fn checked_ranges(
     plugin: &PluginRef,
     layout: &PluginLayout,
-) -> Result<&'static DeviceDescriptor, DescriptorError> {
+) -> Result<Vec<(f32, f32, f32, bool)>, DescriptorError> {
     if !valid_plugin_id(plugin) {
         return Err(DescriptorError::InvalidPluginId(plugin.id.clone()));
     }
@@ -495,7 +503,6 @@ fn build_descriptor(
             max: MAX_PLUGIN_PARAMS,
         });
     }
-    // Everything that can refuse the layout is decided before anything is leaked.
     let mut seen = BTreeSet::new();
     let mut ranges = Vec::with_capacity(layout.params.len());
     for p in &layout.params {
@@ -507,6 +514,30 @@ fn build_descriptor(
                 .map_err(|()| DescriptorError::InvalidPluginParam(p.id))?,
         );
     }
+    Ok(ranges)
+}
+
+/// Whether [`descriptor_for`] would accept the layout, decided without building the tables.
+fn check_layout(plugin: &PluginRef, layout: &PluginLayout) -> Result<(), DescriptorError> {
+    checked_ranges(plugin, layout)?;
+    let has_ports = layout.main_in.is_some()
+        || layout.sidechain
+        || layout.notes_in
+        || layout.main_out.is_some()
+        || layout.notes_out;
+    if has_ports {
+        Ok(())
+    } else {
+        Err(DescriptorError::NoSockets)
+    }
+}
+
+fn build_descriptor(
+    plugin: &PluginRef,
+    layout: &PluginLayout,
+) -> Result<&'static DeviceDescriptor, DescriptorError> {
+    // Everything that can refuse the layout is decided before anything is leaked.
+    let ranges = checked_ranges(plugin, layout)?;
 
     let mut sockets: Vec<SocketDescriptor> = Vec::with_capacity(8);
     let mut push = |key: &'static str, name: &'static str, kind: SocketKind, direction| {
@@ -786,6 +817,75 @@ pub fn descriptor_for(
     layout: &PluginLayout,
 ) -> Result<&'static DeviceDescriptor, DescriptorError> {
     INTERNER.descriptor_for(plugin, layout)
+}
+
+/// A plugin's descriptor that is built when it is first asked for, not when the plugin is
+/// registered. A catalogue holds hundreds of plugins and a project uses a handful; the table of
+/// a plugin with hundreds of params is tens of kilobytes that [`descriptor_for_shared`] leaks for
+/// good, so only the plugins something reads pay for it.
+///
+/// [`Self::new`] refuses what [`descriptor_for`] would refuse for the layout, without building
+/// anything, so a plugin that registers is a plugin that builds. The result is the very
+/// descriptor [`descriptor_for_shared`] gives (same table, same pointer). Building is
+/// thread-safe and happens once; it allocates, so it is for non-real-time threads only (the
+/// audio thread only ever holds a descriptor a device already has).
+#[derive(Debug)]
+pub struct LazyDescriptor {
+    plugin: PluginRef,
+    layout: Arc<PluginLayout>,
+    /// `None` inside: the table of interned descriptors was full when it was first read.
+    cell: OnceLock<Option<&'static DeviceDescriptor>>,
+}
+
+impl LazyDescriptor {
+    /// Holds `layout` for `plugin` after checking it.
+    ///
+    /// # Errors
+    /// What [`descriptor_for`] refuses for an invalid plugin id, too many or duplicate or
+    /// non-finite params, or a layout with no socket. The limit on interned descriptors is only
+    /// met when the descriptor is built.
+    pub fn new(plugin: PluginRef, layout: Arc<PluginLayout>) -> Result<Self, DescriptorError> {
+        check_layout(&plugin, &layout)?;
+        Ok(Self {
+            plugin,
+            layout,
+            cell: OnceLock::new(),
+        })
+    }
+
+    /// The descriptor, built now when this is the first call. `None` when the table of
+    /// interned descriptors is full ([`MAX_INTERNED_DESCRIPTORS`]).
+    pub fn get(&self) -> Option<&'static DeviceDescriptor> {
+        *self
+            .cell
+            .get_or_init(|| descriptor_for_shared(&self.plugin, &self.layout).ok())
+    }
+
+    /// Whether the descriptor has been built.
+    pub fn is_built(&self) -> bool {
+        self.cell.get().is_some()
+    }
+
+    /// The plugin this descriptor is for.
+    pub fn plugin(&self) -> &PluginRef {
+        &self.plugin
+    }
+}
+
+impl Clone for LazyDescriptor {
+    /// A copy shares the layout and carries the descriptor when it is built already; one that
+    /// is not built yet builds its own, which is the same interned descriptor.
+    fn clone(&self) -> Self {
+        let cell = OnceLock::new();
+        if let Some(built) = self.cell.get() {
+            let _ = cell.set(*built);
+        }
+        Self {
+            plugin: self.plugin.clone(),
+            layout: Arc::clone(&self.layout),
+            cell,
+        }
+    }
 }
 
 // ----- the stand-in device ------------------------------------------------------------------

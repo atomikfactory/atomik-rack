@@ -4,15 +4,15 @@
 //! The catalog is built from the cache and the user's settings alone: no plugin file is opened,
 //! checked or loaded, so opening a project loads no plugin code. Registering it in the
 //! [`Registry`] makes each usable plugin a device type with the descriptor built from its scanned
-//! layout; the backend learns which file holds which plugin through a callback (for CLAP,
-//! `ClapBackend::register_plugin_file`), still without loading it.
+//! layout, built when something first reads it; the backend learns which file holds which plugin
+//! through a callback (for CLAP, `ClapBackend::register_plugin_file`), still without loading it.
 
 use crate::cache::PluginCache;
 use crate::layout::merge_pinned;
 use crate::settings::PluginSettings;
 use atomik_device_sdk::{
     PluginCategory, PluginFormat, PluginKindHint, PluginLayout, PluginParamInfo, PluginRef,
-    Registry, descriptor_for_shared,
+    Registry,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -221,20 +221,18 @@ impl PluginCatalog {
                 continue;
             }
             let type_id = entry.plugin.type_id();
-            let result = match pins.get(&entry.plugin) {
+            let layout = match pins.get(&entry.plugin) {
                 Some(rows) => {
                     let mut layout = (*entry.layout).clone();
                     merge_pinned(&mut layout, rows);
-                    descriptor_for_shared(&entry.plugin, &Arc::new(layout))
+                    Arc::new(layout)
                 }
-                None => descriptor_for_shared(&entry.plugin, &entry.layout),
-            }
-            .map_err(|e| e.to_string())
-            .and_then(|d| {
-                registry
-                    .register_plugin(type_id.clone(), d)
-                    .map_err(|e| e.to_string())
-            });
+                None => Arc::clone(&entry.layout),
+            };
+            // Only the layout is checked here: the descriptor is built when it is first read.
+            let result = registry
+                .register_plugin_lazy(entry.plugin.clone(), layout)
+                .map_err(|e| e.to_string());
             match result {
                 Ok(()) => {
                     files(&entry.plugin, &entry.path);

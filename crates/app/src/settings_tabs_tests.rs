@@ -863,13 +863,18 @@ fn other_workflow_fields_survive_the_dialog() {
 /// Every golden of a tab is also drawn in French (`tests/golden/fr/`): the same state, the
 /// other language.
 fn golden(name: &str, d: &SettingsDialog) {
-    golden_in(name, d, atomik_ui::Lang::English);
-    golden_in(name, d, atomik_ui::Lang::French);
+    golden_at(name, d, VIEW);
 }
 
-fn golden_in(name: &str, d: &SettingsDialog, lang: atomik_ui::Lang) {
+/// [`golden`] for a window of another size.
+fn golden_at(name: &str, d: &SettingsDialog, view: Size) {
+    golden_in(name, d, atomik_ui::Lang::English, view);
+    golden_in(name, d, atomik_ui::Lang::French, view);
+}
+
+fn golden_in(name: &str, d: &SettingsDialog, lang: atomik_ui::Lang, view: Size) {
     let mut list = DisplayList::new();
-    atomik_ui::i18n::with_language(lang, || d.paint(&mut list, &Theme::dark(), VIEW));
+    atomik_ui::i18n::with_language(lang, || d.paint(&mut list, &Theme::dark(), view));
     let actual = list.to_json();
     let folder = if lang == atomik_ui::Lang::English {
         "tests/golden"
@@ -946,6 +951,109 @@ fn golden_workflow() {
     let l = d.workflow_layout(VIEW).unwrap();
     down(&mut d, l.toggles[0].rect.center());
     golden("settings_workflow_auto_route_off", &d);
+}
+
+/// The smallest display the app supports: the Workflow rows do not fit its dialog.
+const SMALL: Size = Size::new(1366.0, 728.0);
+
+fn wheel_at(d: &mut SettingsDialog, view: Size, dy: f64) {
+    d.handle(
+        &UiEvent::Wheel {
+            delta: atomik_ui::kurbo::Vec2::new(0.0, dy),
+            pos: d.panel(view).center(),
+            modifiers: Modifiers::NONE,
+        },
+        view,
+    );
+}
+
+fn goto_in(d: &mut SettingsDialog, tab: Tab, view: Size) {
+    let r = d.tab_strip(view).iter().find(|(_, t)| *t == tab).unwrap().0;
+    d.handle(
+        &UiEvent::PointerDown {
+            pos: r.center(),
+            button: PointerButton::Primary,
+            modifiers: Modifiers::NONE,
+            clicks: 1,
+        },
+        view,
+    );
+    assert_eq!(d.tab(), tab);
+}
+
+#[test]
+fn the_workflow_rows_scroll_above_the_footer_when_the_window_is_short() {
+    let mut d = dialog();
+    goto_in(&mut d, Tab::Workflow, SMALL);
+    let panel = d.panel(SMALL);
+    let footer_top = panel.y1 - crate::keyboard_tab::FOOTER;
+    let last = |d: &SettingsDialog| d.workflow_layout(SMALL).unwrap().cycles[3].clone();
+    assert!(
+        last(&d).rect.y1 > footer_top,
+        "unscrolled, the last row is under the footer"
+    );
+    golden_at("settings_workflow_short_top", &d, SMALL);
+    wheel_at(&mut d, SMALL, -50.0);
+    let row = last(&d);
+    assert!(
+        row.rect.y1 <= footer_top,
+        "scrolled to the end, the last row ends above the footer: {} > {footer_top}",
+        row.rect.y1
+    );
+    golden_at("settings_workflow_short_end", &d, SMALL);
+    // Further turns stop at the end; turning back reaches the first row again.
+    wheel_at(&mut d, SMALL, -50.0);
+    assert_eq!(last(&d), row);
+    wheel_at(&mut d, SMALL, 50.0);
+    let first = d.workflow_layout(SMALL).unwrap().toggles[0].rect;
+    assert!(first.y0 >= panel.y0 + crate::keyboard_tab::TITLE - 0.5);
+    // A click on a row that is scrolled out of view toggles nothing.
+    wheel_at(&mut d, SMALL, -50.0);
+    let hidden = d.workflow_layout(SMALL).unwrap().toggles[0].rect;
+    assert!(hidden.y1 < panel.y0 + crate::keyboard_tab::TITLE);
+    let before = d.preferences().unwrap().1;
+    d.handle(
+        &UiEvent::PointerDown {
+            pos: hidden.center(),
+            button: PointerButton::Primary,
+            modifiers: Modifiers::NONE,
+            clicks: 1,
+        },
+        SMALL,
+    );
+    assert_eq!(d.preferences().unwrap().1, before);
+    // The last row is reachable: its button steps the choice.
+    let row = last(&d);
+    d.handle(
+        &UiEvent::PointerDown {
+            pos: row.button.center(),
+            button: PointerButton::Primary,
+            modifiers: Modifiers::NONE,
+            clicks: 1,
+        },
+        SMALL,
+    );
+    assert_ne!(
+        d.preferences().unwrap().1.master_keyboard,
+        before.master_keyboard
+    );
+}
+
+#[test]
+fn the_workflow_rows_do_not_move_when_they_fit() {
+    let big = Size::new(1920.0, 1080.0);
+    let mut d = dialog();
+    goto_in(&mut d, Tab::Workflow, big);
+    let before = d.workflow_layout(big).unwrap();
+    wheel_at(&mut d, big, -50.0);
+    wheel_at(&mut d, big, 50.0);
+    assert_eq!(d.workflow_layout(big).unwrap(), before);
+    let footer_top = d.panel(big).y1 - crate::keyboard_tab::FOOTER;
+    assert!(before.cycles[3].rect.y1 <= footer_top);
+    assert_eq!(
+        before.toggles[0].rect.y0,
+        d.panel(big).y0 + crate::keyboard_tab::TITLE
+    );
 }
 
 // ------------------------------------------------------------------ interface

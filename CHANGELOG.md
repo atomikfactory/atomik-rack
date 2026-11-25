@@ -101,6 +101,19 @@ may break APIs and the patch and project formats.
 - **A knob turned while a song plays re-applies only the automation of that knob.** Any control message used to make
   every automation lane write its value again at the next batch; now only the lanes of that device and parameter do.
   Rendered audio does not change.
+- **A plugin's parameter list is built when something first needs it, not when the plugin is listed.** The registry
+  kept a full descriptor (parameters, ports, names) for every plugin of the catalogue from the start of the app, about
+  7.3 MiB for 132 plugins of 500 parameters, most of them plugins no project uses. It now holds the scanned layout and
+  builds the descriptor the first time a project, the rack or a stand-in reads it, once, away from the audio thread.
+  The descriptors, their parameter ids and order, the project format and the plugin scan cache are unchanged.
+- **Silent channel and bus strips are no longer processed.** A strip whose inputs are silent and whose filters,
+  equaliser, compressors, smoothers and latency line have all come to rest is left alone for the batch, stage by
+  stage (a return that sounds while the input is silent wakes only the second stage), so a project with many silent
+  tracks costs a fraction of what it did: an idle strip takes about 40 % of its former time and a 64-strip song of
+  silent tracks bounces in a quarter of the time. A gate that is on, a polarity switch, a cabled control voltage, the
+  look-ahead and a hard right pan keep a strip running. The analyser tap still gets its silent blocks. Rendered audio
+  does not change, byte for byte. The compressor's release stage is now flushed to zero once it can no longer reach
+  the gain reduction (it used to stall on the smallest denormal), which changes no sample.
 - **One process fewer per plugin on Windows.** A sandboxed plugin's process and a plugin scan's process now start with
   no console at all, instead of a hidden one, so the system no longer starts a console host next to each of them.
   Measured with the plugin sweep, a plugin process of its own costs 2.1 MB, 12 threads and 146 handles per instance
@@ -132,6 +145,14 @@ may break APIs and the patch and project formats.
   parallel shards (`scripts/coverage-shards.txt`; every workspace package is in exactly one, the last shard is every
   package no other lists, and `scripts/coverage-shards.py check` fails otherwise), each writes the report of its
   run, and a final job merges them (`scripts/merge-lcov.py`) and applies the same gate, floors and lcov artifact.
+- **The Workflow tab of the settings scrolls on a short window.** At 728 pixels high the last row (Master keyboard) ran
+  under the Cancel and Apply buttons. The rows now scroll with the wheel when they do not fit; nothing changes when
+  they do.
+- **The piano roll header no longer draws the CUT chip over the SNAP label.** The four tool chips sat about 4 pixels
+  over the label ("CUT P"). They now sit 30 pixels further left, clear of it, at every window size.
+- **The mixer strips scroll with the wheel on a short window.** The wheel over the label under a knob, or over the
+  scrollbar below the strips, now scrolls instead of turning the control under the pointer; over the knob, fader or
+  button it still changes it (Shift: finely, as in the rack), and over a strip's background it scrolled already.
 
 ## [0.5.0-rc.2] - 2026-11-24
 

@@ -1295,6 +1295,50 @@ Headless, the MCP screenshot path (`paint_in(Main, CpuCanvas)` + `finish()`), re
 
 Recording (path-to-strip work while painting) dominates: 13-43 ms; rasterising 3-5 ms. The CPU canvas has no display-list cache (the GPU canvas caches by id and revision). Harness kept outside the repo: orchestration/spike56_frame_time.rs.
 
+## Channel and bus strips that go quiet (2026-11-25)
+
+The engine rows of the earlier idle items, now for the strips (`cargo bench -p atomik-render --bench render_batch --
+"idle/(channel|bus)"`): twenty strips with nothing cabled (default settings, so only the strip's own stages are
+measured), 256 batches, skip off and on, median of 21 samples, three runs each. A strip with its sections on rests
+the same way once its history has run dry; the song row below has them on.
+
+| row | skip off, runs | skip on, runs |
+|---|---|---|
+| 20 idle channel strips, 256 batches | 5.118 ms, 5.076 ms, 5.087 ms | 2.126 ms, 2.090 ms, 2.077 ms |
+| 20 idle bus strips, 256 batches | 5.590 ms, 5.580 ms, 5.523 ms | 2.559 ms, 2.576 ms, 2.559 ms |
+
+That is 0.99 us a batch for an idle channel strip before and 0.41 us after (bus: 1.09 us and 0.50 us). What is left is
+the engine's gather, which zeroes the strip's forty sockets, and the copies of a node that is skipped. The song row
+is the generated project `silent-strips-64` of the same bench: 64 synth tracks that never play, every strip with its
+high-pass, EQ, compressor and parallel compressor on and two sends to a reverb return, two bars bounced at host block
+256 (the build of the document and of the engine included). Before is the tree with `Channel::quiescent` answering
+`false` (the strips as they ran until now, the synths, the reverb and the master skipped as before), after is the tree
+as it stands; the switch row bounces with the whole skip off (`ATOMIK_BENCH_IDLE=off`).
+
+| row | before, runs | after, runs | whole skip off |
+|---|---|---|---|
+| silent-strips-64, workers 0 | 1.340 s | 332.5 ms, 333.9 ms, 330.7 ms | 1.381 s |
+| silent-strips-64, workers 2 | 936.4 ms | 463.2 ms | not run |
+
+The workers-2 rows are the bounce's hand-over of every level (a bounce has no deadline), which costs more than the
+skipped strips save on this machine; the live engine uses its workers only while the audio thread needs help.
+
+What the skip costs a strip that plays (the limit is a rise of 2 % of the busy row). The device bench rows
+`device/channel/256batches` and `device/bus/256batches` (every input of the strip fed with noise), the tree before
+this item against the tree after, the two binaries run alternately eight times (a single row moves 2 % between runs
+on this machine, so the means of the eight are given): channel 331.1 us before, 334.1 us after (+0.9 %); bus 334.7 us
+before, 337.3 us after (+0.8 %). The first forms measured +2.5 % to +4.7 %: asking each of the four delay lines to
+count its zeros per sample (+7 %), then counting the latency line's silent samples a batch at a time with an OR of
+both channels (+2.5 %, and the same number with that block removed, so the rest was the look-ahead lines' count
+inside the dynamics loop; they are no longer watched, a strip with the look-ahead on does not rest).
+
+The compressor's release stage no longer stalls on the smallest denormal: it is flushed at 1e-30 (it can no longer
+reach the smoothed reduction, which is flushed at 1e-9, so no sample moves). Without it the stage would sit on the
+smallest denormal for ever, where `Compressor::skip_silent` (and `process`) would multiply denormals every batch,
+which is slow on some processors. A release stage of 10 dB at a
+120 ms time constant takes about 8 seconds to fall to 1e-30; a strip rests as soon as the stage is under 1e-10 dB,
+about 3 seconds after the compressor stopped working (release 120 ms), and `Compressor::skip_silent` lets it fall
+from there.
 ## Heap operations per audio block and per UI frame (2026-11-25)
 
 Counted with the testkit's allocator (`forbid_on_this_thread`, `assert_no_alloc`, `allocations_of`), 48 kHz.
@@ -1427,3 +1471,24 @@ differs between shells because the first child of a shell starts threads that en
 
 The session loop's private bytes rise by 11 MiB over the first 100 cycles and by 0.6 MiB over the next 100: the
 allocator and the caches fill and then stay. The counts of the others do not move.
+
+## Plugin descriptors built on first use (2026-11-25)
+
+The descriptor of a plugin (its parameter list, ports and names, leaked once for the life of the process) used to be
+built when the plugin was registered, so a catalogue paid for every plugin it lists although a project uses a handful.
+The registry now keeps the scanned layout of each catalogued plugin and builds the descriptor on the first read
+(`LazyDescriptor`, `Registry::register_plugin_lazy`); the browser lists a plugin from the catalogue entry, which needs
+no descriptor. Same test as above (`crates/plugin-host/tests/memory_figures.rs`, 132 plugin files, one plugin each,
+heap held on one thread):
+
+```text
+params   before (all built at start)   at start, after   after 5 plugins are read   after all are read
+50       1.0 MiB                       0.03 MiB          0.07 MiB                   1.0 MiB
+500      7.3 MiB                       0.03 MiB          0.31 MiB                   7.3 MiB
+2000     28.4 MiB                      0.03 MiB          1.10 MiB                   28.4 MiB
+```
+
+"Before" is the figure of "registered, after" in the section above, and equals the "after all are read" column: the
+descriptor read is the same one. A catalogue of 132 plugins with 500 parameters each holds 7.3 MiB less until something
+reads a descriptor. What reads one: a plugin placed in a project (or in the rack), a project that names the plugin,
+the stand-in of a missing plugin, a layout change reported by a live plugin. Nothing on the audio thread does.

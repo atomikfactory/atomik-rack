@@ -12,7 +12,8 @@
 //! A filter argument selects scenarios: `cargo bench -p atomik-render --bench render_batch -- song`.
 //!
 //! Scenarios: `rack` (100 devices, 300 cables), `song` and `console-8` (the 8-track stress song
-//! with 4 FX returns), `console-64` (64 strips, gate and compressor on), `lanes-200` and
+//! with 4 FX returns), `console-64` (64 strips, gate and compressor on), `silent-strips-64` (64 strips that
+//! never play, filters, EQ, compressors and two sends on), `lanes-200` and
 //! `lanes-2000` (automation lanes), `large-song` (100 tracks, 500 clips, 2,000 notes).
 //! Every scenario bounces `BARS` bars plus the release tail, so a run is a few seconds of audio.
 //! The `idle` rows (`idle/stereo-delay-x20/skip-off` and `skip-on`, and one pair for each other effect or
@@ -24,11 +25,11 @@
 )]
 
 use atomik_core::PPQ;
-use atomik_model::RackDoc;
 use atomik_model::stress::{
     STRESS_CABLES, STRESS_DEVICES, console_doc, lanes_song_doc, large_song_doc, stress_doc,
     stress_song_doc,
 };
+use atomik_model::{Command, ConsoleCommand, DeviceKey, Document, RackDoc, SongCommand};
 use atomik_render::default_registry;
 use atomik_render::project::{ProjectOptions, render_doc};
 use atomik_testkit::bench::{Recorder, SAMPLES, once_mode, time_once};
@@ -38,6 +39,68 @@ use std::time::Duration;
 
 /// Bars of each scenario that are bounced (at the document's tempo).
 const BARS: i64 = 2;
+
+/// `strips` synth tracks that never play a note, every strip with its filters, equaliser,
+/// compressor and parallel compressor on and two sends to a reverb on the first return: a song
+/// whose cost is the strips (the synths are quiescent) and the master.
+fn silent_strips_doc(strips: usize) -> RackDoc {
+    let registry = default_registry();
+    let mut doc = Document::new(large_song_doc(&registry, strips, 0, 0));
+    let apply = |doc: &mut Document, command: Command| {
+        let applied = doc.apply(command, &registry);
+        debug_assert!(applied.is_ok(), "{applied:?}");
+    };
+    let hall = DeviceKey("hall".to_owned());
+    apply(
+        &mut doc,
+        Command::AddDevice {
+            index: usize::MAX,
+            type_id: "atomik.reverb".into(),
+            key: Some(hall.clone()),
+        },
+    );
+    apply(
+        &mut doc,
+        Command::Console(ConsoleCommand::SetReturn {
+            slot: 0,
+            effect: Some(hall),
+        }),
+    );
+    let channels: Vec<DeviceKey> = doc
+        .doc()
+        .console
+        .channels
+        .iter()
+        .map(|c| c.channel.clone())
+        .collect();
+    for channel in channels {
+        for (param, value) in [
+            ("hpf.on", 1.0),
+            ("comp.on", 1.0),
+            ("comp.threshold", -28.0),
+            ("eq.on", 1.0),
+            ("eq.hf.gain", 3.0),
+            ("pcomp.on", 1.0),
+            ("send1.on", 1.0),
+            ("send2.on", 1.0),
+        ] {
+            apply(
+                &mut doc,
+                Command::SetParam {
+                    key: channel.clone(),
+                    param: param.into(),
+                    value,
+                    merge: None,
+                },
+            );
+        }
+    }
+    apply(
+        &mut doc,
+        Command::Song(SongCommand::SetSongEnd(BARS * 4 * PPQ)),
+    );
+    doc.doc().clone()
+}
 
 fn short(mut doc: RackDoc) -> RackDoc {
     doc.song_mut().end = BARS * 4 * PPQ;
@@ -53,6 +116,7 @@ fn scenarios() -> Vec<(&'static str, RackDoc)> {
         ),
         ("song", short(stress_song_doc(&reg))),
         ("console-64", short(console_doc(&reg, 64))),
+        ("silent-strips-64", silent_strips_doc(64)),
         ("lanes-200", short(lanes_song_doc(&reg, 200))),
         ("lanes-2000", short(lanes_song_doc(&reg, 2000))),
         ("large-song", short(large_song_doc(&reg, 100, 500, 2000))),
@@ -80,7 +144,9 @@ const IDLE_BATCHES: usize = 256;
 /// Effects in each idle row.
 const IDLE_DELAYS: usize = 20;
 /// The effects and instruments that have an idle row (`idle/<name>-x20/skip-off|on`).
-const IDLE_TYPES: [&str; 11] = [
+const IDLE_TYPES: [&str; 13] = [
+    "atomik.channel",
+    "atomik.bus",
     "atomik.stereo-delay",
     "atomik.echo",
     "atomik.reverb",
@@ -157,6 +223,12 @@ fn main() {
         Ok("inline") => atomik_engine::set_default_gate_mode(atomik_engine::GateMode::ForceInline),
         Ok("load") => atomik_engine::set_default_gate_mode(atomik_engine::GateMode::Load),
         _ => {}
+    }
+    // `ATOMIK_BENCH_IDLE=off` bounces with the idle skip off (the scenario rows only; the `idle` rows
+    // carry both).
+    if std::env::var("ATOMIK_BENCH_IDLE").as_deref() == Ok("off") {
+        atomik_engine::set_default_idle_skip(false);
+        println!("idle skip off");
     }
     let all = scenarios();
     if once_mode() {
