@@ -372,20 +372,20 @@ run), and paints the main window on the CPU canvas:
 
 The table has one row every `ATOMIK_SOAK_SECONDS / 80` seconds (between 1 and 10): the resident memory (the working
 set on Windows), the private memory (anonymous resident memory on Linux, private bytes on Windows; this is the number
-that is judged), the thread count and the undo depth. Linux reads `/proc/self/status`; Windows asks `Get-Process`
-through PowerShell (no `unsafe`); on macOS there is no reader and the test runs the loop and measures nothing. After a
-warm-up of the first 20 % of the run the test fits a least squares line through the private memory and prints the
-slope in MiB a minute.
+that is judged), the thread count, the undo depth and the number of devices in the rack. Linux reads
+`/proc/self/status`; Windows asks `Get-Process` through PowerShell (no `unsafe`); on macOS there is no reader and the
+test runs the loop and measures nothing. After a warm-up of the first 20 % of the run the test fits a least squares
+line through the private memory and prints the slope in MiB a minute.
 
-The test fails on a clear leak only: a slope above 12 MiB a minute after the warm-up, or private memory at the finish
-(the mean of the last three samples) more than 2.5 times the memory at the end of the warm-up (the mean of the first
-three samples after it). It also fails when the undo history is ever deeper than the document's own step limit. The
-thread count is reported, not judged. The bounds are loose on purpose: adding and removing devices with undo and redo
-makes the private memory climb by 2 to 4 MiB a minute on this loop (the numbers and the runs are in
-[perf/BASELINE.md](../perf/BASELINE.md)), and the bounds sit about twice above the worst run so that the job is green
-with that growth and red when something grows several times faster; when the growth is gone they go down to 2 MiB a
-minute and 2 times. A longer run measures the slope better: a 120 second run has a few samples and its slope varies
-by a MiB or two between runs.
+The test fails on a clear leak only: a slope above 2 MiB a minute after the warm-up, or private memory at the finish
+(the mean of the last three samples) more than 2 times the memory at the end of the warm-up (the mean of the first
+three samples after it). It also fails when the undo history is ever deeper than the document's own step limit, or when
+the rack ever holds more than six of the devices the loop adds (the loop reads them from the document each time: undo
+and redo bring back and take away devices, and a list the loop kept itself drifted, so the rack grew to over a hundred
+devices and the memory with it). The thread count is reported, not judged. On this loop the private memory is flat:
+the numbers and the runs are in [perf/BASELINE.md](../perf/BASELINE.md), and the bounds sit about twice above the
+worst short run. A longer run measures the slope better: a 120 second run has a few samples and its slope varies by
+half a MiB between runs.
 
 The nightly workflow (`.github/workflows/nightly.yml`, job `soak`) runs it on Linux with `ATOMIK_SOAK_SECONDS=900`
 every night, independent of the build, and keeps the table as the artifact `soak-table` for 30 days. A red soak does
