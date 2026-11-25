@@ -186,23 +186,13 @@ fn open_fx_demo<B: atomik_app::session::AudioBackend>(s: &mut Shell<B>) {
     assert!(s.core().doc().devices.len() > 3, "the project opened");
 }
 
-/// What an idle frame of the fx-demo allocates today: the console's meter feed rebuilds the
-/// channel keys it hands to the console and rack views (a string clone per strip and per
-/// meter) and the list of channel readings, about nineteen heap operations a frame, thirty
-/// frames measured. Every other idle frame above allocates nothing. The bound keeps the count
-/// from growing; lower it when the feed stops copying keys.
-const FX_DEMO_IDLE_BOUND: u64 = 600;
-
+/// An idle frame of the fx-demo allocates nothing: the console's meter feed hands its readings
+/// to the console and rack views by reference, in a buffer it keeps from frame to frame.
 #[test]
-fn an_idle_frame_with_the_fx_demo_open_allocates_no_more_than_its_meter_feed() {
+fn an_idle_frame_with_the_fx_demo_open_allocates_nothing() {
     let mut s = shell();
     open_fx_demo(&mut s);
-    let n = idle_allocations(&mut s);
-    eprintln!("fx-demo idle: {n} heap operations over 30 frames");
-    assert!(
-        n <= FX_DEMO_IDLE_BOUND,
-        "{n} heap operations over 30 frames"
-    );
+    assert_eq!(idle_allocations(&mut s), 0);
 }
 
 /// A backend with no device: the engine the session starts is kept where the test can render it
@@ -334,11 +324,12 @@ fn playhead_allocations(frames: u32) -> (u64, i64) {
     (total, s.core().position() - start)
 }
 
-/// What a playing frame of the fx-demo allocates today, sixty frames measured (about thirty-eight
-/// a frame): the idle feed above, the same keys copied again for the rack's device meters and
-/// mix meters, and the tempo table the playhead rebuilds to read the tempo at its position
-/// (`tempo_lane::tempo_at`). The bound keeps the count from growing.
-const FX_DEMO_PLAYHEAD_BOUND: u64 = 2_500;
+/// What sixty playing frames of the fx-demo allocate: the meter feeds and the playhead's tempo
+/// lookup allocate nothing. What remains happens in five of the sixty frames, once per window
+/// of the device CPU readout (about five a second), which rebuilds each track's chain summary
+/// (`AppCore::feed_cpu_loads`, about 140 heap operations a pass). The bound keeps it from
+/// growing; it drops to 0 when that pass reuses its buffers.
+const FX_DEMO_PLAYHEAD_BOUND: u64 = 800;
 
 #[test]
 fn a_frame_where_only_the_playhead_moves_allocates_no_more_than_its_feeds() {

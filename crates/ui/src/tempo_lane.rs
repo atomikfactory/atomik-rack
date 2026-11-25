@@ -79,18 +79,48 @@ pub fn point_pos(e: &TempoEvent, lane: Rect, axis: &TimeAxis, range: (f64, f64))
 
 /// The tempo at `tick` through a map (a ramp gives the tempo inside it).
 pub fn tempo_at(map: &[TempoEvent], tick: i64) -> f64 {
-    let points: Vec<TempoPoint> = map
-        .iter()
-        .map(|e| TempoPoint {
-            tick: e.tick,
-            bpm: e.bpm,
-            ramp: e.ramp,
-        })
-        .collect();
-    TempoTable::new(&points).map_or_else(
-        |_| map.first().map_or(120.0, |e| e.bpm),
-        |t| t.map().bpm(tick as f64),
-    )
+    TempoCurve::new(map).at(tick)
+}
+
+/// A tempo map compiled once, for the lookups a view makes every frame (the playhead's tempo):
+/// [`tempo_at`] without compiling the table each time. Build it again whenever the map changes.
+#[derive(Debug, Clone)]
+pub struct TempoCurve {
+    /// `None` when the core cannot compile the map.
+    table: Option<TempoTable>,
+    /// The tempo of a map that does not compile: its first event, or 120.
+    fallback: f64,
+}
+
+impl Default for TempoCurve {
+    fn default() -> Self {
+        Self::new(&[])
+    }
+}
+
+impl TempoCurve {
+    /// Compiles `map`.
+    pub fn new(map: &[TempoEvent]) -> Self {
+        let points: Vec<TempoPoint> = map
+            .iter()
+            .map(|e| TempoPoint {
+                tick: e.tick,
+                bpm: e.bpm,
+                ramp: e.ramp,
+            })
+            .collect();
+        Self {
+            table: TempoTable::new(&points).ok(),
+            fallback: map.first().map_or(120.0, |e| e.bpm),
+        }
+    }
+
+    /// The tempo at `tick` (a ramp gives the tempo inside it); no allocation.
+    pub fn at(&self, tick: i64) -> f64 {
+        self.table
+            .as_ref()
+            .map_or(self.fallback, |t| t.map().bpm(tick as f64))
+    }
 }
 
 // ---------------------------------------------------------------------------- tempo edits
@@ -354,6 +384,30 @@ mod tests {
             bpm,
             ramp: true,
         }
+    }
+
+    #[test]
+    fn a_compiled_curve_reads_what_the_per_call_lookup_reads() {
+        let maps = [
+            vec![],
+            vec![step(0, 100.0)],
+            vec![step(0, 100.0), ramp(BAR, 100.0), step(2 * BAR, 180.0)],
+            // The core cannot compile this one: the first tempo stands.
+            vec![step(BAR, 90.0), step(0, 140.0)],
+        ];
+        for map in maps {
+            let curve = TempoCurve::new(&map);
+            for tick in [-PPQ, 0, 1, BAR / 2, BAR, BAR + PPQ, 2 * BAR, 9 * BAR] {
+                assert_eq!(
+                    curve.at(tick).to_bits(),
+                    tempo_at(&map, tick).to_bits(),
+                    "tick {tick} of {map:?}"
+                );
+            }
+        }
+        assert!((TempoCurve::default().at(5) - 120.0).abs() < 1e-12);
+        let ramped = TempoCurve::new(&[step(0, 100.0), ramp(BAR, 100.0), step(2 * BAR, 200.0)]);
+        assert!((ramped.at(BAR + BAR / 2) - 150.0).abs() < 1e-9);
     }
 
     #[test]

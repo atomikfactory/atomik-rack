@@ -136,6 +136,35 @@ fn the_lane_paints_its_scale_and_the_ruler_the_meter_tags() {
     }
 }
 
+/// The tempo the lane prints for the playhead (`"<bpm> BPM"` after the lane's own title).
+fn playhead_readout(v: &mut ArrangementView, doc: &RackDoc) -> String {
+    let mut dl = DisplayList::new();
+    v.paint(&mut dl, doc, &registry());
+    dl.texts()
+        .iter()
+        .find(|t| t.ends_with(" BPM") && t.contains('.'))
+        .map(|t| (*t).to_string())
+        .unwrap_or_default()
+}
+
+#[test]
+fn a_tempo_edit_during_playback_shows_on_the_next_frame_and_undo_restores_it() {
+    let before = three_points();
+    let mut v = with_lane(&before);
+    v.set_playhead(3 * BAR);
+    assert_eq!(playhead_readout(&mut v, &before), "140.00 BPM");
+    // The edit lands while the transport plays: the next playhead step reads the new map.
+    let mut after = before.clone();
+    after.song_mut().tempo[1].bpm = 160.0;
+    v.sync(&after, &registry());
+    v.set_playhead(3 * BAR + 1);
+    assert_eq!(playhead_readout(&mut v, &after), "160.00 BPM");
+    // Undo brings the old document back.
+    v.sync(&before, &registry());
+    v.set_playhead(3 * BAR + 2);
+    assert_eq!(playhead_readout(&mut v, &before), "140.00 BPM");
+}
+
 // ---------------------------------------------------------------- tempo gestures
 
 #[test]

@@ -386,7 +386,7 @@ impl<S: EngineSink> AppCore<S> {
     fn strip_peaks(&self, track: &DeviceKey) -> Option<[f32; 2]> {
         let source = rec_source(self.doc(), track, &self.registry);
         let strip = source.strip(&self.doc().console)?;
-        let (_, m) = self.frame_readings.iter().find(|(k, _)| *k == strip)?;
+        let m = self.frame_reading(&strip)?;
         Some([m.out_peak_l, m.out_peak_r])
     }
 
@@ -411,7 +411,9 @@ impl<S: EngineSink> AppCore<S> {
         // read them here. A read resets the peak, so each frame is read once.
         if !std::mem::take(&mut self.readings_fresh) {
             let shared = std::mem::take(&mut self.io_meters.shared);
-            self.frame_readings = self.console_readings_with(&shared);
+            let mut readings = std::mem::take(&mut self.frame_readings);
+            self.console_readings_into(&shared, &mut readings);
+            self.frame_readings = readings;
             self.io_meters.shared = shared;
         }
         let host = self.host_input_peaks();
@@ -442,8 +444,8 @@ impl<S: EngineSink> AppCore<S> {
                     .doc()
                     .console
                     .channel_of(&device)
-                    .and_then(|c| self.frame_readings.iter().find(|(k, _)| *k == c.channel))
-                    .map_or(ChannelMeters::SILENT, |(_, m)| *m);
+                    .and_then(|c| self.frame_reading(&c.channel))
+                    .unwrap_or(ChannelMeters::SILENT);
                 TrackLevel {
                     device,
                     source: MeterSource::Playback,

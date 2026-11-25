@@ -96,6 +96,13 @@ may break APIs and the patch and project formats.
 - **A knob turned while a song plays re-applies only the automation of that knob.** Any control message used to make
   every automation lane write its value again at the next batch; now only the lanes of that device and parameter do.
   Rendered audio does not change.
+- **An idle window no longer allocates, and a playing one barely does.** With a project open, the console and rack
+  meter feeds built a list and copied a device key per strip every frame (19 heap operations a frame, 38 while playing,
+  the playhead also compiling the tempo table each frame). The feeds now pass references and keep their buffer, the
+  rack looks a device up without building its key, and the arrangement compiles the tempo once per song change, so a
+  tempo edit, an undo or a new song is still picked up on the next frame. An idle frame of the fx-demo project
+  allocates nothing; a playing one only in the frames of the device CPU readout (about five a second). What is shown
+  does not change.
 
 ### Fixed
 - **Exporting a patch, a MIDI file or MIDI mappings, a tab or chord sheet, the device list or the diagnostics report
