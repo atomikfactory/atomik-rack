@@ -8,7 +8,9 @@ name: Nightly
 # atomik-rack-nightly-<YYYYMMDD>-<shortsha>-<platform>.<ext>; the version shown by the installers
 # is <version>-nightly.<YYYYMMDD>+<shortsha>. Only the publish job can write to the repository.
 # Forks never run it. A manual run from a branch other than main builds and smoke-tests but does
-# not publish.
+# not publish. A separate job runs the headless soak (crates/mcp/tests/soak.rs: a scripted edit
+# loop for fifteen minutes, memory sampled) every night, whether or not main changed; it does not
+# hold the publish back, and its table of samples is kept as an artifact.
 on:
   schedule:
     - cron: "0 3 * * *"
@@ -88,6 +90,37 @@ jobs:
             echo "previous=$previous"
           } >> "$GITHUB_OUTPUT"
           echo "nightly $label ($display): build=$build publish=$publish previous=${previous:-none}"
+
+  # The headless soak: a session on a factory demo runs a scripted loop of edits, panel changes,
+  # zooms, undo and redo, saves and paints for fifteen minutes (no audio device), and the test
+  # fails when the memory of the process grows steadily or more than doubles after its warm-up.
+  # Independent of the build: it runs even when main has no new commits, and a red soak does not
+  # stop the nightly from being published.
+  soak:
+    name: headless soak
+    if: github.repository == 'atomikfactory/atomik-rack'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-rust
+        with:
+          cache-key: soak
+      - name: Run the soak (900 seconds)
+        env:
+          ATOMIK_SOAK_SECONDS: "900"
+          ATOMIK_SOAK_TABLE: ${{ github.workspace }}/soak-table.txt
+        run: cargo test -p atomik-mcp --test soak -- --ignored --nocapture
+      - name: Keep the table of samples
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: soak-table
+          path: soak-table.txt
+          if-no-files-found: ignore
+          retention-days: 30
 
   build:
     name: build
