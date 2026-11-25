@@ -101,6 +101,11 @@ may break APIs and the patch and project formats.
 - **A knob turned while a song plays re-applies only the automation of that knob.** Any control message used to make
   every automation lane write its value again at the next batch; now only the lanes of that device and parameter do.
   Rendered audio does not change.
+- **A plugin's parameter list is built when something first needs it, not when the plugin is listed.** The registry
+  kept a full descriptor (parameters, ports, names) for every plugin of the catalogue from the start of the app, about
+  7.3 MiB for 132 plugins of 500 parameters, most of them plugins no project uses. It now holds the scanned layout and
+  builds the descriptor the first time a project, the rack or a stand-in reads it, once, away from the audio thread.
+  The descriptors, their parameter ids and order, the project format and the plugin scan cache are unchanged.
 - **Silent channel and bus strips are no longer processed.** A strip whose inputs are silent and whose filters,
   equaliser, compressors, smoothers and latency line have all come to rest is left alone for the batch, stage by
   stage (a return that sounds while the input is silent wakes only the second stage), so a project with many silent

@@ -1471,3 +1471,24 @@ differs between shells because the first child of a shell starts threads that en
 
 The session loop's private bytes rise by 11 MiB over the first 100 cycles and by 0.6 MiB over the next 100: the
 allocator and the caches fill and then stay. The counts of the others do not move.
+
+## Plugin descriptors built on first use (2026-11-25)
+
+The descriptor of a plugin (its parameter list, ports and names, leaked once for the life of the process) used to be
+built when the plugin was registered, so a catalogue paid for every plugin it lists although a project uses a handful.
+The registry now keeps the scanned layout of each catalogued plugin and builds the descriptor on the first read
+(`LazyDescriptor`, `Registry::register_plugin_lazy`); the browser lists a plugin from the catalogue entry, which needs
+no descriptor. Same test as above (`crates/plugin-host/tests/memory_figures.rs`, 132 plugin files, one plugin each,
+heap held on one thread):
+
+```text
+params   before (all built at start)   at start, after   after 5 plugins are read   after all are read
+50       1.0 MiB                       0.03 MiB          0.07 MiB                   1.0 MiB
+500      7.3 MiB                       0.03 MiB          0.31 MiB                   7.3 MiB
+2000     28.4 MiB                      0.03 MiB          1.10 MiB                   28.4 MiB
+```
+
+"Before" is the figure of "registered, after" in the section above, and equals the "after all are read" column: the
+descriptor read is the same one. A catalogue of 132 plugins with 500 parameters each holds 7.3 MiB less until something
+reads a descriptor. What reads one: a plugin placed in a project (or in the rack), a project that names the plugin,
+the stand-in of a missing plugin, a layout change reported by a live plugin. Nothing on the audio thread does.
