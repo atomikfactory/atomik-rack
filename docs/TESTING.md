@@ -29,7 +29,12 @@ sh scripts/check-public.sh                 # repository hygiene (no local paths,
   [coverage-floors.txt](../scripts/coverage-floors.txt), the check is
   [coverage-floors.sh](../scripts/coverage-floors.sh) (`sh scripts/coverage-floors.sh --self-test` proves that it
   fails a crate under its floor), and the table of every crate is in the job summary. Raise a floor when a crate
-  has risen and stays there.
+  has risen and stays there. One job over the whole workspace no longer fits in its time limit, so the tests run in
+  parallel shards listed in [coverage-shards.txt](../scripts/coverage-shards.txt) (a package belongs to exactly one;
+  the shard `rest` takes every package no other lists, so a new crate needs no edit).
+  `python3 scripts/coverage-shards.py check` fails when a package is in no shard or in two. Each shard writes the lcov
+  report of its own run and the final job merges them with [merge-lcov.py](../scripts/merge-lcov.py) (a line is
+  covered when any shard ran it), then applies the 90 % gate and the floors.
 - On a pull request, clippy and the tests run only for the affected packages
   ([affected.py](../scripts/ci/affected.py)): the packages that own a changed file, every package that depends on
   them, and the packages whose code reads a changed document or a changed file of `factory/` or `examples/` by

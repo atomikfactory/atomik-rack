@@ -70,6 +70,15 @@ may break APIs and the patch and project formats.
   thread.
 - **The last value of a drag is no longer dropped when the engine's parameter queue is full.** The newest refused
   value of each parameter is sent again on the next poll.
+- **A computer without a graphics driver keeps getting a message, now stated as a requirement.** The app never runs on
+  the software adapter unless `WGPU_ADAPTER_NAME` names it (it faults inside the system's software rasteriser); with no
+  hardware adapter it shows a box asking for a graphics driver with DirectX 12, Vulkan or Metal and exits. There is no
+  software rendering mode: a CPU frame took 16 to 47 ms in a measurement. The README lists the requirement.
+- **The Coverage workflow finishes again.** One job built and tested the whole workspace and was cancelled at its
+  90-minute limit on every run for days, so the 90 % gate and the crate floors never ran. The tests now run in four
+  parallel shards (`scripts/coverage-shards.txt`; every workspace package is in exactly one, the last shard is every
+  package no other lists, and `scripts/coverage-shards.py check` fails otherwise), each writes the report of its
+  run, and a final job merges them (`scripts/merge-lcov.py`) and applies the same gate, floors and lcov artifact.
 
 ## [0.5.0-rc.2] - 2026-11-24
 
