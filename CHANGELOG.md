@@ -90,6 +90,14 @@ may break APIs and the patch and project formats.
 - **A knob turned while a song plays re-applies only the automation of that knob.** Any control message used to make
   every automation lane write its value again at the next batch; now only the lanes of that device and parameter do.
   Rendered audio does not change.
+- **A slow audio driver no longer freezes the window.** Opening and stopping the audio stream, which a driver can take
+  seconds to do (up to 5 s each, twice when a fixed buffer size is refused), now happens on a worker thread. The
+  window stays alive and the status line says "Starting audio..."; what you edit, play or set meanwhile is kept and
+  applied when the stream is up, and a new switch of device or buffer replaces one still opening. The timeouts, the
+  messages, the fall back to the last working device, the restart after a lost device or an engine fault, and the
+  handling of a driver that never lets go are as before, and quitting while the stream opens still returns within
+  ten seconds. A call made while the stream opens does not wait for the engine: the plugin devices of a project come
+  in once the stream is up, as after any restart of the audio. Rendered audio and projects do not change.
 
 ### Fixed
 - **Exporting a patch, a MIDI file or MIDI mappings, a tab or chord sheet, the device list or the diagnostics report

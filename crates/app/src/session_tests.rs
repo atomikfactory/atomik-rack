@@ -132,14 +132,9 @@ impl AudioBackend for &Fake {
         Ok(self.audio.list_midi())
     }
 
-    fn start(
-        &self,
-        spec: &StreamSpec,
-        input_device: Option<&str>,
-        engine: Engine,
-        _clock: Arc<FrameClock>,
-    ) -> Result<FakeStream, IoError> {
-        self.audio.start(spec, input_device, engine)
+    fn starter(&self) -> Starter<FakeStream> {
+        let audio = self.audio.clone();
+        Box::new(move |spec, input_device, engine, _clock| audio.start(spec, input_device, engine))
     }
 
     fn midi_out_opener(&self) -> atomik_midi_io::out::Opener {

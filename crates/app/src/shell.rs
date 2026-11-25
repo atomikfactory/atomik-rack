@@ -541,6 +541,26 @@ pub struct Layout {
     pub history: Option<Rect>,
 }
 
+/// What the shell tells the user once the audio stream that was being opened on the worker has
+/// answered ([`crate::session::LiveSession::starting`]).
+enum AfterStart {
+    /// New audio settings were applied: a configuration that did not open is not saved, and
+    /// the session says when it fell back to the last one that did.
+    Settings {
+        /// The settings before the change.
+        before: Box<AudioSettings>,
+        /// The change asked for an audio restart.
+        restarted: bool,
+        /// The file is written when the choice is final.
+        save: bool,
+    },
+    /// The chosen device was lost and the default devices were asked for.
+    DefaultDevices {
+        /// The device that was lost.
+        device: String,
+    },
+}
+
 /// A drag of files that left the file browser: the shell owns it until the release.
 struct FileDrag {
     paths: Vec<PathBuf>,
@@ -648,6 +668,9 @@ pub struct Shell<B: AudioBackend> {
     /// the default devices (both cleared when the stream is alive again).
     stream_announced: bool,
     stream_reset: bool,
+    /// What waits for the audio stream to open (it opens on a worker) before the shell can tell
+    /// the user how it went: the newest wins.
+    after_start: Option<AfterStart>,
     /// The overload counters of the last status poll, and the ones last written to the log.
     overload: OverloadStats,
     /// The audio status of the last poll, for the diagnostics report.
@@ -980,6 +1003,7 @@ impl<B: AudioBackend> Shell<B> {
             fault_device: None,
             stream_announced: false,
             stream_reset: false,
+            after_start: None,
             overload: OverloadStats::default(),
             audio_status: AudioStatus::default(),
             dsp_hold: crate::status::DspHold::default(),
@@ -11397,23 +11421,6 @@ impl<B: AudioBackend> Shell<B> {
             session.set_enabled(true);
             self.core.rebuild_engine();
         }
-        // A configuration that does not open is never saved: the session fell back to the last
-        // one that did (the notice says so), or audio is off and the file keeps the old devices.
-        let session = self.core.sink_mut();
-        let fell_back = session.take_notice();
-        let mut to_save = session.settings().clone();
-        let failed = restarted && !session.is_running();
-        if failed {
-            let why = session.status().error.clone().unwrap_or_default();
-            to_save.use_devices(&LastGood::of(&before));
-            self.notify(format!(
-                "Audio settings not applied: {why}. The saved device settings are unchanged."
-            ));
-        }
-        let kept_old_devices = failed || fell_back.is_some();
-        if let Some(notice) = fell_back {
-            self.notify(notice);
-        }
         self.configure_surface();
         if (gain - self.core.metronome_gain()).abs() > f32::EPSILON {
             self.core.set_metronome_gain(gain);
@@ -11421,17 +11428,71 @@ impl<B: AudioBackend> Shell<B> {
         if pre_count != self.core.pre_count_bars() {
             self.core.set_pre_count_bars(pre_count);
         }
-        // Nothing but a rejected device choice changed: the file stays as it is.
-        let unchanged = kept_old_devices && !to_save.differs_from(&before);
-        if let Some(path) = &self.settings_path
-            && save
-            && !unchanged
-            && let Err(e) = settings::save(path, &to_save)
-        {
-            let message = format!("settings not saved: {e}");
-            self.notify(message);
+        let applied = AfterStart::Settings {
+            before: Box::new(before),
+            restarted,
+            save,
+        };
+        if self.core.sink().starting() {
+            // The stream opens on a worker: whether the devices opened is told when it answers.
+            self.after_start = Some(applied);
+        } else {
+            self.settle_start(applied);
         }
         self.poll_status();
+    }
+
+    /// Tells the user how an audio start went, once the answer is there (see [`AfterStart`]).
+    fn settle_start(&mut self, what: AfterStart) {
+        match what {
+            AfterStart::Settings {
+                before,
+                restarted,
+                save,
+            } => {
+                // A configuration that does not open is never saved: the session fell back to the
+                // last one that did (the notice says so), or audio is off and the file keeps the
+                // old devices.
+                let session = self.core.sink_mut();
+                let fell_back = session.take_notice();
+                let mut to_save = session.settings().clone();
+                let failed = restarted && !session.is_running();
+                if failed {
+                    let why = session.status().error.clone().unwrap_or_default();
+                    to_save.use_devices(&LastGood::of(&before));
+                    self.notify(format!(
+                        "Audio settings not applied: {why}. The saved device settings are \
+                         unchanged."
+                    ));
+                }
+                let kept_old_devices = failed || fell_back.is_some();
+                if let Some(notice) = fell_back {
+                    self.notify(notice);
+                }
+                // Nothing but a rejected device choice changed: the file stays as it is.
+                let unchanged = kept_old_devices && !to_save.differs_from(&before);
+                if let Some(path) = &self.settings_path
+                    && save
+                    && !unchanged
+                    && let Err(e) = settings::save(path, &to_save)
+                {
+                    let message = format!("settings not saved: {e}");
+                    self.notify(message);
+                }
+            }
+            AfterStart::DefaultDevices { device } => {
+                let message = match &self.core.sink().status().error {
+                    Some(e) => format!(
+                        "Audio device lost: {device}. The default devices did not open either: {e}"
+                    ),
+                    None => format!(
+                        "Audio device lost: {device}. Switched to the default devices; pick it \
+                         again in Audio > Settings when it is back."
+                    ),
+                };
+                self.notify(message);
+            }
+        }
     }
 
     /// The name the Window menu lists the song under: the window title without the app's name.
@@ -11628,16 +11689,14 @@ impl<B: AudioBackend> Shell<B> {
             self.stream_reset = true;
             log::warn!("audio stream lost on {device}: switching to the default devices");
             self.reset_to_default_devices();
-            let message = match &self.core.sink().status().error {
-                Some(e) => format!(
-                    "Audio device lost: {device}. The default devices did not open either: {e}"
-                ),
-                None => format!(
-                    "Audio device lost: {device}. Switched to the default devices; pick it \
-                     again in Audio > Settings when it is back."
-                ),
+            let lost = AfterStart::DefaultDevices {
+                device: device.to_string(),
             };
-            self.notify(message);
+            if self.core.sink().starting() {
+                self.after_start = Some(lost);
+            } else {
+                self.settle_start(lost);
+            }
             self.stream_announced = true;
             return true;
         }
@@ -11818,6 +11877,13 @@ impl<B: AudioBackend> Shell<B> {
         self.relist_ports(at);
         let target = self.core.notes_target_device().map(|d| d.name.clone());
         let mut status = self.core.sink_mut().poll_at(at).clone();
+        // The answer to an audio start that ran on the worker: told before any other notice.
+        if !self.core.sink().starting()
+            && let Some(what) = self.after_start.take()
+        {
+            self.settle_start(what);
+            status = self.core.sink().status().clone();
+        }
         let back = self.core.sink().switch_back_pending();
         // The notice that the chosen devices are back is told together with the restart; the
         // restart's own notice (it did not open) replaces it.

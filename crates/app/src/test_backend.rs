@@ -6,11 +6,10 @@
 //! `list_audio`, `list_midi` and `start` with the calls of the same names.
 
 use crate::midi::{MidiConnection, MidiLink};
-use crate::session::{AudioBackend, LiveStream};
-use atomik_audio_io::{HostInfo, IoError, StreamInfo, StreamSpec, Telemetry};
-use atomik_engine::{Engine, FrameClock};
+use crate::session::{AudioBackend, LiveStream, Starter};
+use atomik_audio_io::{HostInfo, IoError, StreamInfo, Telemetry};
+use atomik_engine::Engine;
 use atomik_midi_io::MidiError;
-use std::sync::Arc;
 
 pub(crate) use atomik_testkit::backend::{AcceptedBuffer, FakeAudio, FakeStream};
 
@@ -39,14 +38,9 @@ impl AudioBackend for FakeAudio {
         Ok(FakeAudio::list_midi(self))
     }
 
-    fn start(
-        &self,
-        spec: &StreamSpec,
-        input_device: Option<&str>,
-        engine: Engine,
-        _clock: Arc<FrameClock>,
-    ) -> Result<FakeStream, IoError> {
-        FakeAudio::start(self, spec, input_device, engine)
+    fn starter(&self) -> Starter<FakeStream> {
+        let audio = self.clone();
+        Box::new(move |spec, input_device, engine, _clock| audio.start(spec, input_device, engine))
     }
 
     fn open_midi(&self, name: &str, _link: MidiLink) -> Result<MidiConnection, MidiError> {

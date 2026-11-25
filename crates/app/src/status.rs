@@ -24,6 +24,9 @@ pub struct AudioStatus {
     pub xruns: u64,
     /// Whether a stream is running.
     pub running: bool,
+    /// Whether the stream is being opened (or an earlier one stopped first): audio is off until
+    /// the answer comes.
+    pub starting: bool,
     /// Why audio is off (open failure), if it is.
     pub error: Option<String>,
     /// MIDI input port name, when one is open.
@@ -247,6 +250,8 @@ pub fn status_text(s: &AudioStatus) -> String {
         if s.input_channels_wanted > 0 {
             parts.push(input_text(s));
         }
+    } else if s.starting {
+        parts.push("Starting audio...".to_string());
     } else {
         parts.push(match &s.error {
             Some(e) => format!("audio off: {e}"),

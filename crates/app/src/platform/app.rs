@@ -16,7 +16,7 @@ use crate::commands::AppCommand;
 use crate::cursor_art::{self, CursorArt};
 use crate::performance::Level;
 use crate::plugin_setup;
-use crate::session::{LiveSession, SystemBackend};
+use crate::session::{LiveSession, StartMode, SystemBackend};
 use crate::settings::{self, AudioSettings, default_settings_path};
 use crate::shell::{Shell, ShellOptions, ShellRequest, VideoPick};
 use crate::stress::{
@@ -159,6 +159,8 @@ pub fn run(cli: Cli) -> Result<(), String> {
         }
     }
     let mut session = LiveSession::new(SystemBackend, settings, plan.audio);
+    // A slow driver must not freeze the window: the stream opens on a worker.
+    session.set_start_mode(StartMode::Background);
     // The graphics driver's first look at the machine runs beside the rest of the start. It begins
     // once the audio stream runs: both open devices of the system, and the stream starts sooner
     // when it does not wait for the driver.
@@ -406,7 +408,8 @@ pub fn run(cli: Cli) -> Result<(), String> {
         Box::new(move |from: &Shell<SystemBackend>, id: DocId| {
             let mut audio = from.audio_settings();
             audio.surfaces.clear();
-            let session = LiveSession::new(SystemBackend, audio.clone(), false);
+            let mut session = LiveSession::new(SystemBackend, audio.clone(), false);
+            session.set_start_mode(StartMode::Background);
             let mut core = AppCore::new(session);
             install_video(&mut core);
             if let Some(path) = song_settings_path

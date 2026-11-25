@@ -2338,3 +2338,30 @@ thread and no display-list cache: too slow for a usable interface, and a slower 
 adapter silently (the crash above).
 
 **Status.** Decided by the owner on 2026-11-24.
+
+## BW. The audio stream opens and stops on a worker thread; the calls made meanwhile wait for the engine
+
+**Decision.** Opening a stream (with its output-only retry and its fall back to the last working device) and stopping
+one run on a worker thread, one job at a time per session. `EngineSink::reset` returns at once in the app (a headless
+run and the tests keep the blocking form), the session is "starting" until the answer is taken at the next status
+poll, and the status line says "Starting audio...". While it is starting there is no engine (`EngineSink::has_engine`
+is false, as with audio off), so the plugins wait behind their stand-ins as they do then; the control calls (devices,
+routing, song, tempo, transport, previews) are kept in order, the newest routing and song replace older ones, the
+newest value of each parameter is kept, and all of it is sent when the stream is up, as far as the engine's queue has
+room and the rest as the engine takes it. A new request replaces the one waiting; a stream that arrives for an older
+request is stopped, never used. A stream stopped by a reset is stopped by the same job, before the next one is opened,
+and a job that opens waits for the stops other sessions are running, so two songs that hand the audio over never fight
+for a device. The engine a stopped stream hands back is dropped on the UI thread. A quit waits at most ten seconds for
+the worker, then leaves it behind.
+
+**Why.** The window froze for as long as a driver took to answer, up to 5 s per call and 10 s when a fixed buffer was
+refused and retried, and a hung driver froze it for good. The blocking calls are the only part that waits; everything
+else stays on the UI thread as before.
+
+**Rejected.** Filling an engine made before the stream and attaching it later (the output-only retry and the fall back
+each need a fresh engine, so the calls made meanwhile would be lost and the app would have to send the whole document
+again); a time limit on the wait inside `reset` (a slow driver would still freeze the window for that long, and the
+outcome would depend on the machine's speed); stopping on the UI thread and only opening on the worker (a hung stop is
+as long as a hung open).
+
+**Status.** Decided by the owner on 2026-11-25.

@@ -9,6 +9,29 @@
 //!
 //! When audio is off (disabled, or the device failed to open) the sink calls are accepted
 //! and ignored: the next restart rebuilds the engine from the document anyway.
+//!
+//! # Opening and closing a stream
+//!
+//! A driver can take seconds to open or to release a stream, so the blocking calls
+//! ([`AudioBackend::start`] and [`LiveStream::stop`]) run on a worker thread, one job at a time
+//! per session. The session is in one of these states:
+//!
+//! - **off**: no stream and nothing in flight; the sink calls are ignored.
+//! - **starting**: [`EngineSink::reset`] returned and a job is opening the stream (or waits for
+//!   the job in flight). There is no engine to talk to yet ([`EngineSink::has_engine`] is
+//!   false, as when audio is off), so the control calls are kept in order and sent when the
+//!   stream is up; the newest value of a parameter and the newest routing and song replace
+//!   the older ones. A new reset while starting replaces the request (last wins): the stream
+//!   that arrives for the old one is stopped, never used.
+//! - **running**: the stream is open and drives the engine.
+//!
+//! Streams stopped by a reset (or by [`LiveSession::shutdown`]) ride the same job, before the
+//! start, so a device is never opened while the session itself still holds it; a job that
+//! opens waits as well for the stops of the other sessions (see `STOPS`). The engine a
+//! stopped stream hands back is dropped on the UI thread, when the job's answer is taken.
+//! [`StartMode::Blocking`] (the default: headless runs and tests) waits for the job inside
+//! `reset`, which is the behaviour of a session without a worker; the windowed app asks for
+//! [`StartMode::Background`].
 
 use crate::audio_record::record_offset_frames;
 use crate::midi::{MidiConnection, MidiLink};
@@ -31,9 +54,10 @@ use atomik_engine::{
 };
 use atomik_midi_io::MidiError;
 use atomik_midi_io::out::{Opener, OutStats, OutputThread, SyncPort, Timeline};
-use std::collections::BTreeMap;
-use std::sync::Arc;
+use std::collections::{BTreeMap, VecDeque};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError, TryRecvError};
+use std::sync::{Arc, Condvar, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
 /// The wall clock the liveness check runs on.
@@ -45,12 +69,63 @@ pub(crate) fn clock_now() -> Instant {
 
 /// What opening a stream gives: the stream, the engine's control handle and live-note sender, and
 /// the frame clock the notes are placed on.
-type Opened<B> = (
-    <B as AudioBackend>::Stream,
-    EngineHandle,
-    Option<LiveNoteSender>,
-    Arc<FrameClock>,
-);
+type Opened<S> = (S, EngineHandle, Option<LiveNoteSender>, Arc<FrameClock>);
+
+/// What [`AudioBackend::start`] does, detached from the backend so a worker thread can run it.
+pub type Starter<S> =
+    Box<dyn FnMut(&StreamSpec, Option<&str>, Engine, Arc<FrameClock>) -> Result<S, IoError> + Send>;
+
+/// How long a quit waits for the worker (a stream that is opening, a stream that is stopping)
+/// before it goes on without it: two of the audio backend's own five-second limits.
+pub const QUIT_WAIT: Duration = Duration::from_secs(10);
+
+/// How long an opening waits for the streams other sessions are stopping, so two songs that
+/// hand the audio over never fight for the device.
+const STOP_WAIT: Duration = Duration::from_secs(10);
+
+/// How many streams of any session are being stopped now, and the signal that one finished.
+static STOPS: (Mutex<usize>, Condvar) = (Mutex::new(0), Condvar::new());
+
+/// One stream being stopped, counted in `STOPS` until it is dropped.
+struct StopTicket;
+
+impl StopTicket {
+    fn take() -> Self {
+        *STOPS.0.lock().unwrap_or_else(PoisonError::into_inner) += 1;
+        Self
+    }
+}
+
+impl Drop for StopTicket {
+    fn drop(&mut self) {
+        let mut stopping = STOPS.0.lock().unwrap_or_else(PoisonError::into_inner);
+        *stopping = stopping.saturating_sub(1);
+        STOPS.1.notify_all();
+    }
+}
+
+/// Blocks (on the worker) until no session is stopping a stream, for at most [`STOP_WAIT`].
+fn wait_for_stops() {
+    let stopping = STOPS.0.lock().unwrap_or_else(PoisonError::into_inner);
+    drop(
+        STOPS
+            .1
+            .wait_timeout_while(stopping, STOP_WAIT, |n| *n > 0)
+            .unwrap_or_else(PoisonError::into_inner),
+    );
+}
+
+/// Whether [`EngineSink::reset`] waits for the stream to open.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum StartMode {
+    /// `reset` returns when the stream is open (or failed): the session of headless runs and of
+    /// the tests, where the next line reads the outcome.
+    #[default]
+    Blocking,
+    /// `reset` returns at once; the stream opens on a worker and [`LiveSession::poll`] takes
+    /// it over: the window stays alive while a driver is slow.
+    Background,
+}
 
 /// Counts a control push that found its queue full ([`EngineError::QueueFull`]).
 fn counted<T>(stalls: &mut u64, result: Result<T, EngineError>) -> Result<T, EngineError> {
@@ -64,7 +139,7 @@ fn counted<T>(stalls: &mut u64, result: Result<T, EngineError>) -> Result<T, Eng
 pub const FALLBACK_LATENCY_FRAMES: u64 = 1024;
 
 /// A running audio stream that drives the engine.
-pub trait LiveStream {
+pub trait LiveStream: Send + 'static {
     /// Telemetry since the previous call (loads reset on read; counters are totals).
     fn telemetry(&self) -> Telemetry;
     /// What was opened.
@@ -98,16 +173,11 @@ pub trait AudioBackend {
     fn list_midi_out(&self) -> Result<Vec<String>, MidiError> {
         Ok(Vec::new())
     }
-    /// Opens and starts a stream driving `engine` (dropped here on failure). With input
-    /// channels, `input_device` names the capture device (`None` = the device named like the
-    /// output; never the host default input).
-    fn start(
-        &self,
-        spec: &StreamSpec,
-        input_device: Option<&str>,
-        engine: Engine,
-        clock: Arc<FrameClock>,
-    ) -> Result<Self::Stream, IoError>;
+    /// The call that opens and starts a stream driving an engine (dropped by the call on
+    /// failure), as a value the worker thread owns while the session goes on without waiting
+    /// for it. With input channels, the input device names the capture device (`None` = the
+    /// device named like the output; never the host default input).
+    fn starter(&self) -> Starter<Self::Stream>;
     /// Opens a MIDI input that feeds the engine through `link` (shared with the other open
     /// ports).
     fn open_midi(&self, name: &str, link: MidiLink) -> Result<Self::Midi, MidiError>;
@@ -172,14 +242,8 @@ impl AudioBackend for SystemBackend {
         atomik_midi_io::ports::list_outputs()
     }
 
-    fn start(
-        &self,
-        spec: &StreamSpec,
-        input_device: Option<&str>,
-        engine: Engine,
-        clock: Arc<FrameClock>,
-    ) -> Result<RunningStream, IoError> {
-        atomik_audio_io::start_with_input(spec, input_device, engine, clock)
+    fn starter(&self) -> Starter<RunningStream> {
+        Box::new(atomik_audio_io::start_with_input)
     }
 
     fn open_midi(&self, name: &str, link: MidiLink) -> Result<MidiConnection, MidiError> {
@@ -216,14 +280,10 @@ impl AudioBackend for NullBackend {
         Ok(Vec::new())
     }
 
-    fn start(
-        &self,
-        _spec: &StreamSpec,
-        _input_device: Option<&str>,
-        _engine: Engine,
-        _clock: Arc<FrameClock>,
-    ) -> Result<RunningStream, IoError> {
-        Err(IoError::HostUnavailable("none (null backend)".into()))
+    fn starter(&self) -> Starter<RunningStream> {
+        Box::new(|_spec, _input_device, _engine, _clock| {
+            Err(IoError::HostUnavailable("none (null backend)".into()))
+        })
     }
 
     fn open_midi(&self, name: &str, _link: MidiLink) -> Result<MidiConnection, MidiError> {
@@ -328,12 +388,269 @@ fn requested_workers(settings: &AudioSettings, low_power: bool, auto: u16) -> u1
     crate::performance::workers_for(level, auto)
 }
 
+/// What the worker is asked to open: the settings and the engine's shape, as they were when the
+/// reset asked.
+struct StartRequest {
+    settings: AudioSettings,
+    config: EngineConfig,
+    low_power: bool,
+    /// The reset is the one try at the chosen devices (see [`LiveSession::take_switch_back`]).
+    switching_back: bool,
+}
+
+/// Which configuration a stream opened with.
+enum Used {
+    /// The one asked for.
+    Chosen,
+    /// The last working configuration, after `failure` opening the one asked for.
+    Fallback { good: LastGood, failure: IoError },
+}
+
+/// An open stream, with the engine's side of it, as the worker hands it over.
+struct Started<S> {
+    stream: S,
+    handle: EngineHandle,
+    sender: Option<LiveNoteSender>,
+    clock: Arc<FrameClock>,
+    /// Why the input did not open (the stream runs output-only), if it did not.
+    input_error: Option<String>,
+    used: Used,
+}
+
+/// What a worker job gives back.
+struct Done<S> {
+    /// What each stopped stream gave back, in the order they were asked to stop.
+    stopped: Vec<Result<Engine, IoError>>,
+    /// The outcome of the open, when the job had one.
+    started: Option<Result<Started<S>, IoError>>,
+}
+
+/// The job in flight: the streams it stops, then (maybe) the stream it opens.
+struct Job<S> {
+    rx: Receiver<Done<S>>,
+    /// The handles of the engines whose streams the job stops, in the same order.
+    retiring: Vec<EngineHandle>,
+    /// What it opens; `None` for a job that only stops.
+    request: Option<StartRequest>,
+    /// The reset it belongs to: an answer for an older one is not used.
+    generation: u64,
+}
+
+/// A stream that waits for the next job to stop it, with the handle of its engine.
+type Retired<S> = (S, EngineHandle);
+
+/// A control call made while there is no engine to take it yet.
+enum Op {
+    Insert {
+        id: DeviceInstanceId,
+        device: Box<dyn Device>,
+        params: Vec<(ParamId, f32)>,
+    },
+    Remove(DeviceInstanceId),
+    Routing(RoutingPlan),
+    Samples(DeviceInstanceId, Option<SampleMapRef>),
+    PlayerData(DeviceInstanceId, Option<PlayerDataRef>),
+    Tempo(Tempo),
+    MasterTune(f32, bool),
+    Song(SongSnapshot),
+    Transport(TransportCommand),
+    PreviewStart(atomik_engine::PreviewStream, f32),
+    PreviewStop,
+    ReferenceStart(
+        atomik_engine::PreviewStream,
+        atomik_engine::ReferenceSettings,
+    ),
+    ReferenceSet(atomik_engine::ReferenceSettings),
+    Lens(atomik_engine::LensSettings),
+}
+
+impl Op {
+    /// Sends the call to the engine.
+    fn apply(self, handle: &mut EngineHandle) -> Result<(), EngineError> {
+        match self {
+            Self::Insert { id, device, params } => handle.insert_device(id, device, &params),
+            Self::Remove(id) => handle.remove_device(id),
+            Self::Routing(plan) => handle.submit_routing(plan),
+            Self::Samples(id, map) => handle.set_device_samples(id, map),
+            Self::PlayerData(id, data) => handle.set_device_player_data(id, data),
+            Self::Tempo(tempo) => handle.set_tempo(tempo),
+            Self::MasterTune(cents, glide) => handle.set_master_tune(cents, glide),
+            Self::Song(song) => handle.submit_song(song),
+            Self::Transport(command) => handle.transport(command),
+            Self::PreviewStart(stream, gain) => handle.preview_start(stream, gain),
+            Self::PreviewStop => handle.preview_stop(),
+            Self::ReferenceStart(stream, settings) => handle.reference_start(stream, settings),
+            Self::ReferenceSet(settings) => handle.reference_set(settings),
+            Self::Lens(settings) => handle.lens_set(settings),
+        }
+    }
+}
+
+/// What the worker thread does: stop the streams, then open the one asked for.
+struct Work<S> {
+    starter: Starter<S>,
+    streams: Vec<S>,
+    /// One per stream: dropped when that stream is stopped.
+    tickets: Vec<StopTicket>,
+    /// What to open, if anything: the settings, the engine's shape and the power level.
+    start: Option<(AudioSettings, EngineConfig, bool)>,
+}
+
+impl<S: LiveStream> Work<S> {
+    fn run(self) -> Done<S> {
+        let Self {
+            mut starter,
+            streams,
+            tickets,
+            start,
+        } = self;
+        // The streams of this session go first: a device is never opened while it is held.
+        let mut stopped = Vec::with_capacity(streams.len());
+        for (stream, ticket) in streams.into_iter().zip(tickets) {
+            stopped.push(stream.stop());
+            drop(ticket);
+        }
+        let started = start.map(|(settings, config, low_power)| {
+            // The streams other sessions are stopping may hold the same device.
+            wait_for_stops();
+            open(&mut starter, &settings, &config, low_power)
+        });
+        Done { stopped, started }
+    }
+}
+
+/// Opens the configuration asked for, or the last one that worked when it does not open (and
+/// differs). The error is the first one.
+fn open<S>(
+    starter: &mut Starter<S>,
+    settings: &AudioSettings,
+    config: &EngineConfig,
+    low_power: bool,
+) -> Result<Started<S>, IoError> {
+    match open_stream(starter, settings, config, low_power) {
+        Ok(opened) => Ok(Started::new(opened, Used::Chosen)),
+        Err(failure) => {
+            fall_back_to_last_good(starter, settings, config, low_power, failure.clone())
+                .ok_or(failure)
+        }
+    }
+}
+
+impl<S> Started<S> {
+    fn new(
+        ((stream, handle, sender, clock), input_error): (Opened<S>, Option<String>),
+        used: Used,
+    ) -> Self {
+        Self {
+            stream,
+            handle,
+            sender,
+            clock,
+            input_error,
+            used,
+        }
+    }
+}
+
+/// Opens an engine and a stream for `settings`: one attempt with the document's input channels,
+/// then output-only when the input fails (the second value is why). A failed start drops its
+/// engine.
+fn open_stream<S>(
+    starter: &mut Starter<S>,
+    settings: &AudioSettings,
+    config: &EngineConfig,
+    low_power: bool,
+) -> Result<(Opened<S>, Option<String>), IoError> {
+    // Never more workers than cores - 1: the audio thread keeps a core of its own.
+    let requested = requested_workers(settings, low_power, atomik_audio_io::auto_workers_here());
+    let threads = atomik_audio_io::cap_workers_here(requested);
+    if settings.workers_auto {
+        let (physical, logical) = atomik_audio_io::core_counts_here();
+        log::info!(
+            "render workers: {threads} (automatic{}; {physical} physical cores, {logical} logical)",
+            if low_power { ", low power" } else { "" }
+        );
+    } else if threads != settings.workers {
+        log::info!(
+            "render workers: {} requested, {threads} started (one core stays free)",
+            settings.workers
+        );
+    }
+    let options = EngineOptions {
+        workers: WorkerConfig {
+            threads,
+            // Workers render on the audio deadline too: same RT priority as the callback.
+            on_thread_start: Some(atomik_audio_io::promote_worker_thread),
+        },
+        worker_linger_spins: settings.worker_linger_spins,
+        // A live stream: the workers are used only while the audio thread needs help.
+        realtime: true,
+    };
+    // Document rates are whole Hz (the model accepts the standard rates only).
+    let rate = config.sample_rate.hz().round() as u32;
+    let input_device = settings.input_device.as_deref();
+    // One attempt: a fresh engine and the stream around it.
+    let mut attempt = |inputs: u16| {
+        let (engine, mut handle) = new_engine_with_options(*config, options);
+        // Taken before anything is queued; `Some` exactly once per engine.
+        let sender = handle.live_notes();
+        let clock = Arc::new(FrameClock::new());
+        let spec = settings.stream_spec(rate, config.output_channels, inputs);
+        starter(&spec, input_device, engine, Arc::clone(&clock))
+            .map(|stream| (stream, handle, sender, clock))
+    };
+    let wanted = config.input_channels;
+    match attempt(wanted) {
+        Ok(started) => Ok((started, None)),
+        // The input never fails a start: retry output-only. The engine keeps its input
+        // sockets (they read silence), and the next reset tries the input again.
+        Err(e) if wanted > 0 => attempt(0).map(|started| (started, Some(e.to_string()))),
+        Err(e) => Err(e),
+    }
+}
+
+/// After `failure` opening `settings`: opens the last configuration that worked instead, when
+/// there is one and it differs.
+fn fall_back_to_last_good<S>(
+    starter: &mut Starter<S>,
+    settings: &AudioSettings,
+    config: &EngineConfig,
+    low_power: bool,
+    failure: IoError,
+) -> Option<Started<S>> {
+    let good = settings.device_loss.last_good.clone()?;
+    if good == LastGood::of(settings) {
+        return None;
+    }
+    let mut fallback = settings.clone();
+    fallback.use_devices(&good);
+    let opened = open_stream(starter, &fallback, config, low_power).ok()?;
+    Some(Started::new(opened, Used::Fallback { good, failure }))
+}
+
+/// How many control messages a replay leaves free in the engine's queue.
+const REPLAY_RESERVE: usize = 2;
+
 /// Engine, stream and MIDI input for the app.
 pub struct LiveSession<B: AudioBackend> {
     backend: B,
     settings: AudioSettings,
     enabled: bool,
     running: Option<Running<B>>,
+    mode: StartMode,
+    /// How long [`Self::shutdown`] waits for the worker.
+    quit_wait: Duration,
+    /// The worker's job in flight, if any.
+    job: Option<Job<B::Stream>>,
+    /// The request the next job opens (the newest one: it replaced any older).
+    next: Option<StartRequest>,
+    /// The streams the next job stops first.
+    retired: Vec<Retired<B::Stream>>,
+    /// Counts the resets, so an answer for an older one is told from the current.
+    generation: u64,
+    /// The control calls made while the stream opens (or while the replay of them goes on), in
+    /// order.
+    queued: VecDeque<Op>,
     target: Arc<NoteTarget>,
     latency: Arc<AtomicU64>,
     tap: Arc<RecordTap>,
@@ -394,6 +711,7 @@ impl<B: AudioBackend> std::fmt::Debug for LiveSession<B> {
             .field("settings", &self.settings)
             .field("enabled", &self.enabled)
             .field("running", &self.running.is_some())
+            .field("starting", &self.starting())
             .field("status", &self.status)
             .finish_non_exhaustive()
     }
@@ -411,6 +729,13 @@ impl<B: AudioBackend> LiveSession<B> {
             settings,
             enabled,
             running: None,
+            mode: StartMode::Blocking,
+            quit_wait: QUIT_WAIT,
+            job: None,
+            next: None,
+            retired: Vec::new(),
+            generation: 0,
+            queued: VecDeque::new(),
             target: Arc::new(NoteTarget::new()),
             latency: Arc::new(AtomicU64::new(FALLBACK_LATENCY_FRAMES)),
             tap: Arc::new(RecordTap::new()),
@@ -550,6 +875,8 @@ impl<B: AudioBackend> LiveSession<B> {
     /// [`Self::poll`] at a given time: the stream is stalled when no callback arrived for
     /// `max(4 periods, 250 ms)` before `at` (see [`Liveness`]).
     pub fn poll_at(&mut self, at: Instant) -> &AudioStatus {
+        self.poll_job();
+        self.flush_queued();
         if let Some(r) = &self.running {
             let t = r.stream.telemetry();
             self.status.stream_errors = t.stream_errors;
@@ -623,6 +950,11 @@ impl<B: AudioBackend> LiveSession<B> {
     /// until the queue is full once more. The retry is not a new stall: the push that failed
     /// was counted when it failed.
     fn resend_held_params(&mut self) {
+        // While the engine is still opening, the values wait for it (after the calls that
+        // wait too: a device must exist before its parameters are set).
+        if self.starting() || !self.queued.is_empty() {
+            return;
+        }
         let Some(r) = &mut self.running else {
             self.held_params.clear();
             return;
@@ -635,15 +967,50 @@ impl<B: AudioBackend> LiveSession<B> {
         }
     }
 
-    /// Stops MIDI and the stream and drops the engine on this thread.
+    /// Whether the stream opens or is about to: a reset asked for it and no answer was taken yet.
+    pub fn starting(&self) -> bool {
+        self.next.is_some() || self.job.as_ref().is_some_and(|j| j.request.is_some())
+    }
+
+    /// Whether `reset` waits for the stream to open (see [`StartMode`]).
+    pub fn start_mode(&self) -> StartMode {
+        self.mode
+    }
+
+    /// Sets whether `reset` waits for the stream to open.
+    pub fn set_start_mode(&mut self, mode: StartMode) {
+        self.mode = mode;
+    }
+
+    /// Sets how long [`Self::shutdown`] waits for the worker (the default is [`QUIT_WAIT`]).
+    pub fn set_quit_wait(&mut self, wait: Duration) {
+        self.quit_wait = wait;
+    }
+
+    /// Stops MIDI and the stream and drops the engine on this thread. A stream that is still
+    /// opening is stopped when it arrives. Waits for the worker, but for at most the quit wait:
+    /// a driver that does not answer by then is left behind (its stream is never freed on the
+    /// wrong thread).
     pub fn shutdown(&mut self) {
-        // The values were meant for the engine that is going away.
+        self.generation += 1;
+        self.next = None;
+        self.teardown();
+        self.settle(Some(clock_now() + self.quit_wait));
+        self.status.starting = false;
+    }
+
+    /// Everything of [`Self::shutdown`] that does not wait: the calls kept for an engine are
+    /// dropped, MIDI and the clock input close, and the stream (with the handle of its engine)
+    /// waits for the next job to stop it.
+    fn teardown(&mut self) {
+        // The values and calls were meant for the engine that is going away.
         self.held_params.clear();
+        self.queued.clear();
         // The next engine starts with no preview clock on any device.
         self.previewing.clear();
         if let Some(r) = self.running.take() {
             let Running {
-                mut handle,
+                handle,
                 meters: _,
                 host_channels: _,
                 stream,
@@ -666,17 +1033,7 @@ impl<B: AudioBackend> LiveSession<B> {
                 open.port.close();
             }
             drop(link);
-            let stop_error = match stream.stop() {
-                Ok(engine) => {
-                    drop(engine);
-                    None
-                }
-                Err(e) => Some(e.to_string()),
-            };
-            handle.collect_garbage();
-            if stop_error.is_some() {
-                self.status.error = stop_error;
-            }
+            self.retired.push((stream, handle));
         }
         self.audio_tap_overflow = None;
         self.tap_overflow_base = 0;
@@ -692,94 +1049,280 @@ impl<B: AudioBackend> LiveSession<B> {
         };
     }
 
-    /// Opens an engine and a stream for `settings`: one attempt with the document's input
-    /// channels, then output-only when the input fails (the second value is why). A failed start
-    /// drops its engine.
-    fn open_stream(
-        &self,
-        settings: &AudioSettings,
-        config: &EngineConfig,
-    ) -> Result<(Opened<B>, Option<String>), IoError> {
-        // Never more workers than cores - 1: the audio thread keeps a core of its own.
-        let requested = requested_workers(
-            settings,
-            self.low_power,
-            atomik_audio_io::auto_workers_here(),
-        );
-        let threads = atomik_audio_io::cap_workers_here(requested);
-        if settings.workers_auto {
-            let (physical, logical) = atomik_audio_io::core_counts_here();
-            log::info!(
-                "render workers: {threads} (automatic{}; {physical} physical cores, {logical} logical)",
-                if self.low_power { ", low power" } else { "" }
-            );
-        } else if threads != settings.workers {
-            log::info!(
-                "render workers: {} requested, {threads} started (one core stays free)",
-                settings.workers
-            );
+    /// Starts the next job when none is in flight and there is something to stop or to open.
+    fn pump(&mut self) {
+        if self.job.is_some() || (self.retired.is_empty() && self.next.is_none()) {
+            return;
         }
-        let options = EngineOptions {
-            workers: WorkerConfig {
-                threads,
-                // Workers render on the audio deadline too: same RT priority as the callback.
-                on_thread_start: Some(atomik_audio_io::promote_worker_thread),
-            },
-            worker_linger_spins: settings.worker_linger_spins,
-            // A live stream: the workers are used only while the audio thread needs help.
-            realtime: true,
+        let retired = std::mem::take(&mut self.retired);
+        let request = self.next.take();
+        let (streams, retiring): (Vec<_>, Vec<_>) = retired.into_iter().unzip();
+        let tickets: Vec<StopTicket> = streams.iter().map(|_| StopTicket::take()).collect();
+        let work = Work {
+            starter: self.backend.starter(),
+            streams,
+            tickets,
+            start: request
+                .as_ref()
+                .map(|r| (r.settings.clone(), r.config, r.low_power)),
         };
-        // Document rates are whole Hz (the model accepts the standard rates only).
-        let rate = config.sample_rate.hz().round() as u32;
-        let input_device = settings.input_device.as_deref();
-        // One attempt: a fresh engine and the stream around it.
-        let attempt = |inputs: u16| {
-            let (engine, mut handle) = new_engine_with_options(*config, options);
-            // Taken before anything is queued; `Some` exactly once per engine.
-            let sender = handle.live_notes();
-            let clock = Arc::new(FrameClock::new());
-            let spec = settings.stream_spec(rate, config.output_channels, inputs);
-            self.backend
-                .start(&spec, input_device, engine, Arc::clone(&clock))
-                .map(|stream| (stream, handle, sender, clock))
+        let (tx, rx) = mpsc::channel();
+        // A thread that cannot be made leaves the work here, to run on this thread: slow, as
+        // before the worker existed, but never lost.
+        let slot = Arc::new(Mutex::new(Some(work)));
+        let theirs = Arc::clone(&slot);
+        let sender = tx.clone();
+        let spawned = std::thread::Builder::new()
+            .name("audio-open".into())
+            .spawn(move || {
+                let work = theirs.lock().unwrap_or_else(PoisonError::into_inner).take();
+                if let Some(work) = work {
+                    let _ = sender.send(work.run());
+                }
+            });
+        if let Err(e) = spawned {
+            log::warn!("the audio worker thread did not start ({e}): opening on this thread");
+            let work = slot.lock().unwrap_or_else(PoisonError::into_inner).take();
+            if let Some(work) = work {
+                let _ = tx.send(work.run());
+            }
+        }
+        self.job = Some(Job {
+            rx,
+            retiring,
+            request,
+            generation: self.generation,
+        });
+    }
+
+    /// Takes the worker's answer when it is there, and starts the next job when one waits.
+    fn poll_job(&mut self) {
+        let Some(job) = &self.job else {
+            return;
         };
-        let wanted = config.input_channels;
-        match attempt(wanted) {
-            Ok(started) => Ok((started, None)),
-            // The input never fails a start: retry output-only. The engine keeps its input
-            // sockets (they read silence), and the next reset tries the input again.
-            Err(e) if wanted > 0 => attempt(0).map(|started| (started, Some(e.to_string()))),
-            Err(e) => Err(e),
+        match job.rx.try_recv() {
+            Ok(done) => self.finish(Some(done)),
+            Err(TryRecvError::Empty) => {}
+            Err(TryRecvError::Disconnected) => self.finish(None),
         }
     }
 
-    /// After `failure` opening the current settings: opens the last configuration that worked
-    /// instead, when there is one and it differs. On success the session's settings become that
-    /// configuration and [`Self::take_notice`] says so; on failure nothing changes.
-    fn fall_back_to_last_good(
-        &mut self,
-        config: &EngineConfig,
-        failure: &IoError,
-    ) -> Option<(Opened<B>, Option<String>)> {
-        let good = self.settings.device_loss.last_good.clone()?;
-        if good == LastGood::of(&self.settings) {
-            return None;
+    /// Waits for the worker until nothing is in flight or waits, or until `deadline` (`None`:
+    /// as long as it takes: the backend bounds its own calls). A job still out at the deadline
+    /// is left behind with the streams that waited for it.
+    fn settle(&mut self, deadline: Option<Instant>) {
+        loop {
+            self.pump();
+            let Some(job) = &self.job else {
+                return;
+            };
+            let answer = match deadline {
+                None => job.rx.recv().map_err(|_| RecvTimeoutError::Disconnected),
+                Some(at) => job
+                    .rx
+                    .recv_timeout(at.saturating_duration_since(clock_now())),
+            };
+            match answer {
+                Ok(done) => self.finish(Some(done)),
+                Err(RecvTimeoutError::Disconnected) => self.finish(None),
+                Err(RecvTimeoutError::Timeout) => {
+                    log::warn!("the audio worker did not answer in time: leaving it behind");
+                    self.job = None;
+                    // Freeing these would wait on the driver that did not answer.
+                    for stream in std::mem::take(&mut self.retired) {
+                        std::mem::forget(stream);
+                    }
+                    return;
+                }
+            }
         }
-        let mut fallback = self.settings.clone();
-        fallback.use_devices(&good);
-        let opened = self.open_stream(&fallback, config).ok()?;
-        // The device that did not open is the one to go back to when it can.
-        if self.settings.output_device != fallback.output_device {
-            self.prefer(LastGood::of(&self.settings));
+    }
+
+    /// Takes over the answer of the job in flight (`None`: the worker died), then starts the
+    /// next job.
+    fn finish(&mut self, done: Option<Done<B::Stream>>) {
+        let Some(job) = self.job.take() else {
+            return;
+        };
+        let (stopped, started) = match done {
+            Some(done) => (done.stopped, done.started),
+            None => (
+                Vec::new(),
+                job.request.as_ref().map(|_| {
+                    Err(IoError::Backend(
+                        "the audio worker stopped before the stream opened".into(),
+                    ))
+                }),
+            ),
+        };
+        // The engines the stopped streams handed back go here, on the UI thread, then what they
+        // retired.
+        let mut stop_error = None;
+        let mut handles = job.retiring.into_iter();
+        for result in stopped {
+            match result {
+                Ok(engine) => drop(engine),
+                Err(e) => stop_error = Some(e.to_string()),
+            }
+            if let Some(mut handle) = handles.next() {
+                handle.collect_garbage();
+            }
         }
-        let named = |d: &Option<String>| d.clone().unwrap_or_else(|| "the host default".into());
-        self.notice = Some(format!(
-            "Audio could not open {} ({failure}); using the last working configuration, {}",
-            named(&self.settings.output_device),
-            named(&good.output_device)
-        ));
-        self.settings = fallback;
-        Some(opened)
+        let current = job.generation == self.generation;
+        match (job.request, started) {
+            // A job that only stopped: a failed stop is shown while audio stays off.
+            (None, _) => {
+                if current && self.next.is_none() && stop_error.is_some() {
+                    self.status.error = stop_error;
+                }
+            }
+            (Some(_), None) => {}
+            // An answer for a reset that was replaced (or by a shutdown): the stream is stopped,
+            // never used.
+            (Some(_), Some(Ok(started))) if !current => {
+                let Started { stream, handle, .. } = started;
+                self.retired.push((stream, handle));
+            }
+            (Some(_), Some(Err(_))) if !current => {}
+            (Some(request), Some(Ok(started))) => self.attach(request, started),
+            (Some(_), Some(Err(e))) => {
+                self.status.error = Some(e.to_string());
+            }
+        }
+        self.status.starting = self.starting();
+        self.pump();
+    }
+
+    /// Makes the stream the session's: remembers the configuration that opened, builds the
+    /// status and the MIDI link, sends the calls that waited and opens the MIDI ports.
+    fn attach(&mut self, request: StartRequest, started: Started<B::Stream>) {
+        let Started {
+            stream,
+            handle,
+            sender,
+            clock,
+            input_error,
+            used,
+        } = started;
+        if let Used::Fallback { good, failure } = used {
+            // The device that did not open is the one to go back to when it can.
+            if self.settings.output_device != good.output_device {
+                self.prefer_unless(LastGood::of(&self.settings), request.switching_back);
+            }
+            let named = |d: &Option<String>| d.clone().unwrap_or_else(|| "the host default".into());
+            self.notice = Some(format!(
+                "Audio could not open {} ({failure}); using the last working configuration, {}",
+                named(&self.settings.output_device),
+                named(&good.output_device)
+            ));
+            self.settings.use_devices(&good);
+        }
+        let config = request.config;
+        let wanted = config.input_channels;
+        // This configuration opened a stream: it is the one to fall back to. (An input that
+        // failed to open stays out of it: the output is what worked.)
+        let mut good = LastGood::of(&self.settings);
+        if input_error.is_some() {
+            good.input_device = self
+                .settings
+                .device_loss
+                .last_good
+                .as_ref()
+                .and_then(|g| g.input_device.clone());
+        }
+        self.settings.device_loss.last_good = Some(good);
+        self.input_trims_logged = 0;
+        self.liveness = Some(Liveness::new(clock_now()));
+        let info = stream.info();
+        let accepted = info.requested_buffer_frames;
+        self.latency.store(
+            accepted.map_or(FALLBACK_LATENCY_FRAMES, u64::from),
+            Ordering::Relaxed,
+        );
+        self.status = AudioStatus {
+            host: self.settings.host.label().to_string(),
+            device: info.output_device.clone(),
+            sample_rate: info.sample_rate,
+            buffer_frames: accepted,
+            buffer_requested: accepted,
+            running: true,
+            input_channels_wanted: wanted,
+            input_channels_open: info.input_channels,
+            input_device: info.input_device.clone(),
+            input_error,
+            stream_state: StreamState::Starting,
+            ..AudioStatus::default()
+        };
+        let out_clock = Arc::clone(&clock);
+        let link = sender.map(|sender| {
+            MidiLink::new(
+                sender,
+                clock,
+                Arc::clone(&self.target),
+                config.sample_rate.hz(),
+                Arc::clone(&self.latency),
+                Arc::clone(&self.tap),
+                Arc::clone(&self.hub),
+            )
+        });
+        self.running = Some(Running {
+            meters: handle.meters(),
+            host_channels: (info.input_channels, info.output_channels),
+            handle,
+            stream,
+            midi: Vec::new(),
+            link,
+            clock: out_clock,
+            sample_rate: config.sample_rate.hz(),
+            out_latency: Arc::new(AtomicU64::new(0)),
+            midi_out: None,
+            sync_route: false,
+            clock_in: None,
+        });
+        crate::startup::mark(crate::startup::AUDIO_RUNNING);
+        self.flush_queued();
+        self.sync_midi();
+        self.refresh_sync();
+    }
+
+    /// Sends the calls that waited for an engine, in order, while the engine's queue has room;
+    /// the rest goes on the next poll (and every call made meanwhile waits behind it). A call
+    /// the engine refuses is told to the user once.
+    fn flush_queued(&mut self) {
+        let Some(r) = &mut self.running else {
+            return;
+        };
+        while r.handle.control_room() >= REPLAY_RESERVE
+            && let Some(op) = self.queued.pop_front()
+        {
+            if let Err(e) = counted(&mut self.control_stalled, op.apply(&mut r.handle)) {
+                log::warn!("a control call made while the audio opened was refused: {e}");
+                self.notice
+                    .get_or_insert_with(|| format!("Audio engine: {e}"));
+            }
+        }
+    }
+
+    /// Keeps `op` for the engine that is about to exist (dropping it when none is: audio is
+    /// off). The newest routing and the newest song replace the older ones.
+    fn defer(&mut self, op: Op) -> Result<(), EngineError> {
+        if !self.starting() && self.running.is_none() {
+            return Ok(());
+        }
+        match &op {
+            Op::Routing(_) => self.queued.retain(|o| !matches!(o, Op::Routing(_))),
+            Op::Song(_) => self.queued.retain(|o| !matches!(o, Op::Song(_))),
+            _ => {}
+        }
+        self.queued.push_back(op);
+        self.flush_queued();
+        Ok(())
+    }
+
+    /// The running engine, once the calls that waited have all been sent (before that, a call
+    /// goes behind them).
+    fn live(&mut self) -> Option<&mut Running<B>> {
+        self.running.as_mut().filter(|_| self.queued.is_empty())
     }
 
     /// Switches to the host's default devices after the chosen ones were lost (the chosen devices
@@ -799,8 +1342,13 @@ impl<B: AudioBackend> LiveSession<B> {
 
     /// Remembers `devices` as the ones to go back to.
     fn prefer(&mut self, devices: LastGood) {
+        self.prefer_unless(devices, self.switching_back);
+    }
+
+    /// [`Self::prefer`], except when the restart is the one try at the chosen devices.
+    fn prefer_unless(&mut self, devices: LastGood, switching_back: bool) {
         // A restart that goes back to them is the one try: it must not make them wanted again.
-        if !self.switching_back {
+        if !switching_back {
             self.preferred = Some(Preferred {
                 devices,
                 polled: None,
@@ -1120,90 +1668,25 @@ impl<B: AudioBackend> EngineSink for LiveSession<B> {
         // A fault belongs to the engine that is being replaced.
         self.status.faulted = false;
         self.status.faulted_device = None;
-        self.shutdown();
-        if !self.enabled {
-            return;
-        }
-        let wanted = config.input_channels;
-        let opened = match self.open_stream(&self.settings, config) {
-            Ok(opened) => Some(opened),
-            Err(e) => match self.fall_back_to_last_good(config, &e) {
-                Some(opened) => Some(opened),
-                None => {
-                    self.status.error = Some(e.to_string());
-                    None
-                }
-            },
-        };
-        // The one try at the chosen devices is over, whichever way it went.
-        self.switching_back = false;
-        let Some((started, input_error)) = opened else {
-            return;
-        };
-        let (stream, handle, sender, clock) = started;
-        // This configuration opened a stream: it is the one to fall back to. (An input that
-        // failed to open stays out of it: the output is what worked.)
-        let mut good = LastGood::of(&self.settings);
-        if input_error.is_some() {
-            good.input_device = self
-                .settings
-                .device_loss
-                .last_good
-                .as_ref()
-                .and_then(|g| g.input_device.clone());
-        }
-        self.settings.device_loss.last_good = Some(good);
-        self.input_trims_logged = 0;
-        self.liveness = Some(Liveness::new(clock_now()));
-        let info = stream.info();
-        let accepted = info.requested_buffer_frames;
-        self.latency.store(
-            accepted.map_or(FALLBACK_LATENCY_FRAMES, u64::from),
-            Ordering::Relaxed,
-        );
-        self.status = AudioStatus {
-            host: self.settings.host.label().to_string(),
-            device: info.output_device.clone(),
-            sample_rate: info.sample_rate,
-            buffer_frames: accepted,
-            buffer_requested: accepted,
-            running: true,
-            input_channels_wanted: wanted,
-            input_channels_open: info.input_channels,
-            input_device: info.input_device.clone(),
-            input_error,
-            stream_state: StreamState::Starting,
-            ..AudioStatus::default()
-        };
-        let out_clock = Arc::clone(&clock);
-        let link = sender.map(|sender| {
-            MidiLink::new(
-                sender,
-                clock,
-                Arc::clone(&self.target),
-                config.sample_rate.hz(),
-                Arc::clone(&self.latency),
-                Arc::clone(&self.tap),
-                Arc::clone(&self.hub),
-            )
+        // Last wins: an open that has not started yet is replaced, one in flight is stopped when
+        // it arrives.
+        self.generation += 1;
+        self.teardown();
+        self.next = self.enabled.then(|| StartRequest {
+            settings: self.settings.clone(),
+            config: *config,
+            low_power: self.low_power,
+            switching_back: self.switching_back,
         });
-        self.running = Some(Running {
-            meters: handle.meters(),
-            host_channels: (info.input_channels, info.output_channels),
-            handle,
-            stream,
-            midi: Vec::new(),
-            link,
-            clock: out_clock,
-            sample_rate: config.sample_rate.hz(),
-            out_latency: Arc::new(AtomicU64::new(0)),
-            midi_out: None,
-            sync_route: false,
-            clock_in: None,
-        });
-        crate::startup::mark(crate::startup::AUDIO_RUNNING);
-        self.sync_midi();
-        self.refresh_sync();
+        if self.enabled {
+            // The one try at the chosen devices is made, whichever way it goes.
+            self.switching_back = false;
+        }
+        self.status.starting = self.next.is_some();
+        self.pump();
+        if self.mode == StartMode::Blocking {
+            self.settle(None);
+        }
     }
 
     fn insert_device(
@@ -1213,11 +1696,15 @@ impl<B: AudioBackend> EngineSink for LiveSession<B> {
         params: &[(ParamId, f32)],
     ) -> Result<(), EngineError> {
         let result = match &mut self.running {
-            Some(r) => counted(
+            Some(r) if self.queued.is_empty() => counted(
                 &mut self.control_stalled,
                 r.handle.insert_device(id, device, params),
             ),
-            None => Ok(()),
+            _ => self.defer(Op::Insert {
+                id,
+                device,
+                params: params.to_vec(),
+            }),
         };
         // A MIDI Out device brings its tap with it.
         self.refresh_midi_out();
@@ -1226,8 +1713,10 @@ impl<B: AudioBackend> EngineSink for LiveSession<B> {
 
     fn remove_device(&mut self, id: DeviceInstanceId) -> Result<(), EngineError> {
         let result = match &mut self.running {
-            Some(r) => counted(&mut self.control_stalled, r.handle.remove_device(id)),
-            None => Ok(()),
+            Some(r) if self.queued.is_empty() => {
+                counted(&mut self.control_stalled, r.handle.remove_device(id))
+            }
+            _ => self.defer(Op::Remove(id)),
         };
         // The device's notes are released and its tap forgotten.
         self.refresh_midi_out();
@@ -1253,8 +1742,10 @@ impl<B: AudioBackend> EngineSink for LiveSession<B> {
 
     fn submit_routing(&mut self, plan: RoutingPlan) -> Result<(), EngineError> {
         match &mut self.running {
-            Some(r) => counted(&mut self.control_stalled, r.handle.submit_routing(plan)),
-            None => Ok(()),
+            Some(r) if self.queued.is_empty() => {
+                counted(&mut self.control_stalled, r.handle.submit_routing(plan))
+            }
+            _ => self.defer(Op::Routing(plan)),
         }
     }
 
@@ -1265,7 +1756,7 @@ impl<B: AudioBackend> EngineSink for LiveSession<B> {
         plain: f32,
     ) -> Result<(), EngineError> {
         match &mut self.running {
-            Some(r) => {
+            Some(r) if self.queued.is_empty() => {
                 let result = counted(
                     &mut self.control_stalled,
                     r.handle.set_param(id, param, plain),
@@ -1283,7 +1774,14 @@ impl<B: AudioBackend> EngineSink for LiveSession<B> {
                 }
                 result
             }
-            None => Ok(()),
+            // The engine is opening (or still being sent what waited for it): the newest value
+            // of the parameter goes after that, as a refused one does.
+            _ => {
+                if self.starting() || self.running.is_some() {
+                    self.held_params.insert((id, param), plain);
+                }
+                Ok(())
+            }
         }
     }
 
@@ -1293,11 +1791,11 @@ impl<B: AudioBackend> EngineSink for LiveSession<B> {
         map: Option<SampleMapRef>,
     ) -> Result<(), EngineError> {
         match &mut self.running {
-            Some(r) => counted(
+            Some(r) if self.queued.is_empty() => counted(
                 &mut self.control_stalled,
                 r.handle.set_device_samples(id, map),
             ),
-            None => Ok(()),
+            _ => self.defer(Op::Samples(id, map)),
         }
     }
 
@@ -1307,28 +1805,30 @@ impl<B: AudioBackend> EngineSink for LiveSession<B> {
         data: Option<PlayerDataRef>,
     ) -> Result<(), EngineError> {
         match &mut self.running {
-            Some(r) => counted(
+            Some(r) if self.queued.is_empty() => counted(
                 &mut self.control_stalled,
                 r.handle.set_device_player_data(id, data),
             ),
-            None => Ok(()),
+            _ => self.defer(Op::PlayerData(id, data)),
         }
     }
 
     fn set_tempo(&mut self, tempo: Tempo) -> Result<(), EngineError> {
         match &mut self.running {
-            Some(r) => counted(&mut self.control_stalled, r.handle.set_tempo(tempo)),
-            None => Ok(()),
+            Some(r) if self.queued.is_empty() => {
+                counted(&mut self.control_stalled, r.handle.set_tempo(tempo))
+            }
+            _ => self.defer(Op::Tempo(tempo)),
         }
     }
 
     fn set_master_tune(&mut self, cents: f32, glide: bool) -> Result<(), EngineError> {
         match &mut self.running {
-            Some(r) => counted(
+            Some(r) if self.queued.is_empty() => counted(
                 &mut self.control_stalled,
                 r.handle.set_master_tune(cents, glide),
             ),
-            None => Ok(()),
+            _ => self.defer(Op::MasterTune(cents, glide)),
         }
     }
 
@@ -1348,15 +1848,19 @@ impl<B: AudioBackend> EngineSink for LiveSession<B> {
 
     fn submit_song(&mut self, _input: &SongInput, song: SongSnapshot) -> Result<(), EngineError> {
         match &mut self.running {
-            Some(r) => counted(&mut self.control_stalled, r.handle.submit_song(song)),
-            None => Ok(()),
+            Some(r) if self.queued.is_empty() => {
+                counted(&mut self.control_stalled, r.handle.submit_song(song))
+            }
+            _ => self.defer(Op::Song(song)),
         }
     }
 
     fn transport(&mut self, command: TransportCommand) -> Result<(), EngineError> {
         match &mut self.running {
-            Some(r) => counted(&mut self.control_stalled, r.handle.transport(command)),
-            None => Ok(()),
+            Some(r) if self.queued.is_empty() => {
+                counted(&mut self.control_stalled, r.handle.transport(command))
+            }
+            _ => self.defer(Op::Transport(command)),
         }
     }
 
@@ -1385,7 +1889,7 @@ impl<B: AudioBackend> EngineSink for LiveSession<B> {
     }
 
     fn set_note_taps(&mut self, devices: &[DeviceInstanceId]) {
-        let Some(r) = &mut self.running else {
+        let Some(r) = self.running.as_mut().filter(|_| self.queued.is_empty()) else {
             self.note_taps.clear();
             return;
         };
@@ -1407,7 +1911,7 @@ impl<B: AudioBackend> EngineSink for LiveSession<B> {
     }
 
     fn set_previews(&mut self, devices: &[DeviceInstanceId]) {
-        let Some(r) = &mut self.running else {
+        let Some(r) = self.running.as_mut().filter(|_| self.queued.is_empty()) else {
             self.previewing.clear();
             return;
         };
@@ -1551,8 +2055,7 @@ impl<B: AudioBackend> EngineSink for LiveSession<B> {
         controls: Arc<TapControls>,
     ) -> Option<EngineRecordTap> {
         let tap = self
-            .running
-            .as_mut()?
+            .live()?
             .handle
             .record_tap_gained(channels, capacity_frames, controls)
             .ok()?;
@@ -1616,18 +2119,20 @@ impl<B: AudioBackend> EngineSink for LiveSession<B> {
     ) -> Result<(), EngineError> {
         // Without an engine the stream is dropped: its feed sees it abandoned.
         match &mut self.running {
-            Some(r) => counted(
+            Some(r) if self.queued.is_empty() => counted(
                 &mut self.control_stalled,
                 r.handle.preview_start(stream, gain),
             ),
-            None => Ok(()),
+            _ => self.defer(Op::PreviewStart(stream, gain)),
         }
     }
 
     fn preview_stop(&mut self) -> Result<(), EngineError> {
         match &mut self.running {
-            Some(r) => counted(&mut self.control_stalled, r.handle.preview_stop()),
-            None => Ok(()),
+            Some(r) if self.queued.is_empty() => {
+                counted(&mut self.control_stalled, r.handle.preview_stop())
+            }
+            _ => self.defer(Op::PreviewStop),
         }
     }
 
@@ -1644,11 +2149,11 @@ impl<B: AudioBackend> EngineSink for LiveSession<B> {
     ) -> Result<(), EngineError> {
         // Without an engine the stream is dropped: its feed sees it abandoned.
         match &mut self.running {
-            Some(r) => counted(
+            Some(r) if self.queued.is_empty() => counted(
                 &mut self.control_stalled,
                 r.handle.reference_start(stream, settings),
             ),
-            None => Ok(()),
+            _ => self.defer(Op::ReferenceStart(stream, settings)),
         }
     }
 
@@ -1657,8 +2162,10 @@ impl<B: AudioBackend> EngineSink for LiveSession<B> {
         settings: atomik_engine::ReferenceSettings,
     ) -> Result<(), EngineError> {
         match &mut self.running {
-            Some(r) => counted(&mut self.control_stalled, r.handle.reference_set(settings)),
-            None => Ok(()),
+            Some(r) if self.queued.is_empty() => {
+                counted(&mut self.control_stalled, r.handle.reference_set(settings))
+            }
+            _ => self.defer(Op::ReferenceSet(settings)),
         }
     }
 
@@ -1670,13 +2177,19 @@ impl<B: AudioBackend> EngineSink for LiveSession<B> {
 
     fn lens_set(&mut self, settings: atomik_engine::LensSettings) -> Result<(), EngineError> {
         match &mut self.running {
-            Some(r) => counted(&mut self.control_stalled, r.handle.lens_set(settings)),
-            None => Ok(()),
+            Some(r) if self.queued.is_empty() => {
+                counted(&mut self.control_stalled, r.handle.lens_set(settings))
+            }
+            _ => self.defer(Op::Lens(settings)),
         }
     }
 
     fn engine_error(&self) -> Option<String> {
         self.status.error.clone()
+    }
+
+    fn audio_starting(&self) -> bool {
+        self.starting()
     }
 }
 
@@ -1689,3 +2202,7 @@ impl<B: AudioBackend> Drop for LiveSession<B> {
 #[cfg(test)]
 #[path = "session_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "session_start_tests.rs"]
+mod start_tests;

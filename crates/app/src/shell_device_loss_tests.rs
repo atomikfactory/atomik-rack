@@ -657,3 +657,160 @@ fn a_callback_panic_seen_through_the_poll_restarts_the_stream() {
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+// ---- The stream opens on the worker (the windowed app's mode) ---------------------------------
+
+/// A shell like [`shell`] whose later restarts open the stream on the worker.
+fn background_shell(world: &Fake, settings: &AudioSettings, dir: &Path) -> Shell<Fake> {
+    let mut s = shell(world, settings, dir);
+    s.core_mut()
+        .sink_mut()
+        .set_start_mode(crate::session::StartMode::Background);
+    s
+}
+
+/// Polls the status until the stream that was being opened has answered.
+fn wait_started(s: &mut Shell<Fake>) {
+    let limit = crate::session::clock_now() + Duration::from_secs(60);
+    while s.core().sink().starting() {
+        assert!(
+            crate::session::clock_now() < limit,
+            "timed out waiting for the stream"
+        );
+        s.poll_status_at(crate::session::clock_now());
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    // The poll that took the answer told the user; one more shows what is true now.
+    s.poll_status_at(crate::session::clock_now());
+}
+
+/// Waits until a start call of the fake is blocked on `hold`.
+fn wait_blocked(hold: &atomik_testkit::backend::Hold) {
+    let limit = crate::session::clock_now() + Duration::from_secs(60);
+    while hold.waiting() == 0 {
+        assert!(crate::session::clock_now() < limit, "no start blocked");
+        std::thread::sleep(Duration::from_millis(1));
+    }
+}
+
+#[test]
+fn settings_applied_while_the_driver_is_slow_are_saved_when_the_stream_opens() {
+    let dir = scratch("slow-apply");
+    let world = new_world();
+    let mut s = background_shell(&world, &saved("Interface", false), &dir);
+    let before = file_text(&dir);
+    let hold = world.hold_starts();
+    let mut wanted = s.core().sink().settings().clone();
+    wanted.output_device = Some("Second".into());
+    wanted.pre_count_bars = 3;
+    s.apply_settings(wanted);
+    // The call came back with the driver still opening: the window is alive, says so, and
+    // saves nothing before it knows the device opened.
+    assert!(s.core().sink().starting());
+    wait_blocked(&hold);
+    assert!(
+        s.status_text().contains("Starting audio..."),
+        "{}",
+        s.status_text()
+    );
+    assert_eq!(file_text(&dir), before);
+    hold.release();
+    wait_started(&mut s);
+    assert!(s.core().sink().is_running());
+    assert!(!s.status_text().contains("Starting"), "{}", s.status_text());
+    let file = AudioSettings::from_json(&file_text(&dir)).unwrap();
+    assert_eq!(file.output_device.as_deref(), Some("Second"));
+    assert_eq!(file.pre_count_bars, 3);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_device_that_does_not_open_in_the_background_is_not_saved_either() {
+    let dir = scratch("slow-failed-apply");
+    let world = new_world();
+    let mut s = background_shell(&world, &saved("Interface", false), &dir);
+    let before = file_text(&dir);
+    unplug(&world, "Unplugged");
+    let hold = world.hold_starts();
+    let mut wanted = s.core().sink().settings().clone();
+    wanted.output_device = Some("Unplugged".into());
+    s.apply_settings(wanted);
+    assert!(s.core().sink().starting());
+    wait_blocked(&hold);
+    hold.release();
+    wait_started(&mut s);
+    assert_eq!(
+        file_text(&dir),
+        before,
+        "the failing devices were not saved"
+    );
+    let session = s.core().sink();
+    assert!(
+        session.is_running(),
+        "the last working device is open again"
+    );
+    assert_eq!(
+        session.settings().output_device.as_deref(),
+        Some("Interface")
+    );
+    let message = s.core().last_rejection().unwrap();
+    assert!(
+        message.contains("Unplugged") && message.contains("last working"),
+        "{message}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_lost_device_reopens_on_the_default_devices_through_the_worker() {
+    let dir = scratch("lost-reset-background");
+    let world = new_world();
+    let mut s = background_shell(&world, &saved("Interface", true), &dir);
+    let before = file_text(&dir);
+    world.set_telemetry(Telemetry {
+        device_lost: true,
+        ..running_telemetry(10)
+    });
+    s.poll_status_at(crate::session::clock_now());
+    world.set_telemetry(running_telemetry(5));
+    wait_started(&mut s);
+    assert_eq!(
+        start_devices(&world),
+        vec![Some("Interface".to_string()), None],
+        "restarted on the default output"
+    );
+    let message = s.core().last_rejection().unwrap();
+    assert!(
+        message.contains("Switched to the default devices"),
+        "{message}"
+    );
+    assert_eq!(file_text(&dir), before, "the chosen device stays saved");
+    assert!(s.core().sink().is_running());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_device_fault_restarts_the_audio_through_the_worker() {
+    let dir = scratch("fault-background");
+    let world = new_world();
+    let mut s = background_shell(&world, &saved("Interface", false), &dir);
+    let fx = add_device(&mut s, "atomik.reverb", "fx");
+    let starts = world.start_calls().len();
+    let t0 = crate::session::clock_now();
+    assert!(
+        s.handle_fault(&faulted(Some(fx)), t0),
+        "the engine was rebuilt"
+    );
+    wait_started(&mut s);
+    assert!(s.core().sink().is_running());
+    assert_eq!(world.start_calls().len(), starts + 1);
+    assert!(bypass_of(&s, "fx") >= 0.5, "the faulted device is bypassed");
+    // The device was inserted again in the new engine (once the stream was up).
+    assert!(
+        s.core()
+            .sink()
+            .contains_device(atomik_engine::DeviceInstanceId(1)),
+        "the rack is back in the engine"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
