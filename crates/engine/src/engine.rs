@@ -1342,6 +1342,13 @@ impl EngineHandle {
         Ok(())
     }
 
+    /// How many more control messages the queue takes before it refuses one with
+    /// [`EngineError::QueueFull`]. A sender that holds a backlog (the app, while the audio stream
+    /// is still opening) reads it to send no more than fits.
+    pub fn control_room(&self) -> usize {
+        self.control_tx.slots()
+    }
+
     /// Batches the engine began with a retirement parked: its return queue was full, so the
     /// control queue waited for [`EngineHandle::collect_garbage`]. Transport commands still
     /// applied. A UI shows it as a stalled control path.
