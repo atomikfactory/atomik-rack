@@ -1986,6 +1986,34 @@ file deleted on save). Hand checks: kill the app (Task Manager, End task) during
 again after an edit, start it, and use OPEN RECOVERY and the `Recovered take` track; the MCP recipe
 is `session_open`, edit, kill the server process, `session_open` again.
 
+### Kill tests (headless)
+
+Two tests end a process from outside, the way Task Manager does, and check what the next start or
+the rest of the app sees:
+
+- `crates/app/tests/kill_recovery.rs`: the test executable starts itself again as a child (an
+  environment variable selects the `child_session` test) that edits a document on the null
+  backend, lets the autosave write its snapshot (the test advances the clock past the period by
+  hand, so nothing waits) and then idles. The test checks the child holds its session marker,
+  kills it (`Child::kill`), waits until the marker's lock is free (`session_alive` is false), and
+  opens a new core on the same recovery folder: the unclean-exit banner offers the recovery, OPEN
+  RECOVERY gives the edited document (a device, two parameters, the tempo, equal to the same edits
+  made in this process), and a later clean start is quiet.
+- `crates/plugin-hostd/tests/e2e_kill_one.rs`: two sandboxed plugins play through the real
+  `PluginManager`; the test finds the process of one (`PluginManager::native_handle`) and kills
+  it with `taskkill` or `kill -9`. It checks one `Crashed` event for that instance only, the
+  CRASHED device state, the other plugin still processing, the state captured before the kill
+  restoring into a new instance, and no child left (`Sandbox::finish`).
+
+Both take well under a second and wait on conditions with a generous bound. Run them with
+`cargo test -p atomik-app --test kill_recovery` and
+`cargo test -p atomik-plugin-hostd --test e2e_kill_one`. The CRASHED text and the reload of the
+app core stay with the null-backend tests of the app (`app_core_plugins_sandbox_tests.rs`); the
+real window is a hand check: start the app with a plugin loaded and an edit made, kill `atomik`
+from Task Manager, start it again and use OPEN RECOVERY; then kill one `atomik-plugin-host`
+while the song plays: the app stays up, that device shows CRASHED, the others keep sounding, and
+a save keeps the plugin's last state.
+
 ## Logs, crash reports and diagnostics
 
 `crates/app/src/logging.rs` has the rotation tests (writing past the limit keeps three files, a
