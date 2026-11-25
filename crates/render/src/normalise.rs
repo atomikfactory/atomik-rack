@@ -17,6 +17,10 @@
 //!   added: the loudness of such a master is the engineer's.
 //! * [`Loudness::Off`]: nothing at all.
 //!
+//! The stems of a song are finished by [`crate::stems::export_stems_with`]: each on its own the same
+//! way, or all with one [`CommonGain`] from the loudness of the mix they add up to (no limiter, so
+//! they still sum to it).
+//!
 //! [`Finish::mono`] first mixes every channel into one (their mean), so the loudness is measured
 //! on the audio that is written. The measurement is a pure function of the samples and the
 //! limiter is deterministic, so the same export gives the same bits on every run.
@@ -291,6 +295,127 @@ fn to_target(
     (out, report)
 }
 
+/// One gain for the stems of a song, from the mix they make up (see
+/// [`crate::stems::StemsLevel::together`]).
+///
+/// The gain is the one that would bring the mix to the target, held back where the mix's true
+/// peak would pass the ceiling: there is no limiter, because a limiter works on the signal it
+/// sees and the stems, limited one by one, would no longer add up to the limited mix. Every stem
+/// is multiplied by the same number, so they still sum to the mix.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct CommonGain {
+    /// The mix before the gain.
+    pub before: LoudnessReport,
+    /// The mix after it (the gain shifts every level by the same amount).
+    pub after: LoudnessReport,
+    /// The gain in dB; 0 for a guide, and for a mix with nothing to measure.
+    pub gain_db: f32,
+    /// The target aimed for, or the guide, in LUFS.
+    pub target_lufs: f32,
+    /// The true-peak ceiling that was kept, in dBTP (a guide has none).
+    pub ceiling_dbtp: Option<f32>,
+    /// What the ceiling kept the gain from, in LU: 0 when the target was reached.
+    pub held_db: f32,
+    /// The loudness was only a guide: nothing was changed.
+    pub guide: bool,
+}
+
+/// `report` with every level moved by `db` (what a plain gain does to a measurement).
+pub fn shifted(report: &LoudnessReport, db: f32) -> LoudnessReport {
+    LoudnessReport {
+        integrated_lufs: report.integrated_lufs.map(|l| l + db),
+        range_lu: report.range_lu,
+        true_peak_dbtp: report.true_peak_dbtp.map(|p| p + db),
+        sample_peak_dbfs: report.sample_peak_dbfs.map(|p| p + db),
+    }
+}
+
+impl CommonGain {
+    /// The gain for a mix that measured `mix`, as `loudness` says; `None` when nothing is asked.
+    pub fn of(mix: LoudnessReport, loudness: Loudness) -> Option<Self> {
+        match loudness {
+            Loudness::Off => None,
+            Loudness::Guide { lufs } => Some(Self {
+                before: mix,
+                after: mix,
+                gain_db: 0.0,
+                target_lufs: lufs,
+                ceiling_dbtp: None,
+                held_db: 0.0,
+                guide: true,
+            }),
+            Loudness::Target { lufs, ceiling_dbtp } => {
+                let wanted = mix.integrated_lufs.map_or(0.0, |l| lufs - l);
+                let room = mix.true_peak_dbtp.map_or(f32::MAX, |p| ceiling_dbtp - p);
+                let gain_db = if mix.integrated_lufs.is_some() {
+                    wanted.min(room)
+                } else {
+                    0.0
+                };
+                Some(Self {
+                    before: mix,
+                    after: shifted(&mix, gain_db),
+                    gain_db,
+                    target_lufs: lufs,
+                    ceiling_dbtp: Some(ceiling_dbtp),
+                    held_db: (wanted - gain_db).max(0.0),
+                    guide: false,
+                })
+            }
+        }
+    }
+
+    /// What happened, for the toast: `was -18.2 LUFS, -3.1 dBTP; every stem turned up 4.2 dB`.
+    pub fn summary(&self) -> String {
+        let was = if self.before.is_silent() {
+            "was silent".to_owned()
+        } else {
+            let mut parts = Vec::new();
+            if let Some(l) = self.before.integrated_lufs {
+                parts.push(format!("{l:.1} LUFS"));
+            }
+            if let Some(p) = self.before.true_peak_dbtp {
+                parts.push(format!("{p:.1} dBTP"));
+            }
+            format!("was {}", parts.join(", "))
+        };
+        if self.guide {
+            return format!(
+                "{was}; the stems are left as they are (guide {:.0} LUFS)",
+                self.target_lufs
+            );
+        }
+        let did = if self.before.integrated_lufs.is_none() {
+            "nothing to measure, the stems are left as they are".to_owned()
+        } else if self.gain_db.abs() < 0.05 {
+            "level kept".to_owned()
+        } else if self.gain_db > 0.0 {
+            format!("every stem turned up {:.1} dB", self.gain_db)
+        } else {
+            format!("every stem turned down {:.1} dB", -self.gain_db)
+        };
+        let held = if self.held_db > TOLERANCE_LU {
+            format!(
+                "; {:.1} LU short of {:.0} LUFS, the peaks leave no more room under {:.1} dBTP",
+                self.held_db,
+                self.target_lufs,
+                self.ceiling_dbtp.unwrap_or(CEILING_DBTP)
+            )
+        } else {
+            String::new()
+        };
+        format!("{was}; {did}{held}")
+    }
+}
+
+/// Multiplies every sample of `channels` by `db` decibels of gain.
+pub fn apply_gain(channels: &mut [Vec<f32>], db: f32) {
+    let g = gain_of(db);
+    for x in channels.iter_mut().flatten() {
+        *x *= g;
+    }
+}
+
 /// Finishes `render` as `finish` says (see the module docs). The report is `None` when nothing
 /// was asked for the loudness.
 pub fn finish_render(render: &mut ExportRender, finish: &Finish) -> Option<NormaliseReport> {
@@ -498,5 +623,74 @@ mod tests {
             "{after:?}"
         );
         assert!(report.after.integrated_lufs == after.integrated_lufs);
+    }
+
+    #[test]
+    fn one_gain_for_a_mix_is_the_distance_to_the_target_held_at_the_ceiling() {
+        let target = |lufs: f32| Loudness::Target {
+            lufs,
+            ceiling_dbtp: -1.0,
+        };
+        let quiet = measure(&render(tone(0.05, 8.0)).audio);
+        let c = CommonGain::of(quiet, target(-14.0)).unwrap();
+        assert!((c.gain_db - (-14.0 - quiet.integrated_lufs.unwrap())).abs() < 1e-5);
+        assert!(c.held_db == 0.0 && !c.guide);
+        assert!((c.after.integrated_lufs.unwrap() + 14.0).abs() < 1e-4);
+        assert!(
+            c.summary().contains("every stem turned up"),
+            "{}",
+            c.summary()
+        );
+        // A target the peaks leave no room for: the gain stops where the true peak meets the
+        // ceiling, and the summary says how far short that is.
+        let mid = measure(&render(tone(0.5, 8.0)).audio);
+        let c = CommonGain::of(mid, target(-1.0)).unwrap();
+        assert!(c.held_db > 0.3, "{c:?}");
+        assert!(
+            (c.after.true_peak_dbtp.unwrap() + 1.0).abs() < 1e-4,
+            "{c:?}"
+        );
+        assert!(c.summary().contains("short of -1 LUFS"), "{}", c.summary());
+        // Turning down is never held.
+        let c = CommonGain::of(mid, target(-30.0)).unwrap();
+        assert!(c.gain_db < 0.0 && c.held_db == 0.0);
+        assert!(c.summary().contains("turned down"));
+    }
+
+    #[test]
+    fn a_guide_a_silent_mix_and_off_give_no_gain() {
+        let mid = measure(&render(tone(0.5, 8.0)).audio);
+        let guide = CommonGain::of(mid, Loudness::Guide { lufs: -9.0 }).unwrap();
+        assert!(guide.guide && guide.gain_db == 0.0 && guide.after == mid);
+        assert!(guide.summary().contains("left as they are"));
+        let silent = measure(&render(vec![vec![0.0; 48_000]; 2]).audio);
+        let c = CommonGain::of(
+            silent,
+            Loudness::Target {
+                lufs: -14.0,
+                ceiling_dbtp: -1.0,
+            },
+        )
+        .unwrap();
+        assert!(c.gain_db == 0.0 && c.held_db == 0.0);
+        assert!(c.summary().contains("silent"), "{}", c.summary());
+        assert!(CommonGain::of(mid, Loudness::Off).is_none());
+    }
+
+    #[test]
+    fn a_shifted_report_is_what_a_gain_measures() {
+        let mut r = render(tone(0.1, 6.0));
+        let before = measure(&r.audio);
+        apply_gain(&mut r.audio.channels, -6.0);
+        let after = measure(&r.audio);
+        let guess = shifted(&before, -6.0);
+        for (a, b) in [
+            (guess.integrated_lufs, after.integrated_lufs),
+            (guess.true_peak_dbtp, after.true_peak_dbtp),
+            (guess.sample_peak_dbfs, after.sample_peak_dbfs),
+        ] {
+            assert!((a.unwrap() - b.unwrap()).abs() < 0.01, "{a:?} {b:?}");
+        }
+        assert_eq!(guess.range_lu, before.range_lu);
     }
 }
