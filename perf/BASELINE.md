@@ -1249,6 +1249,68 @@ outliers and do not repeat in the other rows. The harness thread spins between c
 bounds of a driver's thread (caches and clock stay warm); only a comparison between builds on this machine means
 something.
 
+### Do the render workers help? (2026-11-25)
+
+The same harness, widened: `ATOMIK_TIMING_PROJECTS=all`, buffers 128 and 256, workers 0, 1, 2 and 4, 10 s per row
+after one second of warm-up (the default warm-up is three seconds since this run, see below). New rows:
+`stress-rack` (the bench's 100 devices; nothing plays in it, so it is mostly idle devices) and `console-64`,
+`console-128`, `console-256` (that many channel strips, each with a looping synth track, its gate and its compressor
+on). The new `engaged` column is the share of the timed callbacks in which the workers were woken. The desktop was
+in use during the runs. 32 threads; each cell is p50 / p99 / max in microseconds, then misses:
+
+| project | buffer | w0 | w1 | w2 | w4 | engaged (w1 / w2 / w4) |
+|---|---|---|---|---|---|---|
+| fx-demo | 128 | 328 / 1049 / 3061, 1 | 229 / 655 / 1408, 0 | 229 / 393 / 698, 0 | 229 / 459 / 1031, 0 | 39 / 20 / 20 % |
+| fx-demo | 256 | 459 / 655 / 762, 0 | 459 / 655 / 1465, 0 | 459 / 655 / 743, 0 | 459 / 918 / 1486, 0 | 20 / 20 / 20 % |
+| stress-song | 128 | 164 / 393 / 980, 0 | 164 / 393 / 775, 0 | 197 / 786 / 9689, 1 | 164 / 655 / 3430, 1 | 20 / 41 / 31 % |
+| stress-song | 256 | 393 / 1049 / 2491, 0 | 393 / 1311 / 2012, 0 | 393 / 1049 / 2685, 0 | 393 / 1311 / 2366, 0 | 40 / 24 / 20 % |
+| stress-rack | 128 | 524 / 1573 / 3984, 2 | 459 / 1049 / 1942, 0 | 393 / 1311 / 5359, 1 | 393 / 1311 / 4188, 4 | 100 / 100 / 100 % |
+| stress-rack | 256 | 918 / 1835 / 2663, 0 | 918 / 1835 / 3304, 0 | 918 / 2621 / 3663, 0 | 786 / 2097 / 5384, 1 | 100 / 100 / 100 % |
+| console-64 | 128 | 786 / 2621 / 20106, 23 | 655 / 2097 / 14591, 16 | 655 / 2097 / 3931, 11 | 655 / 3146 / 7081, 36 | 100 / 100 / 100 % |
+| console-64 | 256 | 1311 / 3670 / 7340, 3 | 1311 / 3670 / 6705, 2 | 1311 / 3670 / 8601, 2 | 1311 / 4194 / 20321, 8 | 100 / 100 / 100 % |
+| console-128 | 128 | 1311 / 3670 / 4973, 113 | 1311 / 3670 / 5429, 118 | 1311 / 3670 / 5982, 102 | 918 / 3146 / 5144, 67 | 100 / 100 / 100 % |
+| console-128 | 256 | 2097 / 4194 / 6338, 2 | 1835 / 3670 / 3883, 0 | 1835 / 3584 / 3584, 0 | 1835 / 2621 / 3228, 0 | 100 / 100 / 100 % |
+| console-256 | 128 | 1835 / 5243 / 7016, 432 | 2097 / 3670 / 4546, 192 | 1835 / 3146 / 4589, 84 | 1835 / 2621 / 4178, 18 | 100 / 100 / 100 % |
+| console-256 | 256 | 4194 / 10486 / 12299, 141 | 3670 / 6292 / 8616, 16 | 3670 / 6292 / 8045, 44 | 3146 / 5243 / 6072, 1 | 100 / 100 / 100 % |
+
+What it says. Where the plan is heavy enough that the gate keeps the workers on (the rows at 100 %), the workers help
+exactly when the work per batch is a large share of the period: `console-256` goes from 432 misses (128 frames, no
+worker) to 192, 84 and 18 with 1, 2 and 4 workers, and from 141 to 16, 44 and 1 at 256 frames; `console-128` improves
+at 256 frames and with 4 workers at 128; `console-64` and `stress-rack` are within the noise of this machine (their
+worst single callbacks are tens of milliseconds in rows of every worker count). So workers win on heavy projects.
+
+On the light projects the first run looked as if two workers lost (a higher p99 and max), but those rows are not
+steady state: the load rule holds the workers busy for one second after the transport starts and needs one more
+second under 20 % of the budget before it calms down, and the one-second warm-up left part of that start-up in the
+timed rows (the `engaged` column: 20 % and more, against 0 % in a settled row). With three seconds of warm-up (this
+harness now), the same light projects, 10 s per row, 32 threads:
+
+| project | buffer | w0 | w2 | w4 | engaged (w2 / w4) |
+|---|---|---|---|---|---|
+| fx-demo | 128 | 262 / 655 / 1387, 0 | 262 / 655 / 1320, 0 | 262 / 786 / 1136, 0 | 0 / 0 % |
+| fx-demo | 256 | 524 / 1311 / 2015, 0 | 655 / 1311 / 3227, 0 | 655 / 1573 / 5151, 0 | 20 / 31 % |
+| stress-song | 128 | 164 / 524 / 1987, 0 | 164 / 459 / 1043, 0 | 164 / 655 / 7017, 2 | 0 / 20 % |
+| stress-song | 256 | 328 / 655 / 1646, 0 | 328 / 655 / 1510, 0 | 328 / 655 / 820, 0 | 0 / 0 % |
+
+The workers sleep in most cells and the p99 equals the no-worker row; the cells that still show 20 to 31 % are runs
+where the load of the desktop pushed the cost over the 30 % share for a while, which is when the rule wakes them.
+
+Process affinity 0xF (two cores, four threads), same sweep, one-second warm-up: one worker is as good as none on the
+light projects (`fx-demo` 128 frames: p99 459 against 393 us, no misses), but two or four workers on four threads are
+worse than none as soon as the gate engages them: `fx-demo` 128 frames 157 misses with 2 workers and 1316 with 4,
+`stress-song` 256 frames 213 and 1608 against 0, and the heavy rows are overloaded with any count (`console-128` 128
+frames: 1352 misses with none, 1015 with 1, 1328 with 2, 3378 with 4). The audio thread plus the workers outnumber the
+hardware threads, and a spinning worker takes the audio thread's core. The automatic count already avoids that:
+`auto_workers_for` gives one worker for two cores and `cap_workers` leaves a thread for the audio thread, so two
+workers on four threads is a setting no automatic rule picks.
+
+Decision: no change to the rule. The gate keeps the workers asleep on a light project once it has settled (about two
+seconds after Play), and the workers win on the heavy ones. The two-second start-up window is deliberate (a song that
+starts dense must not take its first batches late). The harness gained the worker, buffer and project lists, the
+heavier generated projects, the `engaged` column and a three-second warm-up. Left to the owner: `stress-rack` stays
+100 % engaged at about 20 % of the budget at the median with no clear worker gain; that is the safe side by design (a
+busy plan does not calm down while the time seen on a worker is over 50 % of the budget).
+
 ### Children with no console host (2026-11-25)
 
 The same sweep, the same machine and build, after the sandbox and the scanner started their children with
