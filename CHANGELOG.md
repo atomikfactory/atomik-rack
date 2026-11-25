@@ -19,6 +19,12 @@ may break APIs and the patch and project formats.
   recovery copies are neither read nor written), no audio device, no plugins loaded or scanned and no project
   reopened, so a setting, a device or a plugin that stops a normal start cannot. The window title ends in
   `[Safe mode]` and a message says so. It cannot be combined with `--settings`.
+- **One scriptable fake audio backend for the tests.** The session tests of the app and the lifecycle tests of the
+  player used to carry a fake audio host each; they now share one (`atomik_testkit::backend`, behind a `backend`
+  feature that no shipped program enables) whose script can change the device's rate, change the buffer size under
+  a running stream, unplug and plug back a device, stall the callbacks, make each callback cost a given time, and
+  which counts the starts, stops and listings. New tests use it for a rate change, an unplug and replug, a stall
+  longer than the watchdog and callbacks that overrun their period. Nothing in the program changes.
 
 ### Changed
 - **The rack builds the automation values it shows once, not on every paint.** While an automation lane has points,
