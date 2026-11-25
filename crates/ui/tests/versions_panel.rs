@@ -469,3 +469,226 @@ fn a_comparison_has_a_back_tooltip_and_the_list_buttons_have_none() {
     assert!(v.help_at(v.close_rect().center()).is_some());
     assert!(v.help_at(v.protect_rect().center()).is_none());
 }
+
+fn secondary(v: &mut VersionsView, p: Point) -> Vec<VersionsAction> {
+    actions(v.handle(&down_with(p, atomik_ui::PointerButton::Secondary, 1)))
+}
+
+#[test]
+fn rename_puts_the_name_in_the_field_and_enter_sends_it() {
+    let mut v = view(items());
+    click_on(&mut v, |v| v.row_rect(1));
+    assert_eq!(click_on(&mut v, |v| v.rename_rect()), vec![]);
+    assert_eq!(v.renaming_id(), Some(4));
+    assert_eq!(v.name(), "Before the mix");
+    assert!(v.name_has_keys());
+    let t = texts(&v);
+    assert!(
+        t.iter().any(|s| s == "Rename") && t.iter().any(|s| s == "RENAME"),
+        "{t:?}"
+    );
+    type_text(&mut v, "!");
+    assert_eq!(
+        press(&mut v, Key::Enter),
+        vec![VersionsAction::Rename {
+            id: 4,
+            name: "Before the mix!".to_owned()
+        }]
+    );
+    // The app answers with the new rows and an empty name: the rename is over.
+    v.set_items(items(), true);
+    assert_eq!(v.renaming_id(), None);
+    assert_eq!(v.name(), "");
+    assert_eq!(
+        click_on(&mut v, |v| v.save_rect()),
+        vec![VersionsAction::Save(String::new())],
+        "the button is SAVE VERSION again"
+    );
+}
+
+#[test]
+fn an_automatic_version_can_be_renamed_and_an_empty_name_is_sent_as_it_is() {
+    let mut v = view(items());
+    v.focus_list();
+    press(&mut v, Key::F(2));
+    assert_eq!(v.renaming_id(), Some(5));
+    assert_eq!(v.name(), "");
+    assert_eq!(
+        click_on(&mut v, |v| v.save_rect()),
+        vec![VersionsAction::Rename {
+            id: 5,
+            name: String::new()
+        }]
+    );
+}
+
+#[test]
+fn esc_cancels_a_rename_and_choosing_another_row_ends_it() {
+    let mut v = view(items());
+    click_on(&mut v, |v| v.row_rect(1));
+    v.begin_rename();
+    assert!(v.back(), "Esc leaves the rename first");
+    assert_eq!(v.renaming_id(), None);
+    assert_eq!(v.name(), "");
+    assert!(!v.back(), "then there is nothing left to leave");
+    v.begin_rename();
+    click_on(&mut v, |v| v.row_rect(0));
+    assert_eq!(v.renaming_id(), None, "a rename belongs to its version");
+    assert_eq!(v.name(), "");
+}
+
+#[test]
+fn delete_asks_first_and_only_the_answer_sends_it() {
+    let mut v = view(items());
+    click_on(&mut v, |v| v.row_rect(1));
+    assert_eq!(click_on(&mut v, |v| v.delete_rect()), vec![]);
+    assert_eq!(v.confirming_id(), Some(4));
+    let t = texts(&v);
+    assert!(
+        t.iter()
+            .any(|s| s == "Delete version 2026-11-06 12:04 Before the mix? This cannot be undone."),
+        "{t:?}"
+    );
+    assert!(t.iter().any(|s| s == "KEEP"), "{t:?}");
+    // Nothing else acts while the question is open.
+    assert_eq!(click_on(&mut v, |v| v.row_rect(0)), vec![]);
+    assert_eq!(press(&mut v, Key::Delete), vec![]);
+    assert_eq!(v.confirming_id(), Some(4));
+    assert_eq!(
+        click_on(&mut v, |v| v.restore_rect()),
+        vec![VersionsAction::Delete(4)]
+    );
+    assert_eq!(v.confirming_id(), None);
+}
+
+#[test]
+fn keep_and_esc_cancel_the_question_and_enter_answers_yes() {
+    let mut v = view(items());
+    v.focus_list();
+    assert_eq!(press(&mut v, Key::Delete), vec![]);
+    assert_eq!(v.confirming_id(), Some(5));
+    assert_eq!(click_on(&mut v, |v| v.protect_rect()), vec![]);
+    assert_eq!(v.confirming_id(), None);
+    press(&mut v, Key::Delete);
+    assert!(v.back());
+    assert_eq!(v.confirming_id(), None);
+    press(&mut v, Key::Delete);
+    assert_eq!(press(&mut v, Key::Enter), vec![VersionsAction::Delete(5)]);
+}
+
+#[test]
+fn a_protected_automatic_version_cannot_be_deleted_and_the_tooltip_says_why() {
+    let mut v = view(items());
+    click_on(&mut v, |v| v.row_rect(2));
+    assert!(!v.can_delete());
+    assert_eq!(click_on(&mut v, |v| v.delete_rect()), vec![]);
+    assert_eq!(press(&mut v, Key::Delete), vec![]);
+    assert_eq!(v.confirming_id(), None);
+    let help = v.help_at(v.delete_rect().center()).unwrap();
+    assert!(help.text.contains("unprotect it first"), "{}", help.text);
+    // Unprotected, the same version is deleted; a named version is deleted on request.
+    v.set_items(
+        vec![
+            item(3, "", true, false),
+            item(4, "Before the mix", false, true),
+        ],
+        false,
+    );
+    click_on(&mut v, |v| v.row_rect(1));
+    assert!(v.can_delete());
+    click_on(&mut v, |v| v.delete_rect());
+    assert_eq!(v.confirming_id(), Some(4));
+}
+
+#[test]
+fn a_question_about_a_version_that_is_gone_ends() {
+    let mut v = view(items());
+    v.focus_list();
+    press(&mut v, Key::Delete);
+    v.set_items(items().into_iter().skip(1).collect(), false);
+    assert_eq!(v.confirming_id(), None);
+}
+
+#[test]
+fn a_right_click_chooses_the_row_and_opens_a_menu_of_the_actions() {
+    let mut v = view(items());
+    let p = v.row_rect(3).center();
+    assert_eq!(secondary(&mut v, p), vec![]);
+    assert_eq!(v.selected_id(), Some(2));
+    assert!(v.menu_open());
+    let menu = v.menu().unwrap();
+    let labels: Vec<&str> = menu.items().map(|i| i.label.as_str()).collect();
+    assert_eq!(
+        labels,
+        ["Restore", "Compare", "Rename", "Protect", "Delete"]
+    );
+    assert!(menu.items().all(|i| i.enabled));
+    // Choosing Delete asks; the menu is gone.
+    let at = menu.item_center("versions.delete").unwrap();
+    assert_eq!(click(&mut v, at), vec![]);
+    assert!(!v.menu_open());
+    assert_eq!(v.confirming_id(), Some(2));
+}
+
+#[test]
+fn the_menu_of_a_protected_version_has_delete_off_and_esc_closes_the_menu_first() {
+    let mut v = view(items());
+    let p = v.row_rect(2).center();
+    secondary(&mut v, p);
+    let menu = v.menu().unwrap();
+    let delete = menu
+        .items()
+        .find(|i| i.command == "versions.delete")
+        .unwrap();
+    assert!(!delete.enabled);
+    let unprotect = menu
+        .items()
+        .find(|i| i.command == "versions.protect")
+        .unwrap();
+    assert_eq!(unprotect.label, "Unprotect");
+    let at = menu.item_center("versions.delete").unwrap();
+    assert_eq!(click(&mut v, at), vec![]);
+    assert_eq!(v.confirming_id(), None, "a disabled item asks nothing");
+    assert!(v.back());
+    assert!(!v.menu_open());
+}
+
+#[test]
+fn the_menu_runs_rename_protect_and_restore() {
+    let mut v = view(items());
+    let p = v.row_rect(0).center();
+    secondary(&mut v, p);
+    let at = v.menu().unwrap().item_center("versions.protect").unwrap();
+    assert_eq!(
+        click(&mut v, at),
+        vec![VersionsAction::Protect {
+            id: 5,
+            protected: true
+        }]
+    );
+    secondary(&mut v, p);
+    let at = v.menu().unwrap().item_center("versions.rename").unwrap();
+    click(&mut v, at);
+    assert_eq!(v.renaming_id(), Some(5));
+    secondary(&mut v, p);
+    let at = v.menu().unwrap().item_center("versions.restore").unwrap();
+    assert_eq!(click(&mut v, at), vec![VersionsAction::Restore(5)]);
+}
+
+#[test]
+fn the_new_buttons_have_tooltips_and_the_panel_draws_in_french() {
+    let v = view(items());
+    for r in [v.rename_rect(), v.delete_rect()] {
+        assert!(v.help_at(r.center()).is_some());
+    }
+    let mut v = view(items());
+    v.focus_list();
+    press(&mut v, Key::Delete);
+    let french = atomik_ui::i18n::with_language(atomik_ui::Lang::French, || texts(&v));
+    assert!(
+        french
+            .iter()
+            .any(|s| s == "Supprimer la version 2026-11-06 12:05 ? Cette action est irréversible."),
+        "{french:?}"
+    );
+}

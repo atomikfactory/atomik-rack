@@ -5,14 +5,18 @@
 use super::RackView;
 use atomik_model::DeviceKey;
 use std::collections::BTreeMap;
+use std::ops::Bound;
 
 /// The load of `key` in `loads` (flat device keys, percent): its own plus every device inside it
 /// (`key/...`, which is how a container sums its contents); `None` when neither has a reading.
 pub fn load_under(loads: &BTreeMap<DeviceKey, f32>, key: &DeviceKey) -> Option<f32> {
-    let inside = format!("{}/", key.0);
+    let inside = |k: &DeviceKey| {
+        k.0.strip_prefix(key.0.as_str())
+            .is_some_and(|rest| rest.starts_with('/'))
+    };
     let mut sum = None;
-    for (k, v) in loads.range(key.clone()..) {
-        if *k != *key && !k.0.starts_with(&inside) {
+    for (k, v) in loads.range::<DeviceKey, _>((Bound::Included(key), Bound::Unbounded)) {
+        if *k != *key && !inside(k) {
             // Keys sort by bytes, so `key/..` is not contiguous with `key` (`key-2` sorts in
             // between): keep scanning while the prefix could still match.
             if !k.0.starts_with(&key.0) {

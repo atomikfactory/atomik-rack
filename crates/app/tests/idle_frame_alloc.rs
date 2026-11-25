@@ -324,20 +324,18 @@ fn playhead_allocations(frames: u32) -> (u64, i64) {
     (total, s.core().position() - start)
 }
 
-/// What sixty playing frames of the fx-demo allocate: the meter feeds and the playhead's tempo
-/// lookup allocate nothing. What remains happens in five of the sixty frames, once per window
-/// of the device CPU readout (about five a second), which rebuilds each track's chain summary
-/// (`AppCore::feed_cpu_loads`, about 140 heap operations a pass). The bound keeps it from
-/// growing; it drops to 0 when that pass reuses its buffers.
-const FX_DEMO_PLAYHEAD_BOUND: u64 = 800;
+/// What sixty playing frames of the fx-demo allocate: nothing. The meter feeds, the playhead's
+/// tempo lookup and the device CPU readout (`AppCore::feed_cpu_loads`, a pass about five times a
+/// second, which refreshes kept buffers) allocate no heap memory.
+const FX_DEMO_PLAYHEAD_BOUND: u64 = 0;
 
 #[test]
-fn a_frame_where_only_the_playhead_moves_allocates_no_more_than_its_feeds() {
+fn a_frame_where_only_the_playhead_moves_allocates_nothing() {
     let (total, moved) = playhead_allocations(60);
     assert!(moved > 0, "the playhead moved: {moved} ticks");
     eprintln!("playhead: {total} heap operations over 60 frames");
-    assert!(
-        total <= FX_DEMO_PLAYHEAD_BOUND,
-        "{total} heap operations over 60 frames"
+    assert_eq!(
+        total, FX_DEMO_PLAYHEAD_BOUND,
+        "heap operations over 60 frames"
     );
 }

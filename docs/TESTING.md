@@ -398,8 +398,13 @@ clock are warmer than a driver's thread, and a number is for comparing builds on
 cargo test --release -p atomik-render --test callback_timing -- --ignored --nocapture
 ```
 
-`ATOMIK_TIMING_SECONDS` sets the audio of each row (30 by default, after one second of warm-up) and
-`ATOMIK_TIMING_OUT` names a file the table is also written to. A row of the table:
+`ATOMIK_TIMING_SECONDS` sets the audio of each row (30 by default, after three seconds of warm-up, set by
+`ATOMIK_TIMING_WARMUP`: the load rule holds the workers for one second after the start and needs another second
+to calm down, so a shorter warm-up times that start-up) and `ATOMIK_TIMING_OUT` names a file the table is also
+written to. `ATOMIK_TIMING_BUFFERS` and `ATOMIK_TIMING_WORKERS` take comma lists, and `ATOMIK_TIMING_PROJECTS` a
+list of project names (`fx-demo`, `stress-song`, `stress-rack`, `console-64`, `console-128`, `console-256`) or
+`all`, which adds the stress rack and the consoles of busy strips that the default two projects leave out. A row
+of the table:
 
 | Column | Meaning |
 |---|---|
@@ -408,6 +413,7 @@ cargo test --release -p atomik-render --test callback_timing -- --ignored --noca
 | max | The slowest callback, exact |
 | misses | Callbacks whose render took longer than the period (an audible dropout when it is a real device) |
 | p99 / period | The share of the callback budget the p99 uses |
+| engaged | The share of the timed callbacks in which the render workers were woken (their parks per callback and worker, a proxy; 0 without workers) |
 
 An ordinary test of the same file runs a fraction of a second of one row to check that every callback is recorded.
 The scheduled performance workflow runs the table with 10 s a row after `realtime_factor_release`, uploads it as the
