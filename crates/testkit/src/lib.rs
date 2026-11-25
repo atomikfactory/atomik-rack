@@ -2,7 +2,10 @@
 //! signal analysis and fake devices.
 //!
 //! `no_alloc`, `harness` and `signal` are shared contracts; the fakes live in the `fakes` module.
+//! The scriptable fake audio backend (`backend`, feature `backend`) stands in for the audio host.
 
+#[cfg(feature = "backend")]
+pub mod backend;
 pub mod bench;
 pub mod fakes;
 pub mod harness;

@@ -753,8 +753,10 @@ dependencies = [
 name = "atomik-testkit"
 version = "0.5.0-rc.2"
 dependencies = [
+ "atomik-audio-io",
  "atomik-core",
  "atomik-device-sdk",
+ "atomik-engine",
  "rustfft",
 ]
 
