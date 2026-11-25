@@ -4218,6 +4218,7 @@ impl<B: AudioBackend> Shell<B> {
             self.auto_level = auto;
             let low = self.performance_level().is_low();
             self.core.sink_mut().set_low_power(low);
+            self.apply_theme();
             self.repaint = true;
         }
     }

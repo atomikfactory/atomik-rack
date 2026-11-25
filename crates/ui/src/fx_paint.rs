@@ -121,7 +121,13 @@ fn level_bars<C: Canvas + ?Sized>(
     for (k, (label, db)) in bars.iter().enumerate() {
         let x = x0 + k as f64 * (w + 6.0);
         let r = Rect::new(x, m.y0, x + w, m.y1 - label_h);
-        bar(c, r, level_norm(*db, -60.0, 0.0), meter_color(*db), false);
+        let norm = level_norm(*db, -60.0, 0.0);
+        if theme.glow.active() && norm > 0.0 {
+            let h = (r.height() * norm.clamp(0.0, 1.0)).round();
+            let lit = Rect::new(r.x0, r.y1 - h, r.x1, r.y1);
+            theme.glow.halo(c, lit, meter_color(*db));
+        }
+        bar(c, r, norm, meter_color(*db), false);
         small(
             c,
             theme,

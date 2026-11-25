@@ -8,6 +8,17 @@ may break APIs and the patch and project formats.
 
 ## [Unreleased]
 
+### Added
+- **A glow on the meters and the playhead, as part of a theme.** A theme file can have an optional `glow` section
+  (on or off, the colour of what glows or one colour of its own, a strength from 0 to 1 and a reach in pixels). It
+  draws a soft halo behind the level meters (the mixer channels, the track meters of the arrangement, the recording
+  input meter of the transport bar, the big meter and the level bars of the effect panels) and behind the playhead
+  line (arrangement, piano roll and tab editor), with a few stacked translucent shapes: no blur pass, nothing
+  allocated per frame. Synthwave glows; Light and Dark do not and look exactly as before, and a theme file without
+  the section loads unchanged. The theme editor has a Glow group at the end of its list (ON / OFF, ACCENT or a
+  colour from the picker, strength and reach sliders) that shows at once and has undo. At Low power the glow is not
+  drawn.
+
 ## [0.5.0-rc.3] - 2026-11-25
 
 ### Added

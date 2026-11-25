@@ -5835,7 +5835,11 @@ creation chain in the **Creation chain** bullet.
     `Shell::current_theme` is the editor's preview, else the library's theme of that id, else the choice, and
     `Shell::apply_theme` is unchanged. The Themes tab (`themes_tab.rs`) asks the shell with a `ThemeAction`;
     the theme editor is `ThemeEditorView`, a modal over the settings dialog that edits a `ThemeDoc`, asks for
-    the colour picker through `ColorTarget::ThemeToken`, and is written when it closes.
+    the colour picker through `ColorTarget::ThemeToken`, and is written when it closes. A theme may carry a
+    `glow` (`glow.rs`: enabled, accent or own colour, intensity, radius): a few stacked translucent shapes
+    drawn behind the meters (console, arrangement track meters, transport input meter, big meter, effect level
+    bars) and the playhead line (arrangement, piano roll, tab editor), with no blur pass and no allocation.
+    Synthwave has it on; `Shell::current_theme` takes it out at Low power, so no view ever draws it there.
   - **Application zoom.** The shell draws and lays out in logical units at the scale each window
     was told. The platform tells every window `Shell::ui_scale(display scale)`, the display scale
     times `Shell::app_zoom`, and works the logical size and the pointer positions out with it, so

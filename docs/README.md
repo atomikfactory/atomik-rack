@@ -641,8 +641,16 @@ editor closes the program goes back to the theme in use. The colour tokens:
 | Console | `io_connected`, `io_free`, `io_unavailable`, `clip` |
 
 Besides the colours a theme file can set `dark` (light type on dark surfaces), `accent_saturation` and
-`accent_lightness` (the colours the devices and tracks get when nothing names theirs; Synthwave's are neon) and
-`corner` (the panel corner radius). Keep the text readable: the built-in themes keep their body text at a contrast
+`accent_lightness` (the colours the devices and tracks get when nothing names theirs; Synthwave's are neon),
+`corner` (the panel corner radius) and `glow`.
+
+**Glow** is a soft halo behind the level meters (the mixer channels, the track meters of the arrangement, the
+recording input meter of the transport bar, the big meter and the level bars of the effect panels) and behind the
+playhead line (the arrangement, the piano roll and the tab editor). The last rows of the theme editor, under Glow,
+turn it on and off (ON / OFF), choose its colour (ACCENT, the default, glows in the colour of what glows: the zone a
+meter has reached, the playhead's own colour; or click the swatch to pick one colour for all of it), and set its
+strength and its reach with two sliders. Synthwave glows; Dark and Light do not, and a theme file that has no `glow`
+section does not glow either. In **Low power** (Settings > Interface > Performance) the glow is not drawn at all. Keep the text readable: the built-in themes keep their body text at a contrast
 of at least 4.5 to 1 against every panel, and a theme you make is not checked.
 
 The theme in use is a preference, not part of a project: songs look the same in every theme, and nothing about the

@@ -2365,3 +2365,27 @@ outcome would depend on the machine's speed); stopping on the UI thread and only
 as long as a hung open).
 
 **Status.** Decided by the owner on 2026-11-25.
+
+## BX. A theme's glow is a few stacked translucent shapes, off at Low power, and only a theme that says so has it
+
+**Decision.** A theme file may have a `glow` section (enabled, `accent` or one colour, intensity 0 to 1, radius 0 to 16
+pixels). The halo is four widening translucent rounded shapes drawn behind the thing that glows (`Glow::halo`): the lit
+part of a level meter, or the playhead line. Light and Dark leave it off and a file without the section does not glow,
+so their goldens did not change; Synthwave sets it on. The shell takes the glow out of the theme at Low power, before
+any view gets the theme, so the views draw it only when it is on and never test the power level themselves. The
+project format and the theme `version` are unchanged: an older file simply has no section, and a newer one is read by
+a program that does not know the section (unknown sections are ignored like unknown colours).
+
+**Why.** The renderers have no blur pass, and a real blur means an offscreen target per frame, which is the cost Low
+power exists to avoid. Stacked shapes read as a soft glow at the sizes meters and playhead lines have, hold no heap
+(a test counts the allocations of drawing one), and the same display list draws on the GPU and on the CPU canvas of the
+screenshots. Skipping the glow at Low power is one place and one rule; a theme that draws without it at that level
+looks as it does at Full minus the halo, nothing else moves. Accent glow (the colour of what glows) is the default
+because it follows the meter zones and a recording playhead without more tokens.
+
+**Rejected.** A blurred layer (an offscreen pass for every meter and line); drawing the halo as a gradient (a gradient
+holds its stops and the CPU canvas cannot match it); a halo at Low power with fewer layers (two code paths to keep
+equal for little); giving every theme based on Synthwave its glow (a theme file that wants it writes the section; a
+copy made by the program writes it).
+
+**Status.** Default (not yet confirmed). Decided by: none yet.

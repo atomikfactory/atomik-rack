@@ -355,6 +355,7 @@ fine: the others come from the theme it is `based_on`.
   "accent_saturation": 0.85,
   "accent_lightness": 0.62,
   "corner": 3.0,
+  "glow": { "enabled": true, "color": "accent", "intensity": 0.6, "radius": 6 },
   "colors": {
     "background": "#140c28",
     "panel_bottom": "#22153f",
@@ -370,6 +371,13 @@ fine: the others come from the theme it is `based_on`.
 - `based_on` is `light` or `dark` (default `dark`). Every colour the file leaves out, and every number, comes from it.
 - `dark`, `accent_saturation`, `accent_lightness` and `corner` are optional. `dark` says the type is light on dark
   surfaces; the two accent numbers (0 to 1) make the colour a device or track gets when nothing names one.
+- `glow` is an optional section: a soft halo behind the level meters and the playhead line. `enabled` (default true
+  when the section is there), `color` (`"accent"`, the default: the colour of what glows, or `#rrggbb`), `intensity`
+  (0 to 1, default 0.5) and `radius` (0 to 16 logical pixels, default 6). A file without the section does not glow (a
+  theme based on Synthwave is not given its glow: only a copy made by the program writes the section), the numbers are
+  clamped, and a field of the wrong kind makes the file unusable. The halo is a few stacked translucent shapes
+  (`crates/ui/src/glow.rs`), no blur pass, no allocation; at Low power the shell turns it off before the views get the
+  theme.
 - Each entry of `colors` is `#rrggbb`, or `#rrggbbaa` for a colour that lets what is behind it show (a grid line, a
   shadow, a veil). A name the program does not know is ignored, so a newer file keeps working; a value that is not a
   colour makes the file unusable.
