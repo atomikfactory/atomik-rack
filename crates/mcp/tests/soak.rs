@@ -28,16 +28,15 @@ use std::time::{Duration, Instant};
 /// limit and the allocator settles.
 const WARM_UP: f64 = 0.2;
 
-/// The slope bound after the warm-up, in bytes per minute (12 MiB a minute). On this loop
-/// the private memory of a healthy part of the app is flat to within a MiB a minute; adding and
-/// removing devices with undo and redo makes it climb 2 to 4 MiB a minute (see perf/BASELINE.md),
-/// so the bound sits about twice above the worst 120 second run and catches a growth of that size again.
-/// Tighten it to 2 MiB a minute when that growth is gone.
-const MAX_SLOPE_PER_MINUTE: f64 = 12.0 * 1024.0 * 1024.0;
+/// The slope bound after the warm-up, in bytes per minute (2 MiB a minute). On this loop the
+/// private memory is flat: 0.2 MiB a minute over ten minutes, and 0.4 to 1.0 over two or
+/// three (a short run has few samples after its warm-up), see perf/BASELINE.md. The bound
+/// sits about twice above the worst short run.
+const MAX_SLOPE_PER_MINUTE: f64 = 2.0 * 1024.0 * 1024.0;
 
 /// The memory at the end of the run may not be more than this many times the memory at the end
-/// of the warm-up (a 900 second run with the climb above ends at about 1.9 times).
-const MAX_GROWTH: f64 = 2.5;
+/// of the warm-up (the runs end at 1.0 to 1.12 times).
+const MAX_GROWTH: f64 = 2.0;
 
 /// Devices the loop adds to the rack, in turn (all of them effects that need no sample).
 const ADDED: [&str; 5] = [
@@ -50,6 +49,9 @@ const ADDED: [&str; 5] = [
 
 /// How many devices the loop keeps in the rack before it removes the oldest of them.
 const KEPT: usize = 6;
+
+/// The prefix of the keys of the devices the loop adds.
+const ADDED_PREFIX: &str = "soak";
 
 fn repo() -> PathBuf {
     std::fs::canonicalize(Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")).unwrap()
@@ -147,6 +149,8 @@ struct Sample {
     iteration: u64,
     usage: Usage,
     undo_depth: usize,
+    /// Devices in the rack.
+    devices: usize,
 }
 
 /// The slope, in bytes per minute, of the least squares line through `(minutes, bytes)`.
@@ -177,13 +181,14 @@ fn report(samples: &[Sample], total: f64) -> Report {
     for s in samples {
         let _ = writeln!(
             table,
-            "{:7.1}  {:9}  {:13.1}  {:12.1}  {:7}  {:10}",
+            "{:7.1}  {:9}  {:13.1}  {:12.1}  {:7}  {:10}  {:7}",
             s.at,
             s.iteration,
             mib(s.usage.resident as f64),
             mib(s.usage.private as f64),
             s.usage.threads,
-            s.undo_depth
+            s.undo_depth,
+            s.devices
         );
     }
     let after: Vec<&Sample> = samples.iter().filter(|s| s.at >= total * WARM_UP).collect();
@@ -230,6 +235,15 @@ fn track_devices(s: &mut Server) -> Vec<DeviceKey> {
         .tracks
         .iter()
         .map(|t| t.device.clone())
+        .collect()
+}
+
+/// The keys of the devices the loop has added to the rack and that are in it now, in rack order.
+fn added_devices(doc: &atomik_model::RackDoc) -> Vec<DeviceKey> {
+    doc.devices
+        .iter()
+        .filter(|d| d.key.0.starts_with(ADDED_PREFIX))
+        .map(|d| d.key.clone())
         .collect()
 }
 
@@ -351,8 +365,8 @@ fn the_headless_session_does_not_leak_under_a_long_edit_loop() {
 
     let mut text = TextEngine::new();
     let mut rng = Lcg(0x5eed);
-    let mut added: Vec<DeviceKey> = Vec::new();
     let mut next_type = 0usize;
+    let mut max_added = 0usize;
     let mut samples: Vec<Sample> = Vec::new();
     let sample_every = Duration::from_secs_f64((total / 80.0).clamp(1.0, 10.0));
     let mut last_sample: Option<Instant> = None;
@@ -369,24 +383,27 @@ fn the_headless_session_does_not_leak_under_a_long_edit_loop() {
             continue;
         }
         match action {
-            // Add a device at the end of the rack, or remove the oldest one that was added.
+            // Add a device at the end of the rack, or remove the oldest one that was added. The
+            // devices the loop added are read from the document each time: an undo of a removal
+            // brings one back and an undo of an add takes one away, so a list the loop kept
+            // itself drifts and the rack grows without end (to over a hundred devices in a
+            // few minutes, with the memory growing in step).
             0 | 1 => {
                 let core = s.session_mut().unwrap().shell_mut().core_mut();
-                if added.len() >= KEPT {
-                    let key = added.remove(0);
+                let present = added_devices(core.doc());
+                if present.len() >= KEPT {
+                    let key = present[0].clone();
                     let _ = core.apply_command(Command::RemoveDevice { key });
                 } else {
                     let before = core.doc().devices.len();
-                    let key = DeviceKey(format!("soak{iteration}"));
+                    let key = DeviceKey(format!("{ADDED_PREFIX}{iteration}"));
                     let r = core.apply_command(Command::AddDevice {
                         index: before,
                         type_id: ADDED[next_type % ADDED.len()].to_owned(),
-                        key: Some(key.clone()),
+                        key: Some(key),
                     });
                     next_type += 1;
-                    if r.is_ok() {
-                        added.push(key);
-                    }
+                    assert!(r.is_ok(), "adding a device: {r:?}");
                 }
             }
             // Turn a knob.
@@ -476,6 +493,8 @@ fn the_headless_session_does_not_leak_under_a_long_edit_loop() {
         }
         paint(&mut s, &mut text);
         iteration += 1;
+        max_added =
+            max_added.max(added_devices(s.session_mut().unwrap().shell().core().doc()).len());
 
         let due = last_sample.is_none_or(|t| t.elapsed() >= sample_every);
         if due {
@@ -493,6 +512,7 @@ fn the_headless_session_does_not_leak_under_a_long_edit_loop() {
                     iteration,
                     usage,
                     undo_depth: depth,
+                    devices: s.session_mut().unwrap().shell().core().doc().devices.len(),
                 });
             }
             last_sample = Some(Instant::now());
@@ -518,6 +538,10 @@ fn the_headless_session_does_not_leak_under_a_long_edit_loop() {
         .map_or_else(|| out_dir.join("soak-table.txt"), PathBuf::from);
     std::fs::write(&table_file, &table).unwrap();
 
+    assert!(
+        max_added <= KEPT,
+        "the rack held {max_added} of the devices the loop adds, the loop keeps at most {KEPT}"
+    );
     assert!(
         max_depth <= step_limit,
         "the undo history reached {max_depth} steps, the limit is {step_limit}"

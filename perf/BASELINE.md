@@ -1315,16 +1315,13 @@ private memory finish / end of warm-up: 1.592
 | 120 s, second | +5.383 MiB/min | 1.336 |
 | 120 s, third | +4.275 MiB/min | 1.214 |
 
-The bounds of the test are 12 MiB a minute and 2.5 times: about twice the worst 120 second run (a short run has few
-samples after its warm-up and its slope varies by a MiB or two), and above the 1.9 times that a 900 second run with
-this climb is expected to end at. The bounds are meant to go down to 2 MiB a minute and 2 times when the climb below
-is gone.
+The runs above are from before the fix described below; the bounds of the test are now 2 MiB a minute and 2 times.
 
-**A climb that looks like a real leak (reported, not fixed).** The private memory does not settle on the full loop: it
-goes from about 28 MiB at the end of the warm-up to about 53 MiB after ten minutes, 2.5 to 2.9 MiB a minute, about
-3 KB an iteration; the resident memory follows, the thread count stays at 2 to 5. The loop was run again with one
-group of actions at a time (100 or 150 seconds, same machine; slopes of this size are within the noise of a run that
-short):
+**A climb that looked like a real leak (explained further down: the loop's own doing).** The private memory does not
+settle on the full loop: it goes from about 28 MiB at the end of the warm-up to about 53 MiB after ten minutes, 2.5 to
+2.9 MiB a minute, about 3 KB an iteration; the resident memory follows, the thread count stays at 2 to 5. The loop was
+run again with one group of actions at a time (100 or 150 seconds, same machine; slopes of this size are within the
+noise of a run that short):
 
 | Actions | Slope after warm-up |
 |---|---|
@@ -1340,6 +1337,53 @@ short):
 | zoom, panels, select, params | -0.01 MiB/min |
 
 The one combination that climbs on its own is adding and removing devices together with undo and redo; it also makes
-up about two thirds of the climb of the full loop. The other groups are flat within the noise of the run. Where the
-memory goes (the device instances the engine builds again, the undo steps, the scope rings, the paint caches) is not
-found; the soak is the tool to bisect it with, through `ATOMIK_SOAK_ACTIONS`.
+up about two thirds of the climb of the full loop. The other groups are flat within the noise of the run. The soak
+with `ATOMIK_SOAK_ACTIONS` found the combination; counting found the cause.
+
+**Where the climb came from (2026-11-25): the loop, not the app.** The table above is explained by the soak's own
+bookkeeping. The loop kept a list of the devices it had added and removed the oldest of them; an undo of a removal
+brings a device back that the list had forgotten, and an undo of an add takes one away that the list still held, so
+the rack grew without end: the document held 19 devices after 300 iterations of devices and undo and 106 after 12 000,
+and every device brings its own memory (and its undo steps). The history itself was never the cause: it stays at its
+limit of 1000 steps from the start, far below its byte budget. Counting, not guessing: a test of the shell without an
+audio device ran the same script and measured the heap the shell held after each 300 iterations (on one thread, with
+the allocator guard of the test kit). The net heap rose by 0.8 MiB over 40 blocks (12 000 iterations) with the rack
+growing from 19 to 106 devices, and was flat (a few KiB either way, no trend) with the rack at 21 to 22 devices once
+the loop read the added devices from the document. The counts showed no device, scope ring or cache outliving its
+device. The loop now does that, and fails when the rack ever holds more than six added devices.
+
+| Run (after the fix) | Slope after warm-up | Finish / end of warm-up |
+|---|---|---|
+| 600 s, all actions | +0.158 MiB/min | 1.001 |
+| 120 s, first | +0.531 MiB/min | 1.117 |
+| 120 s, second | +1.017 MiB/min | 1.039 |
+| 150 s, devices and undo only | +0.387 MiB/min | 1.031 |
+
+The private memory of the 600 second run stays between 28 and 29 MiB from the end of the warm-up to the finish, with
+21 to 22 devices in the rack. The bounds are now 2 MiB a minute and 2 times: about twice the worst short run.
+
+## Leak loops (2026-11-25)
+
+`crates/plugin-hostd/tests/leak_loops.rs` and `crates/mcp/tests/leak_loop.rs` (see
+[docs/TESTING.md](../docs/TESTING.md#the-leak-loops)): 200 cycles, read at cycle 10, 100 and 200 (test profile,
+Windows, the machine above, no other load). Threads, handles and children are asserted EQUAL at cycle 10 and 200;
+private bytes are reported only. Threads and handles count this process and everything below it; the thread count
+differs between shells because the first child of a shell starts threads that end with its sandbox.
+
+| Shell, 200 cycles | Cycle | Children | Threads | Handles | Private (MiB) |
+|---|---|---|---|---|---|
+| null plugin, one child per instance | 10 | 0 | 5 | 128 | 1.9 |
+| | 100 | 0 | 5 | 128 | 2.7 |
+| | 200 | 0 | 5 | 128 | 2.9 |
+| test CLAP plugin, one child per instance | 10 | 0 | 2 | 128 | 2.5 |
+| | 100 | 0 | 2 | 128 | 2.3 |
+| | 200 | 0 | 2 | 128 | 2.5 |
+| test CLAP plugin, in this process | 10 | 0 | 2 | 120 | 2.9 |
+| | 100 | 0 | 2 | 120 | 3.8 |
+| | 200 | 0 | 2 | 120 | 3.8 |
+| `session_open` / `session_close` on `fx-demo` | 10 | - | 5 | 137 | 8.2 |
+| | 100 | - | 5 | 137 | 19.4 |
+| | 200 | - | 5 | 137 | 20.0 |
+
+The session loop's private bytes rise by 11 MiB over the first 100 cycles and by 0.6 MiB over the next 100: the
+allocator and the caches fill and then stay. The counts of the others do not move.

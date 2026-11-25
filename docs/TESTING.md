@@ -411,20 +411,20 @@ run), and paints the main window on the CPU canvas:
 
 The table has one row every `ATOMIK_SOAK_SECONDS / 80` seconds (between 1 and 10): the resident memory (the working
 set on Windows), the private memory (anonymous resident memory on Linux, private bytes on Windows; this is the number
-that is judged), the thread count and the undo depth. Linux reads `/proc/self/status`; Windows asks `Get-Process`
-through PowerShell (no `unsafe`); on macOS there is no reader and the test runs the loop and measures nothing. After a
-warm-up of the first 20 % of the run the test fits a least squares line through the private memory and prints the
-slope in MiB a minute.
+that is judged), the thread count, the undo depth and the number of devices in the rack. Linux reads
+`/proc/self/status`; Windows asks `Get-Process` through PowerShell (no `unsafe`); on macOS there is no reader and the
+test runs the loop and measures nothing. After a warm-up of the first 20 % of the run the test fits a least squares
+line through the private memory and prints the slope in MiB a minute.
 
-The test fails on a clear leak only: a slope above 12 MiB a minute after the warm-up, or private memory at the finish
-(the mean of the last three samples) more than 2.5 times the memory at the end of the warm-up (the mean of the first
-three samples after it). It also fails when the undo history is ever deeper than the document's own step limit. The
-thread count is reported, not judged. The bounds are loose on purpose: adding and removing devices with undo and redo
-makes the private memory climb by 2 to 4 MiB a minute on this loop (the numbers and the runs are in
-[perf/BASELINE.md](../perf/BASELINE.md)), and the bounds sit about twice above the worst run so that the job is green
-with that growth and red when something grows several times faster; when the growth is gone they go down to 2 MiB a
-minute and 2 times. A longer run measures the slope better: a 120 second run has a few samples and its slope varies
-by a MiB or two between runs.
+The test fails on a clear leak only: a slope above 2 MiB a minute after the warm-up, or private memory at the finish
+(the mean of the last three samples) more than 2 times the memory at the end of the warm-up (the mean of the first
+three samples after it). It also fails when the undo history is ever deeper than the document's own step limit, or when
+the rack ever holds more than six of the devices the loop adds (the loop reads them from the document each time: undo
+and redo bring back and take away devices, and a list the loop kept itself drifted, so the rack grew to over a hundred
+devices and the memory with it). The thread count is reported, not judged. On this loop the private memory is flat:
+the numbers and the runs are in [perf/BASELINE.md](../perf/BASELINE.md), and the bounds sit about twice above the
+worst short run. A longer run measures the slope better: a 120 second run has a few samples and its slope varies by
+half a MiB between runs.
 
 The nightly workflow (`.github/workflows/nightly.yml`, job `soak`) runs it on Linux with `ATOMIK_SOAK_SECONDS=900`
 every night, independent of the build, and keeps the table as the artifact `soak-table` for 30 days. A red soak does
@@ -447,6 +447,37 @@ never plays, so for a long run use its long sampling window and read the growth 
 4. Pass when private bytes and handles are flat after the first ten minutes (a rise of a few MiB over hours is the
    allocator; a steady climb is not), the CPU of the last ten minutes is within 5 % of the first ten, and no
    `NOT RESPONDING` or stall line is in the log.
+
+## The leak loops
+
+Creating and destroying the same thing 200 times must leave the process where it started. Two files do it, each with an
+ordinary test of 20 cycles that runs in CI and an `#[ignore]`d test of 200 cycles that the nightly workflow runs:
+
+- [crates/plugin-hostd/tests/leak_loops.rs](../crates/plugin-hostd/tests/leak_loops.rs): for each of three shells (the
+  built-in `null` plugin in a child process of its own, the test CLAP plugin in a child process, the test CLAP plugin
+  in this process; the sandbox in its default one-child-per-instance mode) a cycle creates an instance, runs eight
+  batches through it, drops it and polls the manager until it reports the instance destroyed. After every cycle the
+  manager holds no instance and the sandbox counts no live child.
+- [crates/mcp/tests/leak_loop.rs](../crates/mcp/tests/leak_loop.rs): a cycle opens the factory `fx-demo` project in the
+  headless session, paints a frame of the main window and closes the session.
+
+```sh
+cargo test -p atomik-plugin-hostd --test leak_loops -- --ignored --nocapture
+cargo test -p atomik-mcp --test leak_loop -- --ignored --nocapture
+```
+
+A first cycle runs before the count, so that what lives as long as the process does (a loaded library, the fonts of the
+text engine, the first child) is not counted. The table is read at an early cycle (5 of 20, 10 of 200), in the middle
+and at the last cycle; each read waits until two reads in a row agree. The test asserts that the child processes, the
+threads and the handles (file descriptors on Linux) at the last cycle are EQUAL to those at the early one, exactly,
+where the sandbox loop counts this process and everything below it; the private bytes are only reported. The numbers
+come from the process table through `powershell` (Windows), `/proc` (Linux) or `ps` (macOS: resident bytes and no
+thread or handle counts, so only the children are compared there); no `unsafe`. The loops of one file are one test,
+because the test harness gives every test a thread and the thread count would follow the order tests finish in.
+`ATOMIK_LEAK_TABLE` names a file the table of the 200 cycle runs is appended to (default `leak-table.txt` in the
+build's test folder). The nightly workflow's job `leaks` runs both on Linux and keeps the file as the artifact
+`leak-table` for 30 days. The private bytes of the session loop rise in the first 100 cycles (the allocator and the
+caches fill) and are flat after them; see [perf/BASELINE.md](../perf/BASELINE.md).
 
 ## Benchmarks and the performance job
 
