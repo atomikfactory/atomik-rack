@@ -9,6 +9,18 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Play Focus and Input Focus for several open songs.** The Audio I/O panel of each song has two buttons on its
+  plate, a speaker (Play) and a keyboard (Input), lit for the foci the song has. Play moves the audio stream to the
+  song; Input moves the MIDI keyboard, the MIDI controllers and the control surfaces. The new Workflow setting
+  "Focus follows the active song" (Both, Play only, Input only or None; saved in `workflow.json`, not in the project)
+  says which foci go to the song you work in; Both, the default, behaves as before. A keyboard sounds only while
+  its song also has the Play Focus: a song without a stream has no engine to play it into, and the button's tooltip
+  says so. Next Song and Previous Song count from the song you work in.
+- **A drop marker over another song's window.** While clips or devices are dragged out of one song and over the
+  window of another, that window draws the marker it draws for files, at the place the drop will use: the lane and
+  snapped time for clips, the drop line at the rack slot for devices.
+
+### Added
 - **Save Clip to Library takes audio clips.** The one selected audio clip is saved to the Clips section as an audio
   loop: a 32-bit float WAV of the span the clip plays, unprocessed and at the clip's gain, named after its track and
   bar. The section already lists audio and the file browser previews it (Space, or on selection with auto-preview), so
@@ -152,16 +164,6 @@ may break APIs and the patch and project formats.
   schedule at 64, 128, 256 and 512 frames with 0 and 2 workers, without an audio device, and prints the p50, p99 and
   max of the render time, the callbacks that ran over their period and the share of the period the p99 uses. The
   scheduled performance workflow prints it and keeps it as an artifact, and never fails on a timing.
-- **Play Focus and Input Focus for several open songs.** The Audio I/O panel of each song has two buttons on its
-  plate, a speaker (Play) and a keyboard (Input), lit for the foci the song has. Play moves the audio stream to the
-  song; Input moves the MIDI keyboard, the MIDI controllers and the control surfaces. The new Workflow setting
-  "Focus follows the active song" (Both, Play only, Input only or None; saved in `workflow.json`, not in the project)
-  says which foci go to the song you work in; Both, the default, behaves as before. A keyboard sounds only while
-  its song also has the Play Focus: a song without a stream has no engine to play it into, and the button's tooltip
-  says so. Next Song and Previous Song count from the song you work in.
-- **A drop marker over another song's window.** While clips or devices are dragged out of one song and over the
-  window of another, that window draws the marker it draws for files, at the place the drop will use: the lane and
-  snapped time for clips, the drop line at the rack slot for devices.
 
 ### Changed
 - **The rack builds the automation values it shows once, not on every paint.** While an automation lane has points,
