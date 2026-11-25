@@ -41,7 +41,8 @@ pub struct MenuEnable {
     pub loop_instance: bool,
     /// Arrangement: a selected clip is a note clip (Open in the editor).
     pub open_clip: bool,
-    /// Arrangement: exactly one clip is selected and it is a note clip (Save Clip to Library).
+    /// Arrangement: exactly one clip is selected and it is a note or an audio clip (Save Clip to
+    /// Library).
     pub save_clip: bool,
     /// Arrangement: every selected clip is muted ("Unmute" instead of "Mute").
     pub clips_muted: bool,

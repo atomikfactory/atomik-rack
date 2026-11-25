@@ -8,6 +8,13 @@ may break APIs and the patch and project formats.
 
 ## [Unreleased]
 
+### Added
+- **Save Clip to Library takes audio clips.** The one selected audio clip is saved to the Clips section as an audio
+  loop: a 32-bit float WAV of the span the clip plays, unprocessed and at the clip's gain, named after its track and
+  bar. The section already lists audio and the file browser previews it (Space, or on selection with auto-preview), so
+  a saved audio clip is previewed like any audio file. A clip longer than two minutes is refused. No library format
+  changes.
+
 ## [0.5.0-rc.3] - 2026-11-25
 
 ### Added

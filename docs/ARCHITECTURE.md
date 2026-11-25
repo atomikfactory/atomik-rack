@@ -6929,7 +6929,11 @@ items are ordinary project texts, plus one small new file type.
   the device and clip context menus; [app_core_library.rs](../crates/app/src/app_core_library.rs))
   writes the selected devices or the one selected note clip with the atomic text save under a free
   name (`Poly Synth`, `Poly Synth 2`; a clip is `<track> bar <bar>`), makes the section folder on
-  the first save and copies the audio on the `atomik-library` worker. It is not an edit: the
+  the first save and copies the audio on the `atomik-library` worker. The one selected audio clip
+  is saved as an audio loop instead: a 32-bit float WAV of the span it plays, unprocessed and at
+  the clip's gain (the speaker's span, `atomik_model::audition_span`; a clip longer than two
+  minutes is refused), written to `Clips` under the same name; the section already lists audio
+  and the file browser previews it, so no item format is involved. It is not an edit: the
   document, the undo history and the dirty flag stay as they are. The browser lists the section,
   selects the new row and opens its rename entry.
 - **Load** ([`AppCore::load_library_item`](../crates/app/src/app_core_library.rs) with a
