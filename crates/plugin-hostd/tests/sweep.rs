@@ -685,13 +685,18 @@ fn three_instances_have_the_expected_child_processes_and_threads() {
             three.children, 1,
             "a shared child: processes below this one"
         );
-        assert_eq!(
-            three.child_threads[0],
-            one.child_threads[0] + (THREE as u64 - 1),
-            "a shared child gains one thread per instance ({:?} then {:?})",
-            one.child_threads,
-            three.child_threads
-        );
+        // The process table of macOS has no thread counts: the lists are empty there.
+        if let (Some(&before), Some(&after)) =
+            (one.child_threads.first(), three.child_threads.first())
+        {
+            assert_eq!(
+                after,
+                before + (THREE as u64 - 1),
+                "a shared child gains one thread per instance ({:?} then {:?})",
+                one.child_threads,
+                three.child_threads
+            );
+        }
     }
     drop(harnesses);
     rig.finish();
