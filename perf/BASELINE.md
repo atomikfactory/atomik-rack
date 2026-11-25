@@ -1126,6 +1126,92 @@ of 46 ms (the driver's first look at the machine slows the opening of the audio 
 starts the worker after the audio stream runs. That placement was not measured (the app was not started again); the
 owner's check: start time with the change, and the audio row.
 
+## Plugin load and overhead sweep (2026-11-24)
+
+`cargo test --release -p atomik-plugin-hostd --test sweep -- --ignored --nocapture`
+(see [docs/TESTING.md](../docs/TESTING.md#plugin-load-and-overhead-sweep) for the columns), the reference machine above,
+the release test profile, nothing else running, one run. N instances of a gain plugin loaded one after the other
+through the plugin manager, then four seconds of silence in 256-frame callbacks at 48 kHz. Load is the median of one
+`instantiate` call; MB, threads and handles are per instance and cover this process and every process below it,
+console hosts included (Windows starts a hidden console host for each child that has no window). CPU is a percentage of
+one core for the whole set of N instances: "parent" is the test process, which also paces the batches and carries the
+host side of every round trip, "child" is all children together. A shared child holds 16 instances, so 30 instances
+make two. The first instance of a format loads its library, so the rows of N = 1 carry that cost (about 10 MB for the
+test CLAP library, and about 1 MB for the VST3 one).
+
+```text
+shell  where             N  load ms/inst  children   MB/inst  thr/inst  hdl/inst  cpu parent  cpu child
+null   child each         1      41.1          1       3.6      14.0     236.0       0.0%       1.0%
+null   child each        10      40.3         10       3.3      14.0     235.0       7.9%      43.4%
+null   child each        30      41.5         30       3.3      14.0     235.0      19.0%     112.8%
+null   child per file     1      40.4          1       2.8      17.0     234.0       0.3%       0.7%
+null   child per file    10       9.3          1       0.7       5.3      30.6       7.2%      36.6%
+null   child per file    30       9.2          2       0.7       4.9      23.1      19.4%     102.9%
+null   one shared child   1      37.1          1       3.7      17.0     234.0       1.7%       1.4%
+null   one shared child  10       9.1          1       0.8       5.3      30.6       5.8%      31.5%
+null   one shared child  30       9.2          2       0.7       4.9      23.1      21.5%     121.0%
+clap   in process         1       0.1          0      10.8       0.0       0.0       0.3%       0.0%
+clap   in process        10       0.0          0      11.1       0.0       0.0       1.7%       0.0%
+clap   in process        30       0.0          0      11.1       0.0       0.0       3.4%       0.0%
+clap   child each         1     105.0          1      13.2      14.0     235.0       2.0%       0.7%
+clap   child each        10      44.0         10      14.0      14.0     235.0       7.4%      37.8%
+clap   child each        30      42.5         30      14.1      14.0     235.0      23.3%     122.0%
+clap   child per file     1      39.4          1      15.7      17.0     234.0       1.4%       2.4%
+clap   child per file    10       9.6          1      11.7       5.3      30.6       7.5%      38.8%
+clap   child per file    30       9.2          2      11.6       4.9      23.1      22.9%     114.6%
+clap   one shared child   1      39.6          1      14.4      17.0     234.0       0.3%       0.7%
+clap   one shared child  10       8.9          1      11.7       5.3      30.6       7.8%      29.3%
+clap   one shared child  30       9.1          2      11.6       4.9      23.1      24.8%     118.7%
+vst3   in process         1       0.4          0       1.0       0.0       0.0       1.7%       0.0%
+vst3   in process        10       0.4          0       1.2       0.0       0.0       2.0%       0.0%
+vst3   in process        30       0.4          0       1.2       0.0       0.0       1.4%       0.0%
+vst3   child each         1      42.6          1       4.9      14.0     235.0       1.0%       0.0%
+vst3   child each        10      43.7         10       4.3      14.0     235.0       2.7%       6.1%
+vst3   child each        30      43.9         30       4.3      14.0     235.0       7.4%      32.7%
+vst3   child per file     1      42.7          1       4.4      17.0     234.0       0.3%       0.7%
+vst3   child per file    10       9.6          1       1.8       5.3      30.6       2.7%       8.9%
+vst3   child per file    30       9.9          2       1.8       4.9      23.1       6.1%      23.2%
+vst3   one shared child   1      41.8          1       4.3      17.0     234.0       0.7%       0.7%
+vst3   one shared child  10      11.2          1       1.8       5.3      30.6       2.0%       4.3%
+vst3   one shared child  30      10.3          2       1.8       4.9      23.1       6.8%      27.2%
+```
+
+What the rows say. A child costs about 40 ms to start and, with its console host, about 3.5 MB of private bytes, 14
+threads (8 in the child, 6 more in this process and the console host together) and 235 handles, and the cost per
+instance does not grow with N. A shared child starts an instance in about 9 ms and holds it for under 1 MB, 5 threads
+and 23 to 31 handles. The "child" column is the plugin's work plus the child's own loop, so it differs between the
+plugins: the test CLAP gain costs about four times what the VST3 one does. The in-process rows show the figures of the
+plugin library alone (the first load), since adding an instance adds no thread or handle. The N = 1 row of "clap child
+each" shows one slow first start (105 ms), a spread the other runs of the same row did not have (40 to 45 ms).
+
+## Thin LTO for the shipped programs: measured, not adopted (2026-11-24)
+
+Release build vs the same build with `lto = "thin"` (codegen-units unchanged). atomik-render, `--loop-count 4`, median of 5, process CPU ms:
+
+| Project | current | thin LTO | change |
+|---|---|---|---|
+| fx-demo | 4281 | 4141 | -3.3 % |
+| character-demo | 3688 | 3672 | -0.4 % |
+| audio-demo | 797 | 781 | -2 % |
+| master-demo | 813 | 781 | -4 % |
+| sampler-demo | 438 | 453 | +3 % |
+
+Criterion (median): render song/workers0/block256 186.2 -> 177.5 ms; rack 719.9 -> 693.3 ms; large-song 1.462 -> 1.575 s (noisy); dsp biquad-stereo/4096 ~23 -> ~27 us (worse); chorus +1-2 %; compressor +1 %; oversample 4x +1-5 %.
+Binaries +2.2 % (atomik) / +2.4 % (atomik-render); build time ~3x. Decision: not adopted (no DSP gain >= 5 %).
+
+## CPU renderer, one main-window frame (spike, 2026-11-24)
+
+Headless, the MCP screenshot path (`paint_in(Main, CpuCanvas)` + `finish()`), release, 3 warm-up + 20 frames, median / p95 ms. vello_cpu is single-threaded, so the 4-thread profile equals unrestricted.
+
+| Scene | 1366x768 | 1920x1080 |
+|---|---|---|
+| empty project | 16.0 / 16.2 | 18.8 / 22.5 |
+| master-demo | 19.5 / 20.0 | 27.9 / 35.4 |
+| fx-demo | 27.6 / 28.1 | 32.6 / 39.0 |
+| player-demo | 28.6 / 29.2 | 31.8 / 34.4 |
+| stress rack (rack view) | 47.4 / 48.1 | 57.1 / 62.7 |
+
+Recording (path-to-strip work while painting) dominates: 13-43 ms; rasterising 3-5 ms. The CPU canvas has no display-list cache (the GPU canvas caches by id and revision). Harness kept outside the repo: orchestration/spike56_frame_time.rs.
 ## A headless edit loop for ten minutes (2026-11-24)
 
 `crates/mcp/tests/soak.rs` (see [docs/TESTING.md](../docs/TESTING.md#the-headless-soak-ignored-by-default)): the

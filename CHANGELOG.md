@@ -19,6 +19,12 @@ may break APIs and the patch and project formats.
   recovery copies are neither read nor written), no audio device, no plugins loaded or scanned and no project
   reopened, so a setting, a device or a plugin that stops a normal start cannot. The window title ends in
   `[Safe mode]` and a message says so. It cannot be combined with `--settings`.
+- **A plugin load and overhead sweep for the test suite.** `cargo test -p atomik-plugin-hostd --test sweep --
+  --ignored --nocapture` loads 1, 10 and 30 instances of the null, CLAP and VST3 test plugins with the sandbox off
+  and in each of its three process modes, and prints the load time, the private bytes, threads, handles and child
+  processes per instance and the idle CPU of the instances processing silence. An ordinary test of the same file
+  asserts the counts that do not depend on the machine (children per mode, threads of a shared child, nothing left
+  behind). No behaviour of the app changes.
 - **A headless soak test and a nightly job for it.** `crates/mcp/tests/soak.rs` (ignored; `ATOMIK_SOAK_SECONDS` sets
   the length) opens a factory demo in the headless session and loops through adding and removing devices, turning
   parameters, scrolling and zooming the arrangement, opening and closing the panels, selecting tracks, undo, redo,
@@ -72,6 +78,15 @@ may break APIs and the patch and project formats.
   thread.
 - **The last value of a drag is no longer dropped when the engine's parameter queue is full.** The newest refused
   value of each parameter is sent again on the next poll.
+- **A computer without a graphics driver keeps getting a message, now stated as a requirement.** The app never runs on
+  the software adapter unless `WGPU_ADAPTER_NAME` names it (it faults inside the system's software rasteriser); with no
+  hardware adapter it shows a box asking for a graphics driver with DirectX 12, Vulkan or Metal and exits. There is no
+  software rendering mode: a CPU frame took 16 to 47 ms in a measurement. The README lists the requirement.
+- **The Coverage workflow finishes again.** One job built and tested the whole workspace and was cancelled at its
+  90-minute limit on every run for days, so the 90 % gate and the crate floors never ran. The tests now run in four
+  parallel shards (`scripts/coverage-shards.txt`; every workspace package is in exactly one, the last shard is every
+  package no other lists, and `scripts/coverage-shards.py check` fails otherwise), each writes the report of its
+  run, and a final job merges them (`scripts/merge-lcov.py`) and applies the same gate, floors and lcov artifact.
 
 ## [0.5.0-rc.2] - 2026-11-24
 
