@@ -19,6 +19,12 @@ may break APIs and the patch and project formats.
   recovery copies are neither read nor written), no audio device, no plugins loaded or scanned and no project
   reopened, so a setting, a device or a plugin that stops a normal start cannot. The window title ends in
   `[Safe mode]` and a message says so. It cannot be combined with `--settings`.
+- **A plugin load and overhead sweep for the test suite.** `cargo test -p atomik-plugin-hostd --test sweep --
+  --ignored --nocapture` loads 1, 10 and 30 instances of the null, CLAP and VST3 test plugins with the sandbox off
+  and in each of its three process modes, and prints the load time, the private bytes, threads, handles and child
+  processes per instance and the idle CPU of the instances processing silence. An ordinary test of the same file
+  asserts the counts that do not depend on the machine (children per mode, threads of a shared child, nothing left
+  behind). No behaviour of the app changes.
 - **Kill tests for recovery and for a killed plugin process.** One test ends a running session with a hard kill and
   checks that the next start offers the recovery and opens the edited document; another kills one sandboxed plugin
   process while two play and checks that only that device turns crashed, the other keeps processing and the saved
