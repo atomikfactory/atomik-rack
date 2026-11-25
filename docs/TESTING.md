@@ -20,8 +20,31 @@ sh scripts/check-public.sh                 # repository hygiene (no local paths,
 - Lints are set in the root `Cargo.toml` (`unsafe_code = "deny"`, clippy `all = deny`,
   `float_cmp = deny`) and in [clippy.toml](../clippy.toml) (bans `HashMap`, `HashSet`,
   `Instant::now` and `SystemTime::now`).
-- CI also runs `cargo test --workspace --release` on Linux and on Windows (the Windows leg includes the
-  exact-hash goldens), because optimisation can change floating-point behaviour.
+- CI also runs the tests in release (`cargo nextest run --workspace --release`) on Linux and on Windows (the Windows
+  leg includes the exact-hash goldens), because optimisation can change floating-point behaviour.
+- CI runs the tests with [cargo-nextest](https://nexte.st) (pinned in the workflow), not `cargo test`: every test in
+  a process of its own, and the tests of all test programs scheduled together instead of one program after the
+  other. Its settings are the `ci` profile of [.config/nextest.toml](../.config/nextest.toml): no fail-fast, no
+  retries (a flaky test is a defect to fix), as many tests at once as cores, a test running over a minute marked
+  SLOW (never cut short), and the group `process-lifecycle` (at most one test at a time) for the tests that start and
+  kill real plugin child processes or read the process table: `e2e_kill`, `e2e_watch`, `orphan` and `sweep` of
+  `atomik-plugin-hostd`, and `kill_recovery` of `atomik-app`. nextest runs no doc tests, so the next step is
+  `cargo test --doc` on the same packages. To run what CI runs (needs `cargo install cargo-nextest --locked`):
+
+  ```sh
+  cargo nextest run --profile ci --workspace          # add --release for the release legs
+  cargo test --doc --workspace
+  ```
+
+  `cargo test` and `cargo nextest run` without a profile work as ever.
+- The example-song renders run in the release legs only. The debug legs (a pull request runs those) leave out eight
+  test programs of `atomik-render`, `fx_demo`, `plugin_demo`, `plugin_demo_vst3`, `character_demo`,
+  `container_demo`, `determinism_examples`, `player_demo` and `drum_demo`: each renders whole example projects, and
+  together they were over half of the macOS debug leg's test time. They run on Linux and Windows in the release
+  legs, which every push to `main`, every manual run and every pull request with the `full-ci` label start (adding
+  the label starts them, later pushes rerun them). Run them by hand with
+  `cargo test -p atomik-render --test fx_demo` (and the others). The list is in the debug step of
+  [ci.yml](../.github/workflows/ci.yml): change it there when a test program is added or moved.
 - Coverage is the slowest job, so a pull request does not run it unless it carries the `coverage` label. It runs on
   every push to `main`, nightly and by hand ([coverage.yml](../.github/workflows/coverage.yml)): `cargo llvm-cov`
   fails below 90 % of lines for the workspace (binary entry points and GPU or audio-device glue are excluded; the

@@ -4,6 +4,8 @@ on:
   push:
     branches: [main]
   pull_request:
+    # `labeled`: adding the `full-ci` label starts the release test legs (see the test job).
+    types: [opened, synchronize, reopened, labeled]
   workflow_dispatch:
     inputs:
       sandbox_only:
@@ -135,9 +137,13 @@ jobs:
       # A documents-only change skips the steps below, not the job: a matrix job that is skipped
       # as a whole never reports the names a required check waits for. The release legs take 45
       # to 70 minutes, so a pull request runs the debug legs only (on its affected packages); the
-      # release legs run on main after the merge and on a manual run.
+      # release legs run on main after the merge, on a manual run and on a pull request that
+      # carries the `full-ci` label (adding the label starts them, later pushes rerun them). The
+      # example-song renders (the eight test programs excluded from the debug legs below) run in
+      # the release legs only.
       RUN_CODE: >-
-        ${{ (matrix.profile == 'release' && github.event_name == 'pull_request')
+        ${{ (matrix.profile == 'release' && github.event_name == 'pull_request'
+             && !contains(github.event.pull_request.labels.*.name, 'full-ci'))
             && 'false' || needs.changes.outputs.code }}
       # `--workspace`, or the affected packages as `-p name ...` on a pull request.
       PACKAGES: ${{ needs.changes.outputs.packages }}
@@ -167,16 +173,45 @@ jobs:
           # shellcheck disable=SC2086
           cargo build $flags $packages
           echo "ATOMIK_TEST_PLUGINS_PREBUILT=1" >> "$GITHUB_ENV"
-      - name: cargo test (debug)
+      # cargo-nextest runs each test in a process of its own and the tests of every test program
+      # together (`cargo test` runs the programs one after the other); the settings are the `ci`
+      # profile of .config/nextest.toml. It runs no doc tests: those follow with `cargo test --doc`.
+      - uses: taiki-e/install-action@75a7c0f87bd666af3cdb75c5b9e9d03ab6044e6f # v2.90.6
+        if: env.RUN_CODE == 'true'
+        with:
+          tool: cargo-nextest@0.9.133
+      # The debug legs leave out the example-song renders: whole example projects rendered one or
+      # more times, minutes of the macOS leg. The release legs run them, so every push to main
+      # still runs them. Keep this list equal to the one in docs/TESTING.md.
+      - name: cargo nextest (debug)
         if: env.RUN_CODE == 'true' && matrix.profile == 'debug'
         shell: bash
         # shellcheck disable=SC2086
-        run: cargo test $PACKAGES --no-fail-fast
-      - name: cargo test (release)
+        run: >-
+          cargo nextest run --profile ci $PACKAGES --no-fail-fast --no-tests=pass
+          -E 'not (binary_id(atomik-render::fx_demo)
+          | binary_id(atomik-render::plugin_demo_vst3)
+          | binary_id(atomik-render::plugin_demo)
+          | binary_id(atomik-render::character_demo)
+          | binary_id(atomik-render::container_demo)
+          | binary_id(atomik-render::determinism_examples)
+          | binary_id(atomik-render::player_demo)
+          | binary_id(atomik-render::drum_demo))'
+      - name: cargo nextest (release)
         if: env.RUN_CODE == 'true' && matrix.profile == 'release'
         shell: bash
         # shellcheck disable=SC2086
-        run: cargo test $PACKAGES --release --no-fail-fast
+        run: cargo nextest run --profile ci $PACKAGES --release --no-fail-fast --no-tests=pass
+      - name: doc tests (debug)
+        if: env.RUN_CODE == 'true' && matrix.profile == 'debug'
+        shell: bash
+        # shellcheck disable=SC2086
+        run: cargo test --doc $PACKAGES --no-fail-fast
+      - name: doc tests (release)
+        if: env.RUN_CODE == 'true' && matrix.profile == 'release'
+        shell: bash
+        # shellcheck disable=SC2086
+        run: cargo test --doc $PACKAGES --release --no-fail-fast
       # A pixel golden that fails leaves the actual, golden and diff images here.
       - name: Upload the pixel diff images
         if: failure() && env.RUN_CODE == 'true'
