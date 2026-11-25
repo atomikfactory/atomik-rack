@@ -1,0 +1,17 @@
+# The test shards of the Coverage workflow (see scripts/coverage-shards.py), one per line:
+#
+#   <shard name>: <package> <package> ...
+#
+# The shard named `rest` has the single entry `*`: every workspace package that no other shard
+# lists, so a new crate is tested (and measured) without anyone editing this file. The
+# times are the test time of each group in the last full run that finished (the build comes on top).
+# Move a package when a shard grows past about half an hour of tests.
+
+# about 27 minutes of tests: the offline render tests are the longest executables of the project
+render: atomik-render
+# about 17 minutes
+app: atomik-app
+# about 18 minutes
+views: atomik-ui atomik-devices atomik-dsp
+# about 5 minutes: everything else
+rest: *

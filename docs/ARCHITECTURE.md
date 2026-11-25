@@ -7072,6 +7072,16 @@ winit and GPU code is not (it needs a window and a GPU).
   frame but a surface reconfigure; a window with no surface, a minimized one or a down device shows at once);
   other systems keep showing it at creation (`window_logic::HIDE_UNTIL_FIRST_FRAME`). The `startup` log lines
   name every stage (`startup.rs`).
+- **The adapter is chosen by a pure rule, and a software adapter is never used by chance.** `Devices::new_device`
+  lists the adapters, describes each one (`gpu_select::AdapterDesc`: name, backend, kind, whether it can present to the
+  window) and asks `gpu_select::choose`: `WGPU_ADAPTER_NAME` picks the first adapter whose name contains the text,
+  whatever its kind (a software adapter chosen this way is the user's call and is warned about in the log); otherwise
+  the adapters that can present are candidates, a CPU adapter never among them, ordered by `WGPU_POWER_PREF` or, by
+  default, as the system lists them. The renderer has no CPU drawing path (the Windows software rasteriser faults
+  inside the system library), so when no candidate is left the start fails with `gpu_select::start_report`: a native
+  message box that says a graphics driver with DirectX 12, Vulkan or Metal is needed, lists what was found and names
+  the log, and a non-zero exit (a scripted run only logs). Every start logs the `graphics adapter:` line (name,
+  backend, type, driver).
 - **A lost graphics device is rebuilt, not fatal.** The context installs two callbacks on every device it makes
   (`GpuHealth`): the uncaptured-error handler and the device-lost callback only set an atomic flag and keep the
   reason text (running out of memory or an internal error loses the device; a rejected command is only noted, once

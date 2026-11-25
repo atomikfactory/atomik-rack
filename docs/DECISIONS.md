@@ -2321,3 +2321,20 @@ always panics would restart for ever, or the streak would need its own reset rul
 bypass is reversible); acting on a crashed sandboxed plugin here (it already has its reload).
 
 **Status.** Decided by the owner on 2026-11-24 (restart automatically, as planned).
+
+## BV. No software rendering: a machine without a graphics driver gets a message
+
+**Decision.** The interface is drawn on the graphics card and nothing else. The app never runs on a software (CPU)
+adapter unless the user names one with `WGPU_ADAPTER_NAME`, and when no hardware adapter is left it shows a native
+message (a graphics driver with DirectX 12, Vulkan or Metal is needed, what was found, the log path) and exits with an
+error code. The README's install section states the requirement. There is no CPU rendering mode.
+
+**Why.** The Windows software rasteriser faults inside a system library a few seconds after start, which Rust cannot
+catch, so it is not a fallback for this renderer. A spike measured the CPU renderer already in the tree (used for the
+screenshots) at 16 to 29 ms per main-window frame for light scenes and 47 ms for a dense rack on a fast desktop, one
+thread and no display-list cache: too slow for a usable interface, and a slower machine is the one that would need it.
+
+**Rejected.** A "software rendering" mode on the CPU renderer (frame times above); falling back to the software
+adapter silently (the crash above).
+
+**Status.** Decided by the owner on 2026-11-24.
