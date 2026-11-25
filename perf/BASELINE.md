@@ -1316,8 +1316,6 @@ the rack looks a device up by the borrowed text of its key (`RackView::local_nam
 once per song change (`tempo_lane::TempoCurve`). What remains while playing happens in five of the sixty frames, one per
 window of the device CPU readout (`AppCore::feed_cpu_loads` rebuilding each track's chain summary, about 140 heap operations
 a pass); `crates/app/tests/idle_frame_alloc.rs` bounds both counts (0 idle, 800 playing).
-`tempo_lane::tempo_at`, which builds a tempo table for the playhead position. Not fixed here (UI code, not the audio path);
-`crates/app/tests/idle_frame_alloc.rs` bounds both counts.
 ## A headless edit loop for ten minutes (2026-11-24)
 
 `crates/mcp/tests/soak.rs` (see [docs/TESTING.md](../docs/TESTING.md#the-headless-soak-ignored-by-default)): the
