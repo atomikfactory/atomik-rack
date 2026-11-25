@@ -491,7 +491,8 @@ pub struct AppCore<S: EngineSink> {
     meter_points: Vec<(DeviceKey, [Endpoint; 3])>,
     /// The console strips' readings of this frame, kept by [`AppCore::update_console_meters`] for
     /// the meters in the track headers: a read resets the peak, so a frame is read once.
-    frame_readings: Vec<(DeviceKey, ChannelMeters)>,
+    /// One per entry of `meter_points`, in order; a buffer kept from frame to frame.
+    frame_readings: Vec<ChannelMeters>,
     /// [`Self::frame_readings`] holds a frame the headers have not used yet.
     readings_fresh: bool,
     /// The engine latency epoch the current routing was compiled with.
@@ -2841,6 +2842,9 @@ impl<S: EngineSink> AppCore<S> {
         let compiled = topology.compile();
         self.topology = topology;
         self.meter_points = meter_points;
+        // The kept readings follow the old points: drop them (a frame reads them again).
+        self.frame_readings.clear();
+        self.readings_fresh = false;
         self.io_meters = io_meters;
         self.cv_taps = cv_taps;
         self.latency_epoch = epoch;
@@ -2942,12 +2946,18 @@ impl<S: EngineSink> AppCore<S> {
         // The endpoints read earlier this frame (a read resets the peak); the cache stays for
         // the CV feed and is cleared by the next frame's read.
         let shared = std::mem::take(&mut self.io_meters.shared);
-        let readings = self.console_readings_with(&shared);
+        let mut readings = std::mem::take(&mut self.frame_readings);
+        self.console_readings_into(&shared, &mut readings);
         self.io_meters.shared = shared;
-        self.console.set_meters(&readings);
+        self.console.set_meters_of(
+            self.meter_points
+                .iter()
+                .map(|(key, _)| key)
+                .zip(readings.iter().copied()),
+        );
         self.console.set_frame_time(now_seconds);
         // The mix channel panels of the rack show the same peaks as the console strips.
-        for (key, _) in &readings {
+        for (key, _) in &self.meter_points {
             if let Some(m) = self.console.meter(key) {
                 let peaks = [m.peak[0].level_db, m.peak[1].level_db];
                 self.view.set_mix_meters(key, peaks);

@@ -494,7 +494,7 @@ impl ArrangementView {
             self.tempo_armed.then_some(st.record),
             self.hover == Some(Hit::TempoArm),
         );
-        let playhead_bpm = lane::tempo_at(&self.song.tempo, self.playhead);
+        let playhead_bpm = self.tempo_curve.at(self.playhead);
         sp::label(
             c,
             &format!("{playhead_bpm:.2} BPM"),

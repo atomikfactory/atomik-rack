@@ -1117,11 +1117,24 @@ impl ConsoleView {
     /// Records this frame's meter readings (channel or master device key → values). Call
     /// once per frame, then [`Self::set_frame_time`]. Unknown keys are ignored.
     pub fn set_meters(&mut self, readings: &[(DeviceKey, ChannelMeters)]) {
+        self.set_meters_of(readings.iter().map(|(key, m)| (key, *m)));
+    }
+
+    /// [`Self::set_meters`] for readings the caller keeps apart from the keys (the app's feed,
+    /// every frame): nothing is cloned once a strip has its ballistics.
+    pub fn set_meters_of<'a>(
+        &mut self,
+        readings: impl IntoIterator<Item = (&'a DeviceKey, ChannelMeters)>,
+    ) {
         for (key, m) in readings {
+            if let Some(ballistics) = self.meters.get_mut(key) {
+                ballistics.set_input(m);
+                continue;
+            }
             let known = self.strips.iter().any(|s| &s.key == key)
                 || self.master.as_ref().is_some_and(|s| &s.key == key);
             if known {
-                self.meters.entry(key.clone()).or_default().set_input(*m);
+                self.meters.entry(key.clone()).or_default().set_input(m);
             }
         }
     }

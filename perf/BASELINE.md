@@ -1223,10 +1223,14 @@ Counted with the testkit's allocator (`forbid_on_this_thread`, `assert_no_alloc`
 | stress song, same, worker threads | 0 |
 | stress rack (100 devices, 300 cables), same | 0 per block, 0 on the workers |
 | idle shell frame, empty, patch open, MIDI mappings, analysers shown or hidden | 0 |
-| idle shell frame, fx-demo open (console meter feed) | 19 per frame (570 over 30 frames) |
-| playing shell frame, fx-demo, 60 frames a second, playhead moving | 38 per frame (2263 over 60 frames) |
+| idle shell frame, fx-demo open (console meter feed) | 19 per frame (570 over 30 frames), now 0 |
+| playing shell frame, fx-demo, 60 frames a second, playhead moving | 38 per frame (2263 over 60 frames), now 715 over 60 frames |
 
-Where the fx-demo frames allocate: `console_readings_with` (the list of channel readings and a key clone per strip), `ConsoleView::set_meters`
+Where the fx-demo frames allocated: `console_readings_with` (the list of channel readings and a key clone per strip), `ConsoleView::set_meters`
 and `RackView::set_mix_meters` / `set_device_meter_values` (a key clone each to look the device up), and, only while playing,
-`tempo_lane::tempo_at`, which builds a tempo table for the playhead position. Not fixed here (UI code, not the audio path);
-`crates/app/tests/idle_frame_alloc.rs` bounds both counts.
+`tempo_lane::tempo_at`, which built a tempo table for the playhead position. The meter feed now keeps its readings in a buffer
+(`AppCore::console_readings_into`) and hands the console the keys of `meter_points` by reference (`ConsoleView::set_meters_of`),
+the rack looks a device up by the borrowed text of its key (`RackView::local_name`), and the arrangement compiles its tempo
+once per song change (`tempo_lane::TempoCurve`). What remains while playing happens in five of the sixty frames, one per
+window of the device CPU readout (`AppCore::feed_cpu_loads` rebuilding each track's chain summary, about 140 heap operations
+a pass); `crates/app/tests/idle_frame_alloc.rs` bounds both counts (0 idle, 800 playing).
