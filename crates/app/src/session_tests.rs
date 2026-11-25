@@ -1,8 +1,10 @@
-//! `LiveSession` tests with a fake backend (no audio or MIDI hardware).
+//! `LiveSession` tests with a fake backend (no audio or MIDI hardware): the shared scriptable
+//! audio side (`atomik_testkit::backend::FakeAudio`) and, here, the MIDI side.
 
 use super::*;
 use crate::midi::PortInput;
 use crate::settings::{HostChoice, MidiInputRole, MidiInputSetting};
+use crate::test_backend::{AcceptedBuffer, FakeAudio, FakeStream};
 use atomik_audio_io::HostKind;
 use atomik_core::SampleRate;
 use std::cell::{Cell, RefCell};
@@ -11,29 +13,13 @@ use std::time::Duration;
 
 #[derive(Default)]
 struct Fake {
-    fail_start: RefCell<Option<IoError>>,
-    starts: RefCell<Vec<StreamSpec>>,
-    stops: Rc<Cell<usize>>,
-    ports: Vec<String>,
-    /// Ports that are unplugged right now (listed in `ports`, not offered or openable).
-    hidden: RefCell<Vec<String>>,
-    /// The open inputs, to send messages through.
-    inputs: FakeInputs,
+    /// The audio devices and streams: scripted and counted through this.
+    audio: FakeAudio,
     opened: RefCell<Vec<String>>,
     closes: Rc<Cell<usize>>,
-    telemetry: Rc<Cell<Telemetry>>,
-    accepted_buffer: Option<u32>,
+    /// The open inputs, to send messages through.
+    inputs: FakeInputs,
     targets: RefCell<Vec<Arc<NoteTarget>>>,
-    /// The input device name of every start.
-    input_devices: RefCell<Vec<Option<String>>>,
-    /// The output devices the host lists right now.
-    plugged: RefCell<Vec<String>>,
-    /// Fail every start that asks for input channels.
-    fail_input: Cell<bool>,
-    /// The host opens at most this many input channels.
-    host_inputs: Cell<Option<u16>>,
-    /// Every start naming this output device fails (`"*"`: every start fails).
-    broken_device: RefCell<Option<String>>,
     /// What the MIDI output thread sent, as `(port, bytes)`.
     out_wire: OutWire,
     /// The clock inputs opened, and the cell the last one feeds.
@@ -73,26 +59,6 @@ impl Drop for ClockGuard {
     }
 }
 
-struct FakeStream {
-    info: StreamInfo,
-    engine: Engine,
-    telemetry: Rc<Cell<Telemetry>>,
-    stops: Rc<Cell<usize>>,
-}
-
-impl LiveStream for FakeStream {
-    fn telemetry(&self) -> Telemetry {
-        self.telemetry.get()
-    }
-    fn info(&self) -> &StreamInfo {
-        &self.info
-    }
-    fn stop(self) -> Result<Engine, IoError> {
-        self.stops.set(self.stops.get() + 1);
-        Ok(self.engine)
-    }
-}
-
 /// The inputs a fake port has open, by port name.
 type FakeInputs = Rc<RefCell<Vec<(String, Rc<RefCell<PortInput>>)>>>;
 
@@ -118,14 +84,18 @@ impl MidiPort for FakeMidi {
 }
 
 impl Fake {
-    /// The names a plugged-in port list shows: every port but the unplugged ones.
-    fn visible(&self) -> Vec<String> {
-        let hidden = self.hidden.borrow();
-        self.ports
-            .iter()
-            .filter(|p| !hidden.contains(p))
-            .cloned()
-            .collect()
+    /// A backend with these MIDI input ports plugged in.
+    fn with_ports(ports: &[&str]) -> Self {
+        let fake = Self::default();
+        fake.audio.set_midi_ports(ports);
+        fake
+    }
+
+    /// A backend whose host accepts a fixed buffer of `frames`.
+    fn accepting(frames: u32) -> Self {
+        let fake = Self::default();
+        fake.audio.accept_buffer(AcceptedBuffer::Fixed(frames));
+        fake
     }
 
     /// Sends `bytes` into the open port `port`, as its MIDI thread would.
@@ -155,27 +125,11 @@ impl AudioBackend for &Fake {
     type Midi = FakeMidi;
 
     fn list_audio(&self) -> Result<Vec<HostInfo>, IoError> {
-        let devices = self
-            .plugged
-            .borrow()
-            .iter()
-            .map(|name| atomik_audio_io::DeviceInfo {
-                name: name.clone(),
-                max_inputs: 0,
-                max_outputs: 2,
-                sample_rates: vec![48_000],
-                buffer_range: None,
-                is_default_output: false,
-            })
-            .collect();
-        Ok(vec![HostInfo {
-            kind: HostKind::Wasapi,
-            devices,
-        }])
+        self.audio.list_audio()
     }
 
     fn list_midi(&self) -> Result<Vec<String>, MidiError> {
-        Ok(self.visible())
+        Ok(self.audio.list_midi())
     }
 
     fn start(
@@ -185,50 +139,7 @@ impl AudioBackend for &Fake {
         engine: Engine,
         _clock: Arc<FrameClock>,
     ) -> Result<FakeStream, IoError> {
-        if let Some(e) = self.fail_start.borrow_mut().take() {
-            return Err(e);
-        }
-        let broken = self.broken_device.borrow();
-        if let Some(name) = broken.as_deref()
-            && (name == "*" || spec.device.as_deref() == Some(name))
-        {
-            let device = spec.device.as_deref().unwrap_or("the default device");
-            return Err(IoError::UnsupportedConfig(format!(
-                "{device} cannot be opened"
-            )));
-        }
-        drop(broken);
-        if spec.input_channels > 0 && self.fail_input.get() {
-            self.starts.borrow_mut().push(spec.clone());
-            self.input_devices
-                .borrow_mut()
-                .push(input_device.map(str::to_owned));
-            return Err(IoError::DeviceNotFound("no input device".into()));
-        }
-        let opened = self
-            .host_inputs
-            .get()
-            .map_or(spec.input_channels, |n| n.min(spec.input_channels));
-        self.starts.borrow_mut().push(spec.clone());
-        self.input_devices
-            .borrow_mut()
-            .push(input_device.map(str::to_owned));
-        Ok(FakeStream {
-            info: StreamInfo {
-                host: spec.host,
-                output_device: spec.device.clone().unwrap_or_else(|| "Speakers".into()),
-                input_device: (opened > 0)
-                    .then(|| input_device.unwrap_or("Default input").to_owned()),
-                sample_rate: spec.sample_rate,
-                output_channels: spec.output_channels,
-                input_channels: opened,
-                sample_format: "f32",
-                requested_buffer_frames: self.accepted_buffer,
-            },
-            engine,
-            telemetry: Rc::clone(&self.telemetry),
-            stops: Rc::clone(&self.stops),
-        })
+        self.audio.start(spec, input_device, engine)
     }
 
     fn midi_out_opener(&self) -> atomik_midi_io::out::Opener {
@@ -255,8 +166,9 @@ impl AudioBackend for &Fake {
     }
 
     fn open_midi(&self, name: &str, link: MidiLink) -> Result<FakeMidi, MidiError> {
-        let i = crate::midi::match_port(&self.visible(), name)?;
-        let port = self.visible()[i].clone();
+        let visible = self.audio.visible_midi();
+        let i = crate::midi::match_port(&visible, name)?;
+        let port = visible[i].clone();
         self.opened.borrow_mut().push(port.clone());
         self.targets.borrow_mut().push(Arc::clone(&link.target));
         self.inputs.borrow_mut().push((
@@ -323,7 +235,7 @@ fn reset_opens_a_stream_with_the_settings_at_the_document_rate() {
     s.reset(&config(44_100.0));
     assert!(s.is_running());
     assert_eq!(
-        *fake.starts.borrow(),
+        fake.audio.starts(),
         vec![StreamSpec {
             host: HostKind::Wasapi,
             device: Some("Virtual Cable Input".into()),
@@ -358,7 +270,7 @@ fn a_disabled_session_opens_nothing_and_accepts_engine_calls() {
     let mut s = LiveSession::new(&fake, settings(), false);
     s.reset(&config(48_000.0));
     assert!(!s.is_running());
-    assert!(fake.starts.borrow().is_empty());
+    assert!(fake.audio.starts().is_empty());
     assert!(s.insert_device(DeviceInstanceId(1), synth(), &[]).is_ok());
     assert!(s.set_tempo(Tempo::new(99.0).unwrap()).is_ok());
     assert_eq!(s.collect_garbage(), 0);
@@ -372,7 +284,8 @@ fn a_disabled_session_opens_nothing_and_accepts_engine_calls() {
 #[test]
 fn a_failed_start_reports_the_error_and_ignores_engine_calls() {
     let fake = Fake::default();
-    *fake.fail_start.borrow_mut() = Some(IoError::DeviceNotFound("Virtual Cable Input".into()));
+    fake.audio
+        .fail_next_start(IoError::DeviceNotFound("Virtual Cable Input".into()));
     let mut s = LiveSession::new(&fake, settings(), true);
     s.reset(&config(48_000.0));
     assert!(!s.is_running());
@@ -392,8 +305,8 @@ fn a_reset_stops_the_previous_stream_before_starting_the_next() {
     s.reset(&config(48_000.0));
     s.insert_device(DeviceInstanceId(1), synth(), &[]).unwrap();
     s.reset(&config(48_000.0));
-    assert_eq!(fake.stops.get(), 1);
-    assert_eq!(fake.starts.borrow().len(), 2);
+    assert_eq!(fake.audio.stops(), 1);
+    assert_eq!(fake.audio.starts().len(), 2);
     assert!(
         !s.contains_device(DeviceInstanceId(1)),
         "a reset starts an empty engine"
@@ -402,10 +315,7 @@ fn a_reset_stops_the_previous_stream_before_starting_the_next() {
 
 #[test]
 fn the_midi_input_opens_with_the_shared_target() {
-    let fake = Fake {
-        ports: vec!["Example Keyboard".into()],
-        ..Fake::default()
-    };
+    let fake = Fake::with_ports(&["Example Keyboard"]);
     let mut s = LiveSession::new(
         &fake,
         AudioSettings {
@@ -434,10 +344,7 @@ fn inputs(entries: &[(&str, bool, MidiInputRole)]) -> Vec<MidiInputSetting> {
 }
 
 fn two_ports() -> Fake {
-    Fake {
-        ports: vec!["Example Keys".into(), "Example Pads".into()],
-        ..Fake::default()
-    }
+    Fake::with_ports(&["Example Keys", "Example Pads"])
 }
 
 fn keys_and_pads() -> AudioSettings {
@@ -513,7 +420,7 @@ fn switching_a_port_off_closes_only_that_port() {
         ..settings()
     });
     assert_eq!(change, SettingsChange::MidiReopened);
-    assert_eq!(fake.starts.borrow().len(), 1, "no audio restart");
+    assert_eq!(fake.audio.starts().len(), 1, "no audio restart");
     assert_eq!(fake.closes.get(), 1);
     assert_eq!(fake.open_ports(), ["Example Keys"]);
     assert_eq!(
@@ -533,7 +440,7 @@ fn switching_a_port_off_closes_only_that_port() {
 #[test]
 fn a_port_plugged_in_later_opens_on_a_rescan() {
     let fake = two_ports();
-    *fake.hidden.borrow_mut() = vec!["Example Pads".into()];
+    fake.audio.hide_midi_port("Example Pads");
     let mut s = LiveSession::new(&fake, keys_and_pads(), true);
     s.reset(&config(48_000.0));
     assert_eq!(fake.open_ports(), ["Example Keys"]);
@@ -547,7 +454,7 @@ fn a_port_plugged_in_later_opens_on_a_rescan() {
     assert_eq!(fake.open_ports(), ["Example Keys"]);
     assert_eq!(fake.opened.borrow().len(), 1);
     // Plugged in: the rescan opens it and clears the error.
-    fake.hidden.borrow_mut().clear();
+    fake.audio.show_midi_port("Example Pads");
     s.rescan_midi();
     assert_eq!(fake.open_ports(), ["Example Keys", "Example Pads"]);
     assert_eq!(fake.opened.borrow().len(), 2);
@@ -613,10 +520,7 @@ fn two_settings_naming_one_port_open_it_once() {
 }
 #[test]
 fn a_missing_port_is_reported_and_a_fix_reopens_midi_without_a_restart() {
-    let fake = Fake {
-        ports: vec!["Example Keyboard".into()],
-        ..Fake::default()
-    };
+    let fake = Fake::with_ports(&["Example Keyboard"]);
     let mut s = LiveSession::new(
         &fake,
         AudioSettings {
@@ -633,7 +537,7 @@ fn a_missing_port_is_reported_and_a_fix_reopens_midi_without_a_restart() {
         ..settings()
     });
     assert_eq!(change, SettingsChange::MidiReopened);
-    assert_eq!(fake.starts.borrow().len(), 1, "no audio restart");
+    assert_eq!(fake.audio.starts().len(), 1, "no audio restart");
     assert_eq!(s.status().midi_port.as_deref(), Some("Example Keyboard"));
     assert_eq!(s.status().midi_error, None);
     // Turning MIDI off closes the port.
@@ -686,12 +590,12 @@ fn audio_changes_ask_for_a_restart_and_apply_at_the_next_reset() {
         SettingsChange::RestartAudio
     );
     assert_eq!(
-        fake.starts.borrow().len(),
+        fake.audio.starts().len(),
         1,
         "the restart is the caller's call"
     );
     s.reset(&config(48_000.0));
-    assert_eq!(fake.starts.borrow()[1].buffer_frames, 512);
+    assert_eq!(fake.audio.starts()[1].buffer_frames, 512);
 }
 
 #[test]
@@ -701,7 +605,7 @@ fn polling_reads_telemetry_and_sets_the_midi_latency() {
     s.reset(&config(48_000.0));
     assert_eq!(s.latency_frames(), FALLBACK_LATENCY_FRAMES);
     assert_eq!(s.status().buffer_frames, None);
-    fake.telemetry.set(Telemetry {
+    fake.audio.set_telemetry(Telemetry {
         callbacks: 10,
         xruns: 3,
         buffer_frames: 480,
@@ -719,15 +623,12 @@ fn polling_reads_telemetry_and_sets_the_midi_latency() {
 
 #[test]
 fn polling_publishes_the_input_trims_and_the_requested_buffer() {
-    let fake = Fake {
-        accepted_buffer: Some(480),
-        ..Fake::default()
-    };
+    let fake = Fake::accepting(480);
     let mut s = LiveSession::new(&fake, settings(), true);
     s.reset(&config(48_000.0));
     assert_eq!(s.status().buffer_requested, Some(480));
     assert_eq!(s.status().input_trim, crate::status::InputTrim::default());
-    fake.telemetry.set(Telemetry {
+    fake.audio.set_telemetry(Telemetry {
         input_trims: 3,
         input_backlog_max_frames: 1440,
         callback_frames_min: 96,
@@ -756,10 +657,7 @@ fn polling_publishes_the_input_trims_and_the_requested_buffer() {
 
 #[test]
 fn an_accepted_buffer_size_is_the_initial_latency() {
-    let fake = Fake {
-        accepted_buffer: Some(128),
-        ..Fake::default()
-    };
+    let fake = Fake::accepting(128);
     let mut s = LiveSession::new(&fake, settings(), true);
     s.reset(&config(48_000.0));
     assert_eq!(s.latency_frames(), 128);
@@ -768,10 +666,7 @@ fn an_accepted_buffer_size_is_the_initial_latency() {
 
 #[test]
 fn shutdown_closes_midi_and_stops_the_stream() {
-    let fake = Fake {
-        ports: vec!["Example Keyboard".into()],
-        ..Fake::default()
-    };
+    let fake = Fake::with_ports(&["Example Keyboard"]);
     let mut s = LiveSession::new(
         &fake,
         AudioSettings {
@@ -784,11 +679,11 @@ fn shutdown_closes_midi_and_stops_the_stream() {
     s.shutdown();
     assert!(!s.is_running());
     assert_eq!(fake.closes.get(), 1);
-    assert_eq!(fake.stops.get(), 1);
+    assert_eq!(fake.audio.stops(), 1);
     assert!(!s.status().running);
     drop(s);
     assert_eq!(
-        fake.stops.get(),
+        fake.audio.stops(),
         1,
         "drop after shutdown stops nothing twice"
     );
@@ -800,7 +695,7 @@ fn dropping_a_running_session_stops_it() {
     let mut s = LiveSession::new(&fake, settings(), true);
     s.reset(&config(48_000.0));
     drop(s);
-    assert_eq!(fake.stops.get(), 1);
+    assert_eq!(fake.audio.stops(), 1);
 }
 
 #[test]
@@ -853,9 +748,9 @@ fn the_documents_input_channels_are_requested_and_the_input_device_is_passed() {
     };
     let mut s = LiveSession::new(&fake, named, true);
     s.reset(&config_in(48_000.0, 2));
-    assert_eq!(fake.starts.borrow()[0].input_channels, 2);
+    assert_eq!(fake.audio.starts()[0].input_channels, 2);
     assert_eq!(
-        *fake.input_devices.borrow(),
+        fake.audio.input_devices(),
         vec![Some("Line In".to_string())]
     );
     let st = s.status();
@@ -866,7 +761,7 @@ fn the_documents_input_channels_are_requested_and_the_input_device_is_passed() {
     let fake = Fake::default();
     let mut s = LiveSession::new(&fake, settings(), true);
     s.reset(&config_in(48_000.0, 1));
-    assert_eq!(*fake.input_devices.borrow(), vec![None]);
+    assert_eq!(fake.audio.input_devices(), vec![None]);
 }
 
 #[test]
@@ -874,7 +769,7 @@ fn no_input_channels_means_an_output_only_stream_as_before() {
     let fake = Fake::default();
     let mut s = LiveSession::new(&fake, settings(), true);
     s.reset(&config(48_000.0));
-    assert_eq!(fake.starts.borrow()[0].input_channels, 0);
+    assert_eq!(fake.audio.starts()[0].input_channels, 0);
     let st = s.status();
     assert_eq!((st.input_channels_wanted, st.input_channels_open), (0, 0));
     assert_eq!(st.input_device, None);
@@ -883,17 +778,17 @@ fn no_input_channels_means_an_output_only_stream_as_before() {
 #[test]
 fn when_the_input_cannot_be_opened_the_session_falls_back_to_output_only() {
     let fake = Fake::default();
-    fake.fail_input.set(true);
+    fake.audio.fail_input(true);
     let mut s = LiveSession::new(&fake, settings(), true);
     s.reset(&config_in(48_000.0, 2));
     assert!(s.is_running(), "never a failed start because of the input");
     assert_eq!(
-        fake.starts.borrow().len(),
+        fake.audio.starts().len(),
         2,
         "first with, then without input"
     );
-    assert_eq!(fake.starts.borrow()[0].input_channels, 2);
-    assert_eq!(fake.starts.borrow()[1].input_channels, 0);
+    assert_eq!(fake.audio.starts()[0].input_channels, 2);
+    assert_eq!(fake.audio.starts()[1].input_channels, 0);
     let st = s.status();
     assert_eq!(st.error, None);
     assert!(st.running);
@@ -903,7 +798,7 @@ fn when_the_input_cannot_be_opened_the_session_falls_back_to_output_only() {
     let text = crate::status::status_text(st);
     assert!(text.contains("input off"), "{text}");
     // A later reset tries the input again.
-    fake.fail_input.set(false);
+    fake.audio.fail_input(false);
     s.reset(&config_in(48_000.0, 2));
     assert_eq!(s.status().input_error, None);
     assert_eq!(s.status().input_channels_open, 2);
@@ -912,7 +807,7 @@ fn when_the_input_cannot_be_opened_the_session_falls_back_to_output_only() {
 #[test]
 fn fewer_host_input_channels_than_the_document_are_reported() {
     let fake = Fake::default();
-    fake.host_inputs.set(Some(1));
+    fake.audio.limit_host_inputs(Some(1));
     let mut s = LiveSession::new(&fake, settings(), true);
     s.reset(&config_in(48_000.0, 2));
     let st = s.status();
@@ -926,11 +821,11 @@ fn fewer_host_input_channels_than_the_document_are_reported() {
 fn the_session_reports_the_host_channel_counts_of_the_running_stream() {
     // The Audio I/O lamps need (inputs, outputs) of the open stream.
     let fake = Fake::default();
-    fake.host_inputs.set(Some(1));
+    fake.audio.limit_host_inputs(Some(1));
     let mut s = LiveSession::new(&fake, settings(), true);
     assert_eq!(s.host_channels(), None, "no stream yet");
     s.reset(&config_in(48_000.0, 2));
-    let outputs = fake.starts.borrow()[0].output_channels;
+    let outputs = fake.audio.starts()[0].output_channels;
     assert_ne!(outputs, 1, "the two counts differ, so a swap shows");
     assert_eq!(s.host_channels(), Some((1, outputs)));
 }
@@ -947,7 +842,7 @@ fn polling_reads_the_latencies_and_the_record_offset_adds_the_user_offset() {
         true,
     );
     s.reset(&config_in(48_000.0, 2));
-    fake.telemetry.set(Telemetry {
+    fake.audio.set_telemetry(Telemetry {
         callbacks: 10,
         buffer_frames: 128,
         input_latency_frames: 200,
@@ -1019,7 +914,7 @@ fn stalled_stream_is_reported() {
     s.reset(&config(48_000.0));
     assert_eq!(s.status().stream_state, StreamState::Starting);
     let t0 = clock_now();
-    fake.telemetry.set(quiet());
+    fake.audio.set_telemetry(quiet());
     assert_eq!(s.poll_at(t0).stream_state, StreamState::Running);
     // The callbacks stop: a stall once max(4 periods, 250 ms) went by without one.
     let st = s.poll_at(t0 + Duration::from_millis(200)).clone();
@@ -1033,7 +928,7 @@ fn stalled_stream_is_reported() {
             .contains("AUDIO STOPPED")
     );
     // They come back by themselves: no longer stalled.
-    fake.telemetry.set(Telemetry {
+    fake.audio.set_telemetry(Telemetry {
         callbacks: 11,
         ..quiet()
     });
@@ -1049,7 +944,7 @@ fn a_reset_restores_the_callbacks_of_a_stalled_stream() {
     let mut s = LiveSession::new(&fake, settings(), true);
     s.reset(&config(48_000.0));
     let t0 = clock_now();
-    fake.telemetry.set(quiet());
+    fake.audio.set_telemetry(quiet());
     s.poll_at(t0);
     assert!(
         s.poll_at(t0 + Duration::from_secs(1))
@@ -1057,9 +952,9 @@ fn a_reset_restores_the_callbacks_of_a_stalled_stream() {
             .is_dead()
     );
     s.reset(&config(48_000.0));
-    assert_eq!(fake.starts.borrow().len(), 2, "a new stream was opened");
+    assert_eq!(fake.audio.starts().len(), 2, "a new stream was opened");
     // The new stream's callbacks count from zero again and arrive.
-    fake.telemetry.set(Telemetry {
+    fake.audio.set_telemetry(Telemetry {
         callbacks: 3,
         ..quiet()
     });
@@ -1073,7 +968,7 @@ fn a_lost_device_is_reported_at_once_and_stream_errors_are_shown() {
     let fake = Fake::default();
     let mut s = LiveSession::new(&fake, settings(), true);
     s.reset(&config(48_000.0));
-    fake.telemetry.set(Telemetry {
+    fake.audio.set_telemetry(Telemetry {
         stream_errors: 2,
         device_lost: true,
         ..quiet()
@@ -1093,7 +988,7 @@ fn input_overruns_and_stalled_control_pushes_reach_the_overload_counters() {
     let fake = Fake::default();
     let mut s = LiveSession::new(&fake, settings(), true);
     s.reset(&config(48_000.0));
-    fake.telemetry.set(Telemetry {
+    fake.audio.set_telemetry(Telemetry {
         input_overruns: 7,
         ..quiet()
     });
@@ -1120,10 +1015,11 @@ fn input_overruns_and_stalled_control_pushes_reach_the_overload_counters() {
 }
 
 /// Renders one block of silence through the session's engine (the fake stream owns it).
-fn render_block(s: &mut LiveSession<&Fake>) {
-    let r = s.running.as_mut().expect("a running engine");
+fn render_block(fake: &Fake) {
     let (mut left, mut right) = (vec![0.0f32; 256], vec![0.0f32; 256]);
-    r.stream.engine.render(&[], &mut [&mut left, &mut right]);
+    fake.audio
+        .with_engine(|engine| engine.render(&[], &mut [&mut left, &mut right]))
+        .expect("a running engine");
 }
 
 #[test]
@@ -1135,7 +1031,7 @@ fn a_value_the_full_queue_refused_is_sent_again_by_the_next_poll() {
     let id = DeviceInstanceId(1);
     let (device, log) = ParamLog::boxed(100_000);
     s.insert_device(id, device, &[]).unwrap();
-    render_block(&mut s);
+    render_block(&fake);
     // Fill the queue with one knob's drag, then one more value of it and a value of another
     // parameter: both are refused.
     let mut pushed = 0u32;
@@ -1157,9 +1053,9 @@ fn a_value_the_full_queue_refused_is_sent_again_by_the_next_poll() {
     );
     // The engine takes the queue empty; the next poll sends what was refused: the newest value
     // of each parameter, not the one in between.
-    render_block(&mut s);
+    render_block(&fake);
     s.poll();
-    render_block(&mut s);
+    render_block(&fake);
     let sets: Vec<_> = log
         .entries()
         .into_iter()
@@ -1185,7 +1081,7 @@ fn a_value_the_full_queue_refused_is_sent_again_by_the_next_poll() {
     // Nothing is left waiting: another poll sends nothing more.
     let before = log.entries().len();
     s.poll();
-    render_block(&mut s);
+    render_block(&fake);
     let after = log.entries();
     assert!(
         after[before..]
@@ -1215,7 +1111,7 @@ fn a_configuration_that_does_not_open_falls_back_to_the_last_working_one() {
         ..settings()
     });
     assert_eq!(change, SettingsChange::RestartAudio);
-    *fake.broken_device.borrow_mut() = Some("Unplugged".into());
+    fake.audio.break_device("Unplugged");
     s.reset(&config(48_000.0));
     assert!(s.is_running(), "the last working configuration opened");
     assert_eq!(
@@ -1234,7 +1130,7 @@ fn a_configuration_that_does_not_open_falls_back_to_the_last_working_one() {
 #[test]
 fn without_a_working_configuration_to_fall_back_to_audio_stays_off_with_the_error() {
     let fake = Fake::default();
-    *fake.broken_device.borrow_mut() = Some("Virtual Cable Input".into());
+    fake.audio.break_device("Virtual Cable Input");
     let mut s = LiveSession::new(&fake, settings(), true);
     s.reset(&config(48_000.0));
     assert!(!s.is_running());
@@ -1259,7 +1155,7 @@ fn a_failing_fallback_keeps_the_settings_and_the_first_error() {
         ..settings()
     });
     // Both fail (say the document's rate is not supported by either).
-    *fake.broken_device.borrow_mut() = Some("*".into());
+    fake.audio.break_device("*");
     s.reset(&config(48_000.0));
     assert!(!s.is_running());
     assert_eq!(s.settings().output_device.as_deref(), Some("Unplugged"));
@@ -1597,7 +1493,7 @@ fn fallen_back(fake: &Fake) -> LiveSession<&Fake> {
         output_device: Some("Headset".into()),
         ..settings()
     });
-    *fake.broken_device.borrow_mut() = Some("Headset".into());
+    fake.audio.break_device("Headset");
     s.reset(&config(48_000.0));
     assert!(s.is_running());
     assert_eq!(s.status().device, "Virtual Cable Input");
@@ -1608,7 +1504,7 @@ fn fallen_back(fake: &Fake) -> LiveSession<&Fake> {
 #[test]
 fn the_chosen_device_is_taken_back_once_it_is_listed_again() {
     let fake = Fake::default();
-    fake.plugged.borrow_mut().push("Virtual Cable Input".into());
+    fake.audio.plug("Virtual Cable Input");
     let mut s = fallen_back(&fake);
     let t0 = clock_now();
 
@@ -1622,8 +1518,8 @@ fn the_chosen_device_is_taken_back_once_it_is_listed_again() {
     );
 
     // Plugged in: the list is read every few seconds, not every poll.
-    fake.plugged.borrow_mut().push("USB Headset".into());
-    *fake.broken_device.borrow_mut() = None;
+    fake.audio.plug("USB Headset");
+    fake.audio.start_works();
     s.poll_at(t0 + Duration::from_secs(5));
     assert!(!s.switch_back_pending(), "read again only after the period");
     s.poll_at(t0 + Duration::from_secs(8));
@@ -1653,7 +1549,7 @@ fn a_return_that_does_not_open_is_tried_once() {
     let t0 = clock_now();
     s.poll_at(t0);
     // It shows in the list but still cannot be opened.
-    fake.plugged.borrow_mut().push("Headset".into());
+    fake.audio.plug("Headset");
     s.poll_at(t0 + Duration::from_secs(4));
     assert!(s.take_switch_back());
     s.reset(&config(48_000.0));
@@ -1670,7 +1566,7 @@ fn a_return_that_does_not_open_is_tried_once() {
 #[test]
 fn a_device_that_never_left_the_list_is_not_switched_back_to() {
     let fake = Fake::default();
-    fake.plugged.borrow_mut().push("Headset".into());
+    fake.audio.plug("Headset");
     let mut s = fallen_back(&fake);
     let t0 = clock_now();
     for k in 0..4 {
@@ -1689,7 +1585,7 @@ fn picking_devices_in_the_dialog_forgets_the_one_to_go_back_to() {
         output_device: Some("Speakers".into()),
         ..settings()
     });
-    fake.plugged.borrow_mut().push("Headset".into());
+    fake.audio.plug("Headset");
     s.poll_at(t0 + Duration::from_secs(10));
     assert!(!s.switch_back_pending());
     assert_eq!(s.settings().output_device.as_deref(), Some("Speakers"));
@@ -1705,7 +1601,7 @@ fn the_default_devices_after_a_loss_go_back_to_the_chosen_ones_when_they_return(
     assert_eq!(s.settings().output_device, None);
     let t0 = clock_now();
     s.poll_at(t0);
-    fake.plugged.borrow_mut().push("Virtual Cable Input".into());
+    fake.audio.plug("Virtual Cable Input");
     s.poll_at(t0 + Duration::from_secs(4));
     assert!(s.take_switch_back());
     s.reset(&config(48_000.0));
@@ -1762,5 +1658,157 @@ fn the_low_power_flag_is_for_the_next_engine_and_restarts_nothing() {
     assert!(!s.low_power);
     s.set_low_power(true);
     assert!(s.low_power);
-    assert!(fake.starts.borrow().is_empty(), "no stream was started");
+    assert!(fake.audio.starts().is_empty(), "no stream was started");
+}
+
+// ---- Scenarios the scripted fake backend makes possible (simulated time, no sleeping) ----
+
+/// A session running at 48 kHz on the settings' device, 256 frames a buffer (a period of
+/// 5.33 ms).
+fn running(fake: &Fake) -> LiveSession<&Fake> {
+    let mut s = LiveSession::new(fake, settings(), true);
+    s.reset(&config(48_000.0));
+    assert!(s.is_running());
+    s
+}
+
+#[test]
+fn a_rate_change_under_a_running_stream_loses_the_device_until_it_is_opened_at_the_new_rate() {
+    let fake = Fake::default();
+    let mut s = running(&fake);
+    let t0 = clock_now();
+    fake.audio.run_callbacks(4);
+    assert_eq!(s.poll_at(t0).stream_state, StreamState::Running);
+
+    // The user switches the device's format in the system settings.
+    fake.audio.set_rate(44_100);
+    let st = s.poll_at(t0 + Duration::from_millis(20)).clone();
+    assert_eq!(st.stream_state, StreamState::Lost);
+    assert_eq!(st.stream_errors, 1);
+
+    // The document still wants 48 kHz: the device refuses it and the error says so.
+    s.reset(&config(48_000.0));
+    assert!(!s.is_running());
+    let err = s.status().error.clone().expect("the refusal is shown");
+    assert!(err.contains("48000"), "{err}");
+
+    // A document at the device's rate opens again.
+    s.reset(&config(44_100.0));
+    assert!(s.is_running());
+    assert_eq!(s.status().sample_rate, 44_100);
+    assert_eq!(s.status().error, None);
+    assert_eq!(fake.audio.start_calls().len(), 3);
+    assert_eq!(fake.audio.stops(), 1, "only the first stream was ever open");
+}
+
+#[test]
+fn a_buffer_size_change_under_a_running_stream_moves_the_midi_latency_without_a_restart() {
+    let fake = Fake::default();
+    let mut s = running(&fake);
+    fake.audio.run_callbacks(1);
+    assert_eq!(s.poll().buffer_frames, Some(256));
+    assert_eq!(s.latency_frames(), 256);
+
+    // The driver changes its period under the stream.
+    fake.audio.set_buffer(64);
+    fake.audio.run_callbacks(1);
+    assert_eq!(s.poll().buffer_frames, Some(64));
+    assert_eq!(s.latency_frames(), 64, "live notes follow the actual size");
+    assert_eq!(fake.audio.start_calls().len(), 1, "no restart");
+    assert!(s.is_running());
+}
+
+#[test]
+fn an_unplugged_device_is_lost_during_playback_and_opens_again_once_it_is_plugged_back() {
+    let fake = Fake::default();
+    fake.audio.plug("Virtual Cable Input");
+    let mut s = running(&fake);
+    let t0 = clock_now();
+    fake.audio.run_callbacks(3);
+    assert_eq!(s.poll_at(t0).stream_state, StreamState::Running);
+
+    fake.audio.unplug();
+    fake.audio.run_callbacks(2);
+    let st = s.poll_at(t0 + Duration::from_secs(1)).clone();
+    assert_eq!(st.stream_state, StreamState::Lost);
+    assert_eq!(st.stream_errors, 1);
+    assert!(
+        fake.audio.plugged().is_empty(),
+        "the host no longer lists it"
+    );
+
+    // Reopening while it is gone fails and names the device.
+    s.reset(&config(48_000.0));
+    assert!(!s.is_running());
+    let err = s.status().error.clone().expect("the loss is shown");
+    assert!(err.contains("Virtual Cable Input"), "{err}");
+
+    fake.audio.replug();
+    assert_eq!(
+        fake.audio.plugged(),
+        vec!["Virtual Cable Input".to_string()]
+    );
+    s.reset(&config(48_000.0));
+    assert!(s.is_running());
+    fake.audio.run_callbacks(1);
+    let st = s.poll_at(t0 + Duration::from_secs(2)).clone();
+    assert_eq!(st.stream_state, StreamState::Running);
+    assert_eq!(st.error, None);
+}
+
+#[test]
+fn a_stall_longer_than_the_threshold_is_reported_and_a_shorter_one_is_not() {
+    let fake = Fake::default();
+    let mut s = running(&fake);
+    let t0 = clock_now();
+    fake.audio.run_callbacks(10);
+    assert_eq!(s.poll_at(t0).stream_state, StreamState::Running);
+
+    // The driver stops delivering buffers for 600 ms: more than max(4 periods, 250 ms).
+    fake.audio.stall();
+    fake.audio.advance(Duration::from_millis(600));
+    let st = s.poll_at(t0 + Duration::from_millis(600)).clone();
+    assert_eq!(st.stream_state, StreamState::Stalled);
+    assert_eq!(st.stream_silent_ms, 600);
+
+    // The callbacks come back, and so does the state.
+    fake.audio.resume();
+    fake.audio.run_callbacks(1);
+    let at = t0 + Duration::from_millis(700);
+    assert_eq!(s.poll_at(at).stream_state, StreamState::Running);
+
+    // A hiccup of 100 ms is shorter than the threshold: not a stall.
+    fake.audio.stall_for(Duration::from_millis(100));
+    fake.audio.advance(Duration::from_millis(100));
+    assert_eq!(
+        s.poll_at(at + Duration::from_millis(100)).stream_state,
+        StreamState::Running
+    );
+}
+
+#[test]
+fn callbacks_that_cost_more_than_their_period_count_as_xruns() {
+    let fake = Fake::default();
+    let mut s = running(&fake);
+
+    // 1 ms of a 5.33 ms period: a light load and no xrun.
+    fake.audio.callback_cost_ns(1_000_000);
+    fake.audio.run_callbacks(20);
+    let st = s.poll().clone();
+    assert_eq!(st.xruns, 0);
+    assert!((st.dsp_load - 0.1875).abs() < 0.01, "{}", st.dsp_load);
+
+    // 8 ms does not fit: every callback is an overrun.
+    fake.audio.callback_cost_ns(8_000_000);
+    fake.audio.run_callbacks(5);
+    let st = s.poll().clone();
+    assert_eq!(st.xruns, 5);
+    assert!(st.dsp_load > 1.0 && st.dsp_peak > 1.0, "{st:?}");
+
+    // Back to light: the total stays, the load comes down.
+    fake.audio.callback_cost_ns(1_000_000);
+    fake.audio.run_callbacks(3);
+    let st = s.poll().clone();
+    assert_eq!(st.xruns, 5);
+    assert!(st.dsp_load < 0.5, "{}", st.dsp_load);
 }

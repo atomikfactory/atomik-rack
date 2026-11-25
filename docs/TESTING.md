@@ -64,6 +64,38 @@ Tests are named for what they check, in snake case (`a_panicking_device_is_conta
 Fakes (`ConstantSource`, `ImpulseOnNote`, `Passthrough`, `NoteThru`, `CallLog`, `DropProbe`,
 `Allocator`, `RecordingSink`) are in [crates/testkit/src/fakes.rs](../crates/testkit/src/fakes.rs).
 
+## The fake audio backend
+
+[crates/testkit/src/backend.rs](../crates/testkit/src/backend.rs) (`atomik_testkit::backend`, behind the testkit's
+`backend` feature, which only the dev-dependencies of `atomik-app` and `atomik-play` switch on, so no shipped program
+and no other crate's test build pays for it) is the one fake audio host. `FakeAudio` clones share one state: hand a
+clone to the code under test and keep one to script it and to read the counts. Both programs have a trait for the
+outside world (`AudioBackend` in `session.rs`, `Backend` in `atomik-play`) and implement it in their tests as a thin
+adapter that answers `list_audio`, `list_midi` and `start` with the calls of the same names; the app does it once for
+all its test modules in `crates/app/src/test_backend.rs`, and a test that also needs MIDI ports to play notes into
+wraps `FakeAudio` and opens its own ports (`session_tests.rs`, `shell_audio_setup_tests.rs`).
+
+Time is simulated: nothing in it sleeps or reads a clock. A stream's callbacks happen when the test runs them, and the
+code under test that reads wall time (the liveness check) takes it as an argument (`LiveSession::poll_at`), so a test
+passes instants.
+
+| Call | What the code under test sees |
+|---|---|
+| `run_callbacks(n)`, `advance(duration)` | `n` callbacks, or the whole periods of `duration`; `callbacks_per_read(n)` runs `n` on every telemetry read |
+| `set_rate(hz)` | the device's native rate changes: a running stream is lost (a stream error, `device_lost`), the listing offers only `hz`, a start at another rate is `UnsupportedConfig` |
+| `set_buffer(frames)` | the callbacks arrive in blocks of `frames` from the next one on, in `Telemetry::buffer_frames`; nothing restarts |
+| `unplug()`, `replug()` | the stream's device is lost and leaves the listing, a start naming it is `DeviceNotFound`; replugging lists and opens it again, an old stream stays lost |
+| `stall()`, `resume()`, `stall_for(duration)`, `stall_callbacks(n)` | the callbacks stop coming without a loss |
+| `callback_cost_ns(ns)` | each callback takes `ns` of simulated render time against its period; above the period it is a render overrun and an xrun; the load figures cover the callbacks since the previous read |
+| `set_telemetry(t)` | pins the figures: every read returns exactly `t` |
+| `fail_next_start`, `fail_starts`, `break_device`, `fail_input`, `limit_host_inputs`, `fail_list`, `accept_buffer` | the failures and refusals a host can answer |
+| `start_calls()`, `starts()`, `stops()`, `lists()`, `midi_lists()`, `open_streams()`, `with_engine(f)` | what the code under test did; `with_engine` runs `f` on the open stream's engine as the callback would |
+
+`crates/testkit/tests/fake_backend.rs` tests the knobs themselves (run it with `--features backend`). The scenarios are
+at the end of `session_tests.rs`: a rate change under a running stream, a buffer change, an unplug and replug during
+playback, a stall longer than the threshold (and a shorter one that is not reported), and callbacks that overrun
+their period.
+
 ## Allocation guard (HI-1)
 
 [crates/testkit/src/no_alloc.rs](../crates/testkit/src/no_alloc.rs) provides a counting global
@@ -332,6 +364,40 @@ You can also measure by hand:
 cargo run --release -p atomik-render -- examples/patches/slice-demo.json -o demo.wav --stats
 ```
 
+## Callback timing over a project (ignored by default)
+
+[crates/render/tests/callback_timing.rs](../crates/render/tests/callback_timing.rs) answers a question the
+real-time factor cannot: how long does one audio callback take, and how often does it take longer than its
+period. It builds the engine of a project the way a bounce does (`fx-demo`, the factory demo with the most work
+per second of audio, and the generated `stress_song_doc` the benches use), as a live engine
+(`EngineOptions::realtime`), and plays the song in a loop from a thread that follows an absolute-deadline schedule:
+callback `k` starts at the start plus `k` periods, the period being the buffer over 48 kHz, so a callback that runs
+over does not push the next one back. The time of every `Engine::render` call goes into the histogram of
+`atomik_audio_io` that `atomik-play --stats` reads. Rows cover buffers of 64, 128, 256 and 512 frames and 0 and 2
+workers. No audio device is opened and the thread is not promoted; between callbacks it spins, so its caches and
+clock are warmer than a driver's thread, and a number is for comparing builds on one machine.
+
+```sh
+cargo test --release -p atomik-render --test callback_timing -- --ignored --nocapture
+```
+
+`ATOMIK_TIMING_SECONDS` sets the audio of each row (30 by default, after one second of warm-up) and
+`ATOMIK_TIMING_OUT` names a file the table is also written to. A row of the table:
+
+| Column | Meaning |
+|---|---|
+| callbacks | Timed callbacks (the warm-up is not counted) |
+| p50, p99 | Median and 99th percentile of the render time in microseconds: the top of the histogram bucket, exact to 25 % |
+| max | The slowest callback, exact |
+| misses | Callbacks whose render took longer than the period (an audible dropout when it is a real device) |
+| p99 / period | The share of the callback budget the p99 uses |
+
+An ordinary test of the same file runs a fraction of a second of one row to check that every callback is recorded.
+The scheduled performance workflow runs the table with 10 s a row after `realtime_factor_release`, uploads it as the
+`callback-timing` artifact and never fails on a timing. The numbers of the reference machine, also with the process
+pinned to two cores and four threads, are in
+[perf/BASELINE.md](../perf/BASELINE.md#callback-timing-over-a-project-2026-11-24).
+
 The file browser has three more timing tests with the same rule (`#[ignore]`, release only):
 
 ```sh
@@ -345,6 +411,105 @@ the latency of the first decoded chunk of a file. The preview voice's allocation
 ignored: [crates/engine/tests/preview_alloc.rs](../crates/engine/tests/preview_alloc.rs) runs with
 the normal suite. A normal `cargo test --workspace` reports these ignored tests besides the
 real-time factor test and the `ignore` code example in the `no_alloc` module docs.
+
+## The headless soak (ignored by default)
+
+`the_headless_session_does_not_leak_under_a_long_edit_loop` in [crates/mcp/tests/soak.rs](../crates/mcp/tests/soak.rs)
+opens the factory `fx-demo` project in the headless session of the QA server (no window, no audio device) and runs a
+scripted loop of user-like actions for a set time while it samples the memory of the process. It is `#[ignore]`
+because it takes minutes:
+
+```sh
+ATOMIK_SOAK_SECONDS=120 cargo test -p atomik-mcp --test soak -- --ignored --nocapture
+```
+
+`ATOMIK_SOAK_SECONDS` is the length (default 120, at least 10; the nightly job uses 900). `ATOMIK_SOAK_TABLE` is a file
+the table is also written to (default `soak-table.txt` in the build's test folder). `ATOMIK_SOAK_ACTIONS` narrows the
+loop to some groups of actions (`devices`, `params`, `zoom`, `panels`, `select`, `undo`, `save`, comma separated) to
+find which kind of action a growth comes from; a frame is painted either way.
+
+Before the loop the undo history is filled to its limit, so the slope below does not measure a history that is still
+growing. Each iteration then does one random action out of twelve, from a fixed seed (the script is the same on every
+run), and paints the main window on the CPU canvas:
+
+- add a device at the end of the rack (a compressor, an equaliser, a reverb, a distortion or a modulation effect, in
+  turn), or remove the oldest of the six it keeps;
+- turn the input gain of a channel strip (`session_set_param`, one undo step each);
+- scroll the arrangement with the wheel (horizontal, and with Ctrl for zoom) and run View > Zoom In or Zoom Out;
+- open a panel (Rack, Mixer, Piano Roll, Browser, Song, Inspector), paint, and close it again;
+- select a track of the song;
+- undo one to three steps, redo up to two;
+- save (the first time a Save As, which makes the project folder; after that File > Save).
+
+The table has one row every `ATOMIK_SOAK_SECONDS / 80` seconds (between 1 and 10): the resident memory (the working
+set on Windows), the private memory (anonymous resident memory on Linux, private bytes on Windows; this is the number
+that is judged), the thread count, the undo depth and the number of devices in the rack. Linux reads
+`/proc/self/status`; Windows asks `Get-Process` through PowerShell (no `unsafe`); on macOS there is no reader and the
+test runs the loop and measures nothing. After a warm-up of the first 20 % of the run the test fits a least squares
+line through the private memory and prints the slope in MiB a minute.
+
+The test fails on a clear leak only: a slope above 2 MiB a minute after the warm-up, or private memory at the finish
+(the mean of the last three samples) more than 2 times the memory at the end of the warm-up (the mean of the first
+three samples after it). It also fails when the undo history is ever deeper than the document's own step limit, or when
+the rack ever holds more than six of the devices the loop adds (the loop reads them from the document each time: undo
+and redo bring back and take away devices, and a list the loop kept itself drifted, so the rack grew to over a hundred
+devices and the memory with it). The thread count is reported, not judged. On this loop the private memory is flat:
+the numbers and the runs are in [perf/BASELINE.md](../perf/BASELINE.md), and the bounds sit about twice above the
+worst short run. A longer run measures the slope better: a 120 second run has a few samples and its slope varies by
+half a MiB between runs.
+
+The nightly workflow (`.github/workflows/nightly.yml`, job `soak`) runs it on Linux with `ATOMIK_SOAK_SECONDS=900`
+every night, independent of the build, and keeps the table as the artifact `soak-table` for 30 days. A red soak does
+not hold the nightly publish back.
+
+### Windowed playback soak (hand check)
+
+The 2 to 8 hour soak with the real window and the audio stream is a check for the owner, not for CI: a machine that is
+used for something else cannot run it, and it makes sound. `scripts/perf/sample-app.ps1` measures the running app but
+never plays, so for a long run use its long sampling window and read the growth in its output:
+
+1. Build the release app (`cargo build --release -p atomik-app`) and close other heavy programs.
+2. Run `powershell -ExecutionPolicy Bypass -File scripts\perf\sample-app.ps1 -Scenario stress-audio-fx -Settle 60
+   -Window 7200` (two hours; `-Window 28800` for eight). It starts the app with a fresh settings folder and no audio
+   playback, and reports the working set and private bytes at the end of the window, the thread and handle counts and
+   the UI answer times. Run it once with `-Window 600` first: a long run is judged by the difference between the two.
+3. For the played variant start the app by hand with the same project, press play with the loop on, and note the
+   Private bytes and handle count of `atomik.exe` (Task Manager, Details) at the start, after ten minutes and every
+   hour, plus the CPU of the first and the last ten minutes.
+4. Pass when private bytes and handles are flat after the first ten minutes (a rise of a few MiB over hours is the
+   allocator; a steady climb is not), the CPU of the last ten minutes is within 5 % of the first ten, and no
+   `NOT RESPONDING` or stall line is in the log.
+
+## The leak loops
+
+Creating and destroying the same thing 200 times must leave the process where it started. Two files do it, each with an
+ordinary test of 20 cycles that runs in CI and an `#[ignore]`d test of 200 cycles that the nightly workflow runs:
+
+- [crates/plugin-hostd/tests/leak_loops.rs](../crates/plugin-hostd/tests/leak_loops.rs): for each of three shells (the
+  built-in `null` plugin in a child process of its own, the test CLAP plugin in a child process, the test CLAP plugin
+  in this process; the sandbox in its default one-child-per-instance mode) a cycle creates an instance, runs eight
+  batches through it, drops it and polls the manager until it reports the instance destroyed. After every cycle the
+  manager holds no instance and the sandbox counts no live child.
+- [crates/mcp/tests/leak_loop.rs](../crates/mcp/tests/leak_loop.rs): a cycle opens the factory `fx-demo` project in the
+  headless session, paints a frame of the main window and closes the session.
+
+```sh
+cargo test -p atomik-plugin-hostd --test leak_loops -- --ignored --nocapture
+cargo test -p atomik-mcp --test leak_loop -- --ignored --nocapture
+```
+
+A first cycle runs before the count, so that what lives as long as the process does (a loaded library, the fonts of the
+text engine, the first child) is not counted. The table is read at an early cycle (5 of 20, 10 of 200), in the middle
+and at the last cycle; each read waits until two reads in a row agree. The test asserts that the child processes, the
+threads and the handles (file descriptors on Linux) at the last cycle are EQUAL to those at the early one, exactly,
+where the sandbox loop counts this process and everything below it; the private bytes are only reported. The numbers
+come from the process table through `powershell` (Windows), `/proc` (Linux) or `ps` (macOS: resident bytes and no
+thread or handle counts, so only the children are compared there); no `unsafe`. The loops of one file are one test,
+because the test harness gives every test a thread and the thread count would follow the order tests finish in.
+`ATOMIK_LEAK_TABLE` names a file the table of the 200 cycle runs is appended to (default `leak-table.txt` in the
+build's test folder). The nightly workflow's job `leaks` runs both on Linux and keeps the file as the artifact
+`leak-table` for 30 days. The private bytes of the session loop rise in the first 100 cycles (the allocator and the
+caches fill) and are flat after them; see [perf/BASELINE.md](../perf/BASELINE.md).
 
 ## Benchmarks and the performance job
 
@@ -1852,6 +2017,34 @@ banner after a run that did not quit cleanly, and a recovered recording (a track
 file deleted on save). Hand checks: kill the app (Task Manager, End task) during a recording and
 again after an edit, start it, and use OPEN RECOVERY and the `Recovered take` track; the MCP recipe
 is `session_open`, edit, kill the server process, `session_open` again.
+
+### Kill tests (headless)
+
+Two tests end a process from outside, the way Task Manager does, and check what the next start or
+the rest of the app sees:
+
+- `crates/app/tests/kill_recovery.rs`: the test executable starts itself again as a child (an
+  environment variable selects the `child_session` test) that edits a document on the null
+  backend, lets the autosave write its snapshot (the test advances the clock past the period by
+  hand, so nothing waits) and then idles. The test checks the child holds its session marker,
+  kills it (`Child::kill`), waits until the marker's lock is free (`session_alive` is false), and
+  opens a new core on the same recovery folder: the unclean-exit banner offers the recovery, OPEN
+  RECOVERY gives the edited document (a device, two parameters, the tempo, equal to the same edits
+  made in this process), and a later clean start is quiet.
+- `crates/plugin-hostd/tests/e2e_kill_one.rs`: two sandboxed plugins play through the real
+  `PluginManager`; the test finds the process of one (`PluginManager::native_handle`) and kills
+  it with `taskkill` or `kill -9`. It checks one `Crashed` event for that instance only, the
+  CRASHED device state, the other plugin still processing, the state captured before the kill
+  restoring into a new instance, and no child left (`Sandbox::finish`).
+
+Both take well under a second and wait on conditions with a generous bound. Run them with
+`cargo test -p atomik-app --test kill_recovery` and
+`cargo test -p atomik-plugin-hostd --test e2e_kill_one`. The CRASHED text and the reload of the
+app core stay with the null-backend tests of the app (`app_core_plugins_sandbox_tests.rs`); the
+real window is a hand check: start the app with a plugin loaded and an edit made, kill `atomik`
+from Task Manager, start it again and use OPEN RECOVERY; then kill one `atomik-plugin-host`
+while the song plays: the app stays up, that device shows CRASHED, the others keep sounding, and
+a save keeps the plugin's last state.
 
 ## Logs, crash reports and diagnostics
 

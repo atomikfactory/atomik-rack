@@ -5,11 +5,12 @@ use super::*;
 use crate::audio_setup::{LAMP_FRAMES, Page};
 use crate::audio_setup_view::Kind;
 use crate::midi::{MidiLink, PortInput};
-use crate::session::{AudioBackend, LiveStream, MidiPort};
+use crate::session::{AudioBackend, MidiPort};
 use crate::settings::HostChoice;
 use crate::settings_dialog::Choice;
 use crate::sink::EngineSink;
-use atomik_audio_io::{DeviceInfo, HostInfo, IoError, StreamInfo, StreamSpec, Telemetry};
+use crate::test_backend::{AcceptedBuffer, FakeAudio, FakeStream};
+use atomik_audio_io::{DeviceInfo, HostInfo, IoError, StreamSpec, Telemetry};
 use atomik_engine::{Engine, FrameClock};
 use atomik_midi_io::MidiError;
 use atomik_ui::{Key, Modifiers, PointerButton};
@@ -19,35 +20,49 @@ use std::sync::Arc;
 
 const BLOCK: usize = 256;
 
-/// What the fake devices do, shared with the test.
-#[derive(Default)]
+/// What the fake devices do, shared with the test: the shared audio backend and the MIDI inputs.
 struct World {
-    /// The output devices the host lists.
-    plugged: RefCell<Vec<String>>,
-    /// Every start fails.
-    broken: Cell<bool>,
-    /// The engine of the running stream (the test renders it as the device would).
-    engine: RefCell<Option<Engine>>,
-    /// The MIDI ports that are plugged in, and the inputs open on them.
-    midi: RefCell<Vec<String>>,
+    audio: FakeAudio,
+    /// The inputs open on the MIDI ports.
     inputs: RefCell<Vec<(String, Rc<RefCell<PortInput>>)>>,
-    /// The output device of every start.
-    starts: RefCell<Vec<StreamSpec>>,
     /// The level the fake input device delivers.
     input_level: Cell<f32>,
+}
+
+impl Default for World {
+    fn default() -> Self {
+        let audio = FakeAudio::new();
+        audio.set_host(HostChoice::platform_default().kind());
+        audio.no_host_without_devices();
+        audio.set_default_input("Mic");
+        audio.accept_buffer(AcceptedBuffer::AsRequested);
+        // The device calls back once, at 480 frames; the test renders the engine itself.
+        audio.set_telemetry(Telemetry {
+            callbacks: 1,
+            buffer_frames: 480,
+            ..Telemetry::default()
+        });
+        Self {
+            audio,
+            inputs: RefCell::default(),
+            input_level: Cell::default(),
+        }
+    }
 }
 
 impl World {
     /// The device calls back `blocks` times: the engine renders and the peaks are published.
     fn render(&self, blocks: usize) {
-        let mut engine = self.engine.borrow_mut();
-        let engine = engine.as_mut().expect("a stream is running");
         let input = vec![self.input_level.get(); BLOCK];
-        for _ in 0..blocks {
-            let mut left = vec![0.0; BLOCK];
-            let mut right = vec![0.0; BLOCK];
-            engine.render(&[&input, &input], &mut [&mut left, &mut right]);
-        }
+        self.audio
+            .with_engine(|engine| {
+                for _ in 0..blocks {
+                    let mut left = vec![0.0; BLOCK];
+                    let mut right = vec![0.0; BLOCK];
+                    engine.render(&[&input, &input], &mut [&mut left, &mut right]);
+                }
+            })
+            .expect("a stream is running");
     }
 
     /// Plays `bytes` into the open MIDI port `port`.
@@ -65,27 +80,6 @@ impl World {
 
 #[derive(Clone, Default)]
 struct Fake(Rc<World>);
-
-struct FakeStream {
-    info: StreamInfo,
-    world: Rc<World>,
-}
-
-impl LiveStream for FakeStream {
-    fn telemetry(&self) -> Telemetry {
-        Telemetry {
-            callbacks: 1,
-            buffer_frames: 480,
-            ..Telemetry::default()
-        }
-    }
-    fn info(&self) -> &StreamInfo {
-        &self.info
-    }
-    fn stop(self) -> Result<Engine, IoError> {
-        Ok(self.world.engine.borrow_mut().take().expect("an engine"))
-    }
-}
 
 struct FakeMidi {
     name: String,
@@ -112,63 +106,25 @@ impl AudioBackend for Fake {
     type Midi = FakeMidi;
 
     fn list_audio(&self) -> Result<Vec<HostInfo>, IoError> {
-        let devices = self
-            .0
-            .plugged
-            .borrow()
-            .iter()
-            .map(|name| DeviceInfo {
-                name: name.clone(),
-                max_inputs: 2,
-                max_outputs: 2,
-                sample_rates: vec![48_000],
-                buffer_range: None,
-                is_default_output: false,
-            })
-            .collect::<Vec<_>>();
-        Ok(if devices.is_empty() {
-            Vec::new()
-        } else {
-            vec![HostInfo {
-                kind: HostChoice::platform_default().kind(),
-                devices,
-            }]
-        })
+        self.0.audio.list_audio()
     }
 
     fn list_midi(&self) -> Result<Vec<String>, MidiError> {
-        Ok(self.0.midi.borrow().clone())
+        Ok(self.0.audio.list_midi())
     }
 
     fn start(
         &self,
         spec: &StreamSpec,
-        _input_device: Option<&str>,
+        input_device: Option<&str>,
         engine: Engine,
         _clock: Arc<FrameClock>,
     ) -> Result<FakeStream, IoError> {
-        self.0.starts.borrow_mut().push(spec.clone());
-        if self.0.broken.get() {
-            return Err(IoError::DeviceNotFound("the device is busy".into()));
-        }
-        *self.0.engine.borrow_mut() = Some(engine);
-        Ok(FakeStream {
-            info: StreamInfo {
-                host: spec.host,
-                output_device: spec.device.clone().unwrap_or_else(|| "Speakers".into()),
-                input_device: (spec.input_channels > 0).then(|| "Mic".to_owned()),
-                sample_rate: spec.sample_rate,
-                output_channels: spec.output_channels,
-                input_channels: spec.input_channels,
-                sample_format: "f32",
-                requested_buffer_frames: Some(spec.buffer_frames),
-            },
-            world: Rc::clone(&self.0),
-        })
+        self.0.audio.start(spec, input_device, engine)
     }
 
     fn open_midi(&self, name: &str, link: MidiLink) -> Result<FakeMidi, MidiError> {
-        let ports = self.0.midi.borrow().clone();
+        let ports = self.0.audio.visible_midi();
         let at = crate::midi::match_port(&ports, name)?;
         let port = ports[at].clone();
         self.0.inputs.borrow_mut().push((
@@ -194,8 +150,17 @@ fn scratch(name: &str) -> PathBuf {
 
 fn world() -> Fake {
     let world = Fake::default();
-    *world.0.plugged.borrow_mut() = vec!["Speakers".into(), "Headset".into()];
-    *world.0.midi.borrow_mut() = vec!["Keys".into()];
+    for name in ["Speakers", "Headset"] {
+        world.0.audio.plug_device(DeviceInfo {
+            name: name.into(),
+            max_inputs: 2,
+            max_outputs: 2,
+            sample_rates: vec![48_000],
+            buffer_range: None,
+            is_default_output: false,
+        });
+    }
+    world.0.audio.set_midi_ports(&["Keys"]);
     world
 }
 
@@ -433,7 +398,8 @@ fn the_test_button_plays_the_tone_and_the_output_meter_moves() {
 fn with_no_audio_device_the_panel_says_so_and_skip_works() {
     let dir = scratch("nodevice");
     let w = Fake::default();
-    w.0.broken.set(true);
+    w.0.audio
+        .fail_starts(IoError::DeviceNotFound("the device is busy".into()));
     let mut s = shell(&w, &dir);
     assert!(!s.core().sink().is_running());
     assert!(s.first_run_setup());
@@ -455,7 +421,8 @@ fn a_device_that_does_not_open_gives_a_plain_message_and_keeps_the_old_devices()
     let w = world();
     let mut s = shell(&w, &dir);
     assert!(s.first_run_setup());
-    w.0.broken.set(true);
+    w.0.audio
+        .fail_starts(IoError::DeviceNotFound("the device is busy".into()));
     click(&mut s, &Kind::Pick(Choice::Device(Some("Headset".into()))));
     frame(&mut s);
     let text = s.audio_setup().unwrap().lines(s.size()).join("\n");

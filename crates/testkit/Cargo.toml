@@ -9,9 +9,22 @@ repository.workspace = true
 authors.workspace = true
 publish = false
 
+[features]
+default = []
+# The scriptable fake audio backend (`backend`). Off by default: it needs the engine and the audio
+# I/O crate, which the other users of the test kit do not build. Only the dev-dependency entries of
+# `atomik-app` and `atomik-play` switch it on; no shipped program does.
+backend = ["dep:atomik-audio-io", "dep:atomik-engine"]
+
+[[test]]
+name = "fake_backend"
+required-features = ["backend"]
+
 [dependencies]
 atomik-core = { workspace = true, features = ["rt-guard"] }
 atomik-device-sdk.workspace = true
+atomik-audio-io = { workspace = true, optional = true }
+atomik-engine = { workspace = true, optional = true }
 rustfft.workspace = true
 
 [dev-dependencies]

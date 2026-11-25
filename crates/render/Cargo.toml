@@ -44,6 +44,8 @@ thiserror.workspace = true
 
 [dev-dependencies]
 atomik-testkit.workspace = true
+# The callback histogram of the timing harness (`tests/callback_timing.rs`).
+atomik-audio-io.workspace = true
 sha2.workspace = true
 criterion.workspace = true
 

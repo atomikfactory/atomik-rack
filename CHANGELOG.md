@@ -19,12 +19,41 @@ may break APIs and the patch and project formats.
   recovery copies are neither read nor written), no audio device, no plugins loaded or scanned and no project
   reopened, so a setting, a device or a plugin that stops a normal start cannot. The window title ends in
   `[Safe mode]` and a message says so. It cannot be combined with `--settings`.
+- **One scriptable fake audio backend for the tests.** The session tests of the app and the lifecycle tests of the
+  player used to carry a fake audio host each; they now share one (`atomik_testkit::backend`, behind a `backend`
+  feature that no shipped program enables) whose script can change the device's rate, change the buffer size under
+  a running stream, unplug and plug back a device, stall the callbacks, make each callback cost a given time, and
+  which counts the starts, stops and listings. New tests use it for a rate change, an unplug and replug, a stall
+  longer than the watchdog and callbacks that overrun their period. Nothing in the program changes.
 - **A plugin load and overhead sweep for the test suite.** `cargo test -p atomik-plugin-hostd --test sweep --
   --ignored --nocapture` loads 1, 10 and 30 instances of the null, CLAP and VST3 test plugins with the sandbox off
   and in each of its three process modes, and prints the load time, the private bytes, threads, handles and child
   processes per instance and the idle CPU of the instances processing silence. An ordinary test of the same file
   asserts the counts that do not depend on the machine (children per mode, threads of a shared child, nothing left
   behind). No behaviour of the app changes.
+- **Kill tests for recovery and for a killed plugin process.** One test ends a running session with a hard kill and
+  checks that the next start offers the recovery and opens the edited document; another kills one sandboxed plugin
+  process while two play and checks that only that device turns crashed, the other keeps processing and the saved
+  state restores. Tests and documentation only.
+- **A headless soak test and a nightly job for it.** `crates/mcp/tests/soak.rs` (ignored; `ATOMIK_SOAK_SECONDS` sets
+  the length) opens a factory demo in the headless session and loops through adding and removing devices, turning
+  parameters, scrolling and zooming the arrangement, opening and closing the panels, selecting tracks, undo, redo,
+  saving and painting a frame, sampling the memory, thread count and undo depth of the process, and fails when
+  private memory grows steadily or more than 2 times after a warm-up or the undo history passes its limit. The
+  nightly workflow runs it for 15 minutes on Linux and keeps the table of samples. `docs/TESTING.md` also lists the
+  2 to 8 hour windowed playback soak as a hand check, and `perf/BASELINE.md` has the numbers of the first runs.
+- **Leak loops for plugin instances and headless sessions.** `crates/plugin-hostd/tests/leak_loops.rs` creates and
+  destroys a plugin instance 200 times (the built-in test plugin and the test CLAP plugin in a child process each,
+  the test CLAP plugin in this process) and `crates/mcp/tests/leak_loop.rs` opens and closes a factory demo in the
+  headless session 200 times; each fails when the threads, handles or child processes at the last cycle differ from
+  those at cycle 10. Ordinary 20 cycle versions run with the tests; the nightly workflow runs the 200 cycle ones and
+  keeps the tables of counts. The headless soak's bounds are now 2 MiB a minute and 2 times: its memory climb was the
+  loop's own list of added devices drifting after undo, not a leak.
+- **A paced callback timing test over a project.** `cargo test --release -p atomik-render --test callback_timing --
+  --ignored --nocapture` builds a project's live engine and drives it on an audio callback's absolute-deadline
+  schedule at 64, 128, 256 and 512 frames with 0 and 2 workers, without an audio device, and prints the p50, p99 and
+  max of the render time, the callbacks that ran over their period and the share of the period the p99 uses. The
+  scheduled performance workflow prints it and keeps it as an artifact, and never fails on a timing.
 
 ### Changed
 - **The rack builds the automation values it shows once, not on every paint.** While an automation lane has points,

@@ -10,8 +10,8 @@ use atomik_engine::{DeviceInstanceId, Engine, FrameClock, LiveNoteSender, Schedu
 use atomik_midi_io::MidiError;
 use atomik_play::cli::main_with;
 use atomik_play::{Backend, LiveStream, MidiPort};
-use std::cell::{Cell, RefCell};
-use std::rc::Rc;
+use atomik_testkit::backend::{AcceptedBuffer, FakeAudio, FakeStream};
+use std::cell::RefCell;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
@@ -25,20 +25,28 @@ const SLICE: &str = concat!(
     "/../../examples/patches/slice-demo.json"
 );
 
-/// What the fake saw.
+/// What `open_midi` was asked: port name, target device and socket, sample rate, latency frames.
+type MidiCall = (String, DeviceInstanceId, SocketId, f64, u64);
+
+/// What the fake saw, read back from the shared fake audio backend and the MIDI call.
 #[derive(Debug, Default)]
 struct Log {
     spec: Option<StreamSpec>,
     workers: Option<usize>,
     linger: Option<u64>,
-    midi: Option<(String, DeviceInstanceId, SocketId, f64, u64)>,
+    midi: Option<MidiCall>,
     peak_output: f32,
     stopped: bool,
     engine_frames_at_stop: u64,
 }
 
+/// The player's `Backend` over the shared fake audio backend: the figures of a stream that is
+/// polled once a second (375 callbacks of 128 frames at 48 kHz), plus a MIDI input that presses
+/// a key. The fields are what a test sets before the run; they are applied when the player
+/// first calls the backend.
 #[derive(Default)]
 struct Fake {
+    audio: FakeAudio,
     xruns: u64,
     /// Xrun events the stream hands out on its first drain.
     events: Vec<XrunEvent>,
@@ -49,72 +57,91 @@ struct Fake {
     fail_start: bool,
     fail_midi: bool,
     fail_list: bool,
-    log: Rc<RefCell<Log>>,
+    midi: RefCell<Option<MidiCall>>,
 }
 
 impl Fake {
     fn new() -> Self {
+        let audio = FakeAudio::new();
+        audio.plug_device(DeviceInfo {
+            name: "Fake Out".into(),
+            max_inputs: 0,
+            max_outputs: 2,
+            sample_rates: vec![48_000],
+            buffer_range: None,
+            is_default_output: true,
+        });
         Self {
+            audio,
             accepted: Some(128),
             actual_buffer: 128,
             ..Self::default()
         }
     }
+
+    /// Applies the test's settings to the shared backend.
+    fn configure(&self) {
+        let audio = &self.audio;
+        audio.set_default_output("Fake Out");
+        audio.set_midi_ports(&["Fake Keys"]);
+        audio.accept_buffer(
+            self.accepted
+                .map_or(AcceptedBuffer::Refused, AcceptedBuffer::Fixed),
+        );
+        audio.set_buffer(self.actual_buffer);
+        audio.callbacks_per_read(375);
+        audio.render_per_read(8);
+        audio.queue_events(self.events.clone());
+        let xruns = self.xruns;
+        audio.shape_telemetry(move |_, t| {
+            t.xruns = xruns;
+            t.dsp_load_avg = 0.05;
+            t.dsp_load_peak = 0.10;
+            t.render_overruns = xruns;
+            t.max_barrier_spins = 40 * xruns;
+        });
+        audio.fail_list(
+            self.fail_list
+                .then(|| IoError::Backend("no audio here".into())),
+        );
+        if self.fail_start {
+            audio.fail_starts(IoError::DeviceNotFound("\"Nope\"".into()));
+        }
+    }
+
+    /// What the fake saw so far.
+    fn log(&self) -> Log {
+        let records = self.audio.start_records();
+        Log {
+            spec: self.audio.start_calls().last().cloned(),
+            workers: records.last().map(|r| r.workers),
+            linger: records.last().map(|r| r.linger),
+            midi: self.midi.borrow().clone(),
+            peak_output: self.audio.peak_output(),
+            stopped: self.audio.stops() > 0,
+            engine_frames_at_stop: self.audio.stop_frames().last().copied().unwrap_or(0),
+        }
+    }
 }
 
-struct FakeStream {
-    engine: RefCell<Engine>,
-    info: StreamInfo,
-    calls: Cell<u64>,
-    xruns: u64,
-    events: RefCell<Vec<XrunEvent>>,
-    actual_buffer: u32,
-    log: Rc<RefCell<Log>>,
-}
+/// The shared fake stream under the player's trait (both are foreign to this test crate).
+struct PlayStream(FakeStream);
 
-impl LiveStream for FakeStream {
+impl LiveStream for PlayStream {
     fn telemetry(&self) -> Telemetry {
-        // Each snapshot renders a few buffers so live notes become audible.
-        let mut engine = self.engine.borrow_mut();
-        let frames = self
-            .info
-            .requested_buffer_frames
-            .unwrap_or(self.actual_buffer) as usize;
-        let mut l = vec![0.0f32; frames];
-        let mut r = vec![0.0f32; frames];
-        for _ in 0..8 {
-            engine.render(&[], &mut [&mut l, &mut r]);
-            let peak = l.iter().chain(&r).fold(0.0f32, |m, x| m.max(x.abs()));
-            let mut log = self.log.borrow_mut();
-            log.peak_output = log.peak_output.max(peak);
-        }
-        self.calls.set(self.calls.get() + 1);
-        Telemetry {
-            callbacks: self.calls.get() * 375,
-            xruns: self.xruns,
-            buffer_frames: self.actual_buffer,
-            dsp_load_avg: 0.05,
-            dsp_load_peak: 0.10,
-            render_overruns: self.xruns,
-            max_barrier_spins: 40 * self.xruns,
-            ..Telemetry::default()
-        }
+        self.0.telemetry()
     }
 
     fn info(&self) -> &StreamInfo {
-        &self.info
+        self.0.info()
     }
 
     fn drain_events(&self) -> Vec<XrunEvent> {
-        std::mem::take(&mut *self.events.borrow_mut())
+        self.0.drain_events()
     }
 
-    fn stop(self) -> Result<Engine, atomik_audio_io::IoError> {
-        let engine = self.engine.into_inner();
-        let mut log = self.log.borrow_mut();
-        log.stopped = true;
-        log.engine_frames_at_stop = engine.host_frames();
-        Ok(engine)
+    fn stop(self) -> Result<Engine, IoError> {
+        self.0.stop()
     }
 }
 
@@ -134,28 +161,17 @@ impl MidiPort for FakeMidi {
 }
 
 impl Backend for Fake {
-    type Stream = FakeStream;
+    type Stream = PlayStream;
     type Midi = FakeMidi;
 
     fn list_audio(&self) -> Result<Vec<HostInfo>, IoError> {
-        if self.fail_list {
-            return Err(IoError::Backend("no audio here".into()));
-        }
-        Ok(vec![HostInfo {
-            kind: HostKind::Wasapi,
-            devices: vec![DeviceInfo {
-                name: "Fake Out".into(),
-                max_inputs: 0,
-                max_outputs: 2,
-                sample_rates: vec![48_000],
-                buffer_range: None,
-                is_default_output: true,
-            }],
-        }])
+        self.configure();
+        self.audio.list_audio()
     }
 
     fn list_midi(&self) -> Result<Vec<String>, MidiError> {
-        Ok(vec!["Fake Keys".into()])
+        self.configure();
+        Ok(self.audio.list_midi())
     }
 
     fn start(
@@ -163,32 +179,9 @@ impl Backend for Fake {
         spec: &StreamSpec,
         engine: Engine,
         _clock: Arc<FrameClock>,
-    ) -> Result<FakeStream, IoError> {
-        let mut log = self.log.borrow_mut();
-        log.spec = Some(spec.clone());
-        log.workers = Some(engine.worker_count());
-        log.linger = Some(engine.worker_linger_spins());
-        if self.fail_start {
-            return Err(IoError::DeviceNotFound("\"Nope\"".into()));
-        }
-        Ok(FakeStream {
-            engine: RefCell::new(engine),
-            info: StreamInfo {
-                host: spec.host,
-                output_device: "Fake Out".into(),
-                input_device: None,
-                sample_rate: spec.sample_rate,
-                output_channels: spec.output_channels,
-                input_channels: 0,
-                sample_format: "f32",
-                requested_buffer_frames: self.accepted,
-            },
-            calls: Cell::new(0),
-            xruns: self.xruns,
-            events: RefCell::new(self.events.clone()),
-            actual_buffer: self.actual_buffer,
-            log: Rc::clone(&self.log),
-        })
+    ) -> Result<PlayStream, IoError> {
+        self.configure();
+        self.audio.start(spec, None, engine).map(PlayStream)
     }
 
     fn open_midi(
@@ -205,7 +198,7 @@ impl Backend for Fake {
                 "no input matches {name:?}"
             )));
         }
-        self.log.borrow_mut().midi = Some((
+        *self.midi.borrow_mut() = Some((
             name.to_string(),
             target.0,
             target.1,
@@ -290,7 +283,7 @@ fn timed_run_streams_the_patch_and_routes_midi_to_the_synth() {
         r.err
     );
 
-    let log = fake.log.borrow();
+    let log = fake.log();
     let spec = log.spec.clone().unwrap();
     assert_eq!(
         spec,
@@ -330,7 +323,7 @@ fn without_stats_only_the_summary_is_printed() {
         "{}",
         r.out
     );
-    assert!(fake.log.borrow().midi.is_none());
+    assert!(fake.log().midi.is_none());
 }
 
 #[test]
@@ -346,7 +339,7 @@ fn xruns_in_a_timed_run_exit_1() {
         "{}",
         r.out
     );
-    assert!(fake.log.borrow().stopped);
+    assert!(fake.log().stopped);
 }
 
 #[test]
@@ -360,7 +353,7 @@ fn ctrl_c_stops_cleanly_and_exits_0_even_with_xruns() {
     assert_eq!(r.ticks, 25);
     assert_eq!(r.out.lines().filter(|l| l.starts_with("t=")).count(), 2);
     assert!(r.out.contains("summary: t=2s ") && r.out.contains("result=stopped"));
-    assert!(fake.log.borrow().stopped);
+    assert!(fake.log().stopped);
 }
 
 #[test]
@@ -376,7 +369,7 @@ fn rate_override_reconfigures_the_engine_and_warns() {
         "{}",
         r.err
     );
-    let log = fake.log.borrow();
+    let log = fake.log();
     assert_eq!(log.spec.as_ref().unwrap().sample_rate, 44_100);
     assert!((log.midi.as_ref().unwrap().3 - 44_100.0).abs() < 1e-9);
 }
@@ -405,7 +398,7 @@ fn options_reach_the_stream_spec_and_engine() {
         ],
     );
     assert_eq!(r.code, 0, "{}", r.err);
-    let log = fake.log.borrow();
+    let log = fake.log();
     let spec = log.spec.as_ref().unwrap();
     assert_eq!(spec.host, HostKind::Wasapi);
     assert_eq!(spec.device.as_deref(), Some("Fake"));
@@ -425,7 +418,7 @@ fn midi_latency_uses_the_actual_host_buffer() {
     };
     let r = run(&fake, &[MINIMAL, "--duration", "1", "--midi", "k"]);
     assert_eq!(r.code, 0, "{}", r.err);
-    assert_eq!(fake.log.borrow().midi.as_ref().unwrap().4, 480);
+    assert_eq!(fake.log().midi.as_ref().unwrap().4, 480);
 
     // No callback ever reports a size: fall back to the requested buffer.
     let fake = Fake {
@@ -438,7 +431,7 @@ fn midi_latency_uses_the_actual_host_buffer() {
         &[MINIMAL, "--duration", "1", "--midi", "k", "--buffer", "64"],
     );
     assert_eq!(r.code, 0, "{}", r.err);
-    assert_eq!(fake.log.borrow().midi.as_ref().unwrap().4, 64);
+    assert_eq!(fake.log().midi.as_ref().unwrap().4, 64);
 }
 
 fn assert_error(r: &Run, needle: &str) {
@@ -479,7 +472,7 @@ fn errors_exit_2_with_paths() {
     );
     assert_error(&run(&fake, &[MINIMAL, "--rate", "22050"]), "22050");
     assert_error(&run(&fake, &[MINIMAL, "--host", "nope"]), "nope");
-    assert!(fake.log.borrow().spec.is_none(), "nothing was opened");
+    assert!(fake.log().spec.is_none(), "nothing was opened");
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
@@ -490,7 +483,7 @@ fn asio_without_the_feature_is_a_clear_error() {
     }
     let fake = Fake::new();
     assert_error(&run(&fake, &[MINIMAL, "--host", "asio"]), "--features asio");
-    assert!(fake.log.borrow().spec.is_none());
+    assert!(fake.log().spec.is_none());
 }
 
 #[test]
@@ -509,10 +502,7 @@ fn device_failures_exit_2_and_release_the_stream() {
         &run(&fake, &[MINIMAL, "--midi", "Nope"]),
         "no input matches",
     );
-    assert!(
-        fake.log.borrow().stopped,
-        "the stream is stopped before exiting"
-    );
+    assert!(fake.log().stopped, "the stream is stopped before exiting");
 }
 
 #[test]
@@ -547,7 +537,7 @@ fn list_prints_devices_and_midi_and_exits_0() {
     assert_eq!(r.code, 0, "{}", r.err);
     assert!(r.out.contains("\"Fake Out\""), "{}", r.out);
     assert!(r.out.contains("midi inputs:\n  \"Fake Keys\""), "{}", r.out);
-    assert!(fake.log.borrow().spec.is_none());
+    assert!(fake.log().spec.is_none());
 
     let fake = Fake {
         fail_list: true,
@@ -661,7 +651,7 @@ fn unwritable_log_file_is_an_error_before_anything_opens() {
     let fake = Fake::new();
     let r = run(&fake, &[MINIMAL, "--log", "no/such/dir/at/all/run.log"]);
     assert_error(&r, "cannot write the log");
-    assert!(fake.log.borrow().spec.is_none(), "nothing was opened");
+    assert!(fake.log().spec.is_none(), "nothing was opened");
 }
 
 #[test]
@@ -669,11 +659,7 @@ fn worker_linger_reaches_the_engine() {
     let fake = Fake::new();
     let r = run(&fake, &[SLICE, "--duration", "1", "--workers", "2"]);
     assert_eq!(r.code, 0, "{}", r.err);
-    assert_eq!(
-        fake.log.borrow().linger,
-        Some(500_000),
-        "the player default"
-    );
+    assert_eq!(fake.log().linger, Some(500_000), "the player default");
     assert!(r.err.contains("worker linger 500000 spins"), "{}", r.err);
 
     let fake = Fake::new();
@@ -691,7 +677,7 @@ fn worker_linger_reaches_the_engine() {
     );
     assert_eq!(r.code, 0, "{}", r.err);
     assert_eq!(
-        fake.log.borrow().linger,
+        fake.log().linger,
         Some(atomik_engine::WORKER_SPIN_LIMIT),
         "0 restores the engine's short spin"
     );

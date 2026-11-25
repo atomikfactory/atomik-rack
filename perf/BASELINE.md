@@ -1183,6 +1183,70 @@ and 23 to 31 handles. The "child" column is the plugin's work plus the child's o
 plugins: the test CLAP gain costs about four times what the VST3 one does. The in-process rows show the figures of the
 plugin library alone (the first load), since adding an instance adds no thread or handle. The N = 1 row of "clap child
 each" shows one slow first start (105 ms), a spread the other runs of the same row did not have (40 to 45 ms).
+## Callback timing over a project (2026-11-24)
+
+`cargo test --release -p atomik-render --test callback_timing -- --ignored --nocapture`
+([docs/TESTING.md](../docs/TESTING.md#callback-timing-over-a-project-ignored-by-default)): the engine of a project as a
+bounce builds it, live (`EngineOptions::realtime`), driven from a plain thread on an absolute-deadline schedule at
+48 kHz, 30 s of audio per row after one second of warm-up, no audio device, no thread promotion. The time of each
+`Engine::render` call goes into the callback histogram (p50 and p99 are the top of a bucket, exact to 25 %; max is
+exact). `misses` counts callbacks that took longer than their period. `fx-demo` is the factory demo with the lowest
+offline real-time factor (16.5x, against 18.9x for `character-demo` and 37x or more for the others); `stress-song`
+is the generated 8-track song of the benches. The desktop session was in use during both runs.
+
+**Normal (all 32 threads).**
+
+| project | buffer | workers | callbacks | p50 us | p99 us | max us | misses | p99 / period |
+|---|---|---|---|---|---|---|---|---|
+| fx-demo | 64 | 0 | 22500 | 81.9 | 131.1 | 203.1 | 0 | 9.8 % |
+| fx-demo | 64 | 2 | 22500 | 81.9 | 163.8 | 773.9 | 0 | 12.3 % |
+| fx-demo | 128 | 0 | 11250 | 163.8 | 327.7 | 363.1 | 0 | 12.3 % |
+| fx-demo | 128 | 2 | 11250 | 163.8 | 327.7 | 673.2 | 0 | 12.3 % |
+| fx-demo | 256 | 0 | 5625 | 327.7 | 524.3 | 579.0 | 0 | 9.8 % |
+| fx-demo | 256 | 2 | 5625 | 327.7 | 655.4 | 851.8 | 0 | 12.3 % |
+| fx-demo | 512 | 0 | 2813 | 655.4 | 1048.6 | 1134.1 | 0 | 9.8 % |
+| fx-demo | 512 | 2 | 2813 | 655.4 | 1164.6 | 1164.6 | 0 | 10.9 % |
+| stress-song | 64 | 0 | 22500 | 41.0 | 81.9 | 148.5 | 0 | 6.1 % |
+| stress-song | 64 | 2 | 22500 | 49.2 | 81.9 | 458.2 | 0 | 6.1 % |
+| stress-song | 128 | 0 | 11250 | 81.9 | 163.8 | 325.3 | 0 | 6.1 % |
+| stress-song | 128 | 2 | 11250 | 98.3 | 163.8 | 551.4 | 0 | 6.1 % |
+| stress-song | 256 | 0 | 5625 | 163.8 | 327.7 | 362.7 | 0 | 6.1 % |
+| stress-song | 256 | 2 | 5625 | 196.6 | 327.7 | 498.0 | 0 | 6.1 % |
+| stress-song | 512 | 0 | 2813 | 327.7 | 603.2 | 603.2 | 0 | 5.7 % |
+| stress-song | 512 | 2 | 2813 | 393.2 | 655.4 | 926.6 | 0 | 6.1 % |
+
+**LP4: process affinity 0xF set right after launch (two cores, four threads); the workers are the rows' own.**
+
+| project | buffer | workers | callbacks | p50 us | p99 us | max us | misses | p99 / period |
+|---|---|---|---|---|---|---|---|---|
+| fx-demo | 64 | 0 | 22500 | 81.9 | 131.1 | 187.6 | 0 | 9.8 % |
+| fx-demo | 64 | 2 | 22500 | 81.9 | 163.8 | 295.3 | 0 | 12.3 % |
+| fx-demo | 128 | 0 | 11250 | 163.8 | 262.1 | 405.8 | 0 | 9.8 % |
+| fx-demo | 128 | 2 | 11250 | 163.8 | 327.7 | 2954.3 | 1 | 12.3 % |
+| fx-demo | 256 | 0 | 5625 | 327.7 | 524.3 | 596.0 | 0 | 9.8 % |
+| fx-demo | 256 | 2 | 5625 | 327.7 | 655.4 | 666.6 | 0 | 12.3 % |
+| fx-demo | 512 | 0 | 2813 | 655.4 | 1048.6 | 1103.3 | 0 | 9.8 % |
+| fx-demo | 512 | 2 | 2813 | 655.4 | 1146.4 | 1146.4 | 0 | 10.7 % |
+| stress-song | 64 | 0 | 22500 | 41.0 | 81.9 | 152.5 | 0 | 6.1 % |
+| stress-song | 64 | 2 | 22500 | 49.2 | 81.9 | 1804.1 | 3 | 6.1 % |
+| stress-song | 128 | 0 | 11250 | 81.9 | 163.8 | 208.5 | 0 | 6.1 % |
+| stress-song | 128 | 2 | 11250 | 98.3 | 196.6 | 1934.0 | 0 | 7.4 % |
+| stress-song | 256 | 0 | 5625 | 163.8 | 327.7 | 676.8 | 0 | 6.1 % |
+| stress-song | 256 | 2 | 5625 | 196.6 | 327.7 | 2526.9 | 0 | 6.1 % |
+| stress-song | 512 | 0 | 2813 | 327.7 | 655.4 | 727.0 | 0 | 6.1 % |
+| stress-song | 512 | 2 | 2813 | 393.2 | 655.4 | 1842.0 | 0 | 6.1 % |
+
+What the tables say. Both projects stay far inside the budget: the p99 uses 6 to 12 % of the period at every buffer
+size, and the only callbacks that ran late are four outliers of the LP4 run. The cost per frame is flat across 64 to
+512 (a callback of 64 frames takes about 82 us at the median for `fx-demo`, one of 512 about 655 us), so a smaller
+buffer does not cost more per second of audio here. Two workers do not help these callbacks: the load rule
+(`load_gate.rs`) keeps the levels on the audio thread until it needs help, and with two workers the p99 and the max
+are a little higher (`fx-demo` 164 us against 131 us at 64 frames). The slowest callbacks (max) are single outliers of
+one to three milliseconds on a machine in use at the same time, mostly with workers 2; the four misses (one at 128
+frames of `fx-demo`, three at 64 frames of `stress-song`, all with two workers on the pinned process) are such
+outliers and do not repeat in the other rows. The harness thread spins between callbacks, so the numbers are lower
+bounds of a driver's thread (caches and clock stay warm); only a comparison between builds on this machine means
+something.
 
 ## Thin LTO for the shipped programs: measured, not adopted (2026-11-24)
 
@@ -1212,3 +1276,114 @@ Headless, the MCP screenshot path (`paint_in(Main, CpuCanvas)` + `finish()`), re
 | stress rack (rack view) | 47.4 / 48.1 | 57.1 / 62.7 |
 
 Recording (path-to-strip work while painting) dominates: 13-43 ms; rasterising 3-5 ms. The CPU canvas has no display-list cache (the GPU canvas caches by id and revision). Harness kept outside the repo: orchestration/spike56_frame_time.rs.
+## A headless edit loop for ten minutes (2026-11-24)
+
+`crates/mcp/tests/soak.rs` (see [docs/TESTING.md](../docs/TESTING.md#the-headless-soak-ignored-by-default)): the
+headless session on `fx-demo` runs a random action of twelve per iteration (add or remove a device, turn a knob,
+scroll and zoom, open and close a panel, select a track, undo and redo, save) with the undo history full from the
+start, and paints the main window on the CPU canvas every iteration. Test profile of the workspace (optimised, debug
+info), Windows, the machine above, no other load. About 12 to 20 iterations a second. Private memory is private bytes
+from `Get-Process`; the slope is a least squares line through the samples after the first 20 % of the run.
+
+One 600 second run (every seventh row of the table; the second 600 second run is within 15 % of it):
+
+```text
+   t(s)  iteration  resident(MiB)  private(MiB)  threads  undo-depth
+    0.3          1           35.5          16.1        5        1000
+   54.7        824           52.0          30.6        3        1000
+  109.1       1466           50.3          27.9        2        1000
+  164.0       2074           57.9          35.4        2         999
+  218.5       2786           60.0          37.8        2        1000
+  273.0       3483           61.8          41.8        2        1000
+  327.5       4119           65.9          45.7        4        1000
+  382.7       4740           68.6          46.6        4        1000
+  437.4       5455           68.3          45.9        2        1000
+  492.7       6055           71.5          49.8        2        1000
+  548.1       6621           74.1          52.1        2         996
+  595.5       7153           77.1          54.8        2        1000
+
+warm-up 120 s, 61 samples after it
+private memory slope after warm-up: +2.517 MiB/min
+private memory finish / end of warm-up: 1.592
+```
+
+| Run | Slope after warm-up | Finish / end of warm-up |
+|---|---|---|
+| 600 s, first | +2.885 MiB/min | 1.689 |
+| 600 s, second (the run above) | +2.517 MiB/min | 1.592 |
+| 120 s, first | +4.154 MiB/min | 1.269 |
+| 120 s, second | +5.383 MiB/min | 1.336 |
+| 120 s, third | +4.275 MiB/min | 1.214 |
+
+The runs above are from before the fix described below; the bounds of the test are now 2 MiB a minute and 2 times.
+
+**A climb that looked like a real leak (explained further down: the loop's own doing).** The private memory does not
+settle on the full loop: it goes from about 28 MiB at the end of the warm-up to about 53 MiB after ten minutes, 2.5 to
+2.9 MiB a minute, about 3 KB an iteration; the resident memory follows, the thread count stays at 2 to 5. The loop was
+run again with one group of actions at a time (100 or 150 seconds, same machine; slopes of this size are within the
+noise of a run that short):
+
+| Actions | Slope after warm-up |
+|---|---|
+| paint only (a track is selected) | +0.1 MiB/min (the table is flat within 0.3 MiB) |
+| devices (add, remove) | -0.1 MiB/min |
+| params | +0.3 MiB/min |
+| zoom | +0.9 MiB/min (table flat within 0.8 MiB) |
+| panels | +0.2 MiB/min |
+| undo, redo (of the filled history) | +1.2 MiB/min (table flat within 0.4 MiB) |
+| save | +0.4 MiB/min |
+| devices and save | +0.2 MiB/min |
+| devices and undo, redo | +2.0 MiB/min (150 s: from 22 to 27 MiB) |
+| zoom, panels, select, params | -0.01 MiB/min |
+
+The one combination that climbs on its own is adding and removing devices together with undo and redo; it also makes
+up about two thirds of the climb of the full loop. The other groups are flat within the noise of the run. The soak
+with `ATOMIK_SOAK_ACTIONS` found the combination; counting found the cause.
+
+**Where the climb came from (2026-11-25): the loop, not the app.** The table above is explained by the soak's own
+bookkeeping. The loop kept a list of the devices it had added and removed the oldest of them; an undo of a removal
+brings a device back that the list had forgotten, and an undo of an add takes one away that the list still held, so
+the rack grew without end: the document held 19 devices after 300 iterations of devices and undo and 106 after 12 000,
+and every device brings its own memory (and its undo steps). The history itself was never the cause: it stays at its
+limit of 1000 steps from the start, far below its byte budget. Counting, not guessing: a test of the shell without an
+audio device ran the same script and measured the heap the shell held after each 300 iterations (on one thread, with
+the allocator guard of the test kit). The net heap rose by 0.8 MiB over 40 blocks (12 000 iterations) with the rack
+growing from 19 to 106 devices, and was flat (a few KiB either way, no trend) with the rack at 21 to 22 devices once
+the loop read the added devices from the document. The counts showed no device, scope ring or cache outliving its
+device. The loop now does that, and fails when the rack ever holds more than six added devices.
+
+| Run (after the fix) | Slope after warm-up | Finish / end of warm-up |
+|---|---|---|
+| 600 s, all actions | +0.158 MiB/min | 1.001 |
+| 120 s, first | +0.531 MiB/min | 1.117 |
+| 120 s, second | +1.017 MiB/min | 1.039 |
+| 150 s, devices and undo only | +0.387 MiB/min | 1.031 |
+
+The private memory of the 600 second run stays between 28 and 29 MiB from the end of the warm-up to the finish, with
+21 to 22 devices in the rack. The bounds are now 2 MiB a minute and 2 times: about twice the worst short run.
+
+## Leak loops (2026-11-25)
+
+`crates/plugin-hostd/tests/leak_loops.rs` and `crates/mcp/tests/leak_loop.rs` (see
+[docs/TESTING.md](../docs/TESTING.md#the-leak-loops)): 200 cycles, read at cycle 10, 100 and 200 (test profile,
+Windows, the machine above, no other load). Threads, handles and children are asserted EQUAL at cycle 10 and 200;
+private bytes are reported only. Threads and handles count this process and everything below it; the thread count
+differs between shells because the first child of a shell starts threads that end with its sandbox.
+
+| Shell, 200 cycles | Cycle | Children | Threads | Handles | Private (MiB) |
+|---|---|---|---|---|---|
+| null plugin, one child per instance | 10 | 0 | 5 | 128 | 1.9 |
+| | 100 | 0 | 5 | 128 | 2.7 |
+| | 200 | 0 | 5 | 128 | 2.9 |
+| test CLAP plugin, one child per instance | 10 | 0 | 2 | 128 | 2.5 |
+| | 100 | 0 | 2 | 128 | 2.3 |
+| | 200 | 0 | 2 | 128 | 2.5 |
+| test CLAP plugin, in this process | 10 | 0 | 2 | 120 | 2.9 |
+| | 100 | 0 | 2 | 120 | 3.8 |
+| | 200 | 0 | 2 | 120 | 3.8 |
+| `session_open` / `session_close` on `fx-demo` | 10 | - | 5 | 137 | 8.2 |
+| | 100 | - | 5 | 137 | 19.4 |
+| | 200 | - | 5 | 137 | 20.0 |
+
+The session loop's private bytes rise by 11 MiB over the first 100 cycles and by 0.6 MiB over the next 100: the
+allocator and the caches fill and then stay. The counts of the others do not move.
