@@ -143,6 +143,21 @@ The guard only sees the current thread, and only code that runs inside the closu
 tests in `crates/render/tests/e2e.rs` run the CLI binary as a child process, which has no guard
 installed. The real demo patch is guarded separately by `render_slice_demo_is_allocation_free`.
 
+Allocation counts of a whole project:
+
+- **The stress projects with workers.**
+  [crates/render/tests/stress_alloc.rs](../crates/render/tests/stress_alloc.rs) builds the stress song
+  and the stress rack, starts an engine with zero and with two workers (each marked with
+  `forbid_on_this_thread`), renders 64 blocks of 256 frames as a warm-up and then ten seconds at 48 kHz
+  under `assert_no_alloc`, and asserts that the workers made no heap operation after the warm-up
+  (`worker_violations`). One test function runs all four renders: the worker counter is process-wide.
+- **The shell's frames.** [crates/app/tests/idle_frame_alloc.rs](../crates/app/tests/idle_frame_alloc.rs)
+  counts the heap operations of `Shell::frame_at` with `allocations_of`: an idle frame allocates nothing
+  (empty shell, a patch, MIDI mappings, analysers on screen or hidden). With the fx-demo project open the
+  console's meter feed still copies device keys, so that count (idle, and while the playhead moves, driven
+  through a fake backend whose engine the test renders) is bounded by the measured figure instead of
+  zero; the figures are in [perf/BASELINE.md](../perf/BASELINE.md).
+
 ## Fuzzing
 
 The readers of files and messages that come from outside have two kinds of test. The ordinary one

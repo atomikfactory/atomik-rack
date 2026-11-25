@@ -1276,6 +1276,24 @@ Headless, the MCP screenshot path (`paint_in(Main, CpuCanvas)` + `finish()`), re
 | stress rack (rack view) | 47.4 / 48.1 | 57.1 / 62.7 |
 
 Recording (path-to-strip work while painting) dominates: 13-43 ms; rasterising 3-5 ms. The CPU canvas has no display-list cache (the GPU canvas caches by id and revision). Harness kept outside the repo: orchestration/spike56_frame_time.rs.
+
+## Heap operations per audio block and per UI frame (2026-11-25)
+
+Counted with the testkit's allocator (`forbid_on_this_thread`, `assert_no_alloc`, `allocations_of`), 48 kHz.
+
+| What | Count |
+|---|---|
+| stress song, 10 s, blocks of 256, 0 and 2 workers, audio thread | 0 per block |
+| stress song, same, worker threads | 0 |
+| stress rack (100 devices, 300 cables), same | 0 per block, 0 on the workers |
+| idle shell frame, empty, patch open, MIDI mappings, analysers shown or hidden | 0 |
+| idle shell frame, fx-demo open (console meter feed) | 19 per frame (570 over 30 frames) |
+| playing shell frame, fx-demo, 60 frames a second, playhead moving | 38 per frame (2263 over 60 frames) |
+
+Where the fx-demo frames allocate: `console_readings_with` (the list of channel readings and a key clone per strip), `ConsoleView::set_meters`
+and `RackView::set_mix_meters` / `set_device_meter_values` (a key clone each to look the device up), and, only while playing,
+`tempo_lane::tempo_at`, which builds a tempo table for the playhead position. Not fixed here (UI code, not the audio path);
+`crates/app/tests/idle_frame_alloc.rs` bounds both counts.
 ## A headless edit loop for ten minutes (2026-11-24)
 
 `crates/mcp/tests/soak.rs` (see [docs/TESTING.md](../docs/TESTING.md#the-headless-soak-ignored-by-default)): the
