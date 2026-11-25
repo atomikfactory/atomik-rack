@@ -591,7 +591,7 @@ impl RoutingPlan {
             j % participants != 0
                 && matches!(
                     arena.nodes.get(slot_of(step)),
-                    Some(Some(node)) if !(idle_skip && node.skippable(&time))
+                    Some(Some(node)) if !(idle_skip && node.skippable(&time, step.stage))
                 )
         });
         if handing {
@@ -612,7 +612,8 @@ impl RoutingPlan {
                 // A pinned device stays home and runs in step 3, on the
                 // audio thread. Read each batch, so the answer may change at run time.
                 if slot.as_ref().is_none_or(|node| {
-                    node.device.pinned_to_audio_thread() || (idle_skip && node.skippable(&time))
+                    node.device.pinned_to_audio_thread()
+                        || (idle_skip && node.skippable(&time, step.stage))
                 }) {
                     continue;
                 }
