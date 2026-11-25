@@ -1193,3 +1193,29 @@ The one combination that climbs on its own is adding and removing devices togeth
 up about two thirds of the climb of the full loop. The other groups are flat within the noise of the run. Where the
 memory goes (the device instances the engine builds again, the undo steps, the scope rings, the paint caches) is not
 found; the soak is the tool to bisect it with, through `ATOMIK_SOAK_ACTIONS`.
+
+## Leak loops (2026-11-25)
+
+`crates/plugin-hostd/tests/leak_loops.rs` and `crates/mcp/tests/leak_loop.rs` (see
+[docs/TESTING.md](../docs/TESTING.md#the-leak-loops)): 200 cycles, read at cycle 10, 100 and 200 (test profile,
+Windows, the machine above, no other load). Threads, handles and children are asserted EQUAL at cycle 10 and 200;
+private bytes are reported only. Threads and handles count this process and everything below it; the thread count
+differs between shells because the first child of a shell starts threads that end with its sandbox.
+
+| Shell, 200 cycles | Cycle | Children | Threads | Handles | Private (MiB) |
+|---|---|---|---|---|---|
+| null plugin, one child per instance | 10 | 0 | 5 | 128 | 1.9 |
+| | 100 | 0 | 5 | 128 | 2.7 |
+| | 200 | 0 | 5 | 128 | 2.9 |
+| test CLAP plugin, one child per instance | 10 | 0 | 2 | 128 | 2.5 |
+| | 100 | 0 | 2 | 128 | 2.3 |
+| | 200 | 0 | 2 | 128 | 2.5 |
+| test CLAP plugin, in this process | 10 | 0 | 2 | 120 | 2.9 |
+| | 100 | 0 | 2 | 120 | 3.8 |
+| | 200 | 0 | 2 | 120 | 3.8 |
+| `session_open` / `session_close` on `fx-demo` | 10 | - | 5 | 137 | 8.2 |
+| | 100 | - | 5 | 137 | 19.4 |
+| | 200 | - | 5 | 137 | 20.0 |
+
+The session loop's private bytes rise by 11 MiB over the first 100 cycles and by 0.6 MiB over the next 100: the
+allocator and the caches fill and then stay. The counts of the others do not move.
