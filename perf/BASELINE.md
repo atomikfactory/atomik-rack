@@ -1357,9 +1357,11 @@ and `RackView::set_mix_meters` / `set_device_meter_values` (a key clone each to 
 `tempo_lane::tempo_at`, which built a tempo table for the playhead position. The meter feed now keeps its readings in a buffer
 (`AppCore::console_readings_into`) and hands the console the keys of `meter_points` by reference (`ConsoleView::set_meters_of`),
 the rack looks a device up by the borrowed text of its key (`RackView::local_name`), and the arrangement compiles its tempo
-once per song change (`tempo_lane::TempoCurve`). What remains while playing happens in five of the sixty frames, one per
-window of the device CPU readout (`AppCore::feed_cpu_loads` rebuilding each track's chain summary, about 140 heap operations
-a pass); `crates/app/tests/idle_frame_alloc.rs` bounds both counts (0 idle, 800 playing).
+once per song change (`tempo_lane::TempoCurve`). The device CPU readout used to allocate in five of the sixty playing frames (one per window, `AppCore::feed_cpu_loads`
+rebuilding each track's chain summary, about 140 heap operations a pass: 800 over sixty frames). It now keeps the
+chains, names and owner map and rebuilds them only when the document revision changes; every other pass refreshes the
+percentages and the order in place, so the playing frames allocate nothing either (800 before, 0 now);
+`crates/app/tests/idle_frame_alloc.rs` asserts 0 for both counts (the readout switched off, as it is by default).
 ## A headless edit loop for ten minutes (2026-11-24)
 
 `crates/mcp/tests/soak.rs` (see [docs/TESTING.md](../docs/TESTING.md#the-headless-soak-ignored-by-default)): the
