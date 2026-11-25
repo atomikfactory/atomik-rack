@@ -253,6 +253,12 @@ pub trait EngineSink {
     fn engine_error(&self) -> Option<String> {
         None
     }
+    /// Whether the audio stream is being opened: [`Self::has_engine`] is false until it is, and
+    /// the control calls made meanwhile are kept for the engine. False for a sink that opens
+    /// nothing.
+    fn audio_starting(&self) -> bool {
+        false
+    }
     /// [`atomik_engine::EngineHandle::preview_start`]: plays a file browser preview (live only;
     /// the engine fades a previous one out). Without an engine the stream is dropped, which its
     /// feed sees as abandoned.

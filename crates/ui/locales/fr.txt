@@ -3625,3 +3625,4 @@ Audio restarted after a fault in {name}; the device is bypassed => L'audio a red
 Audio restarted after a fault in {name}; it has no bypass and may fail again => L'audio a redémarré après une défaillance dans {name} ; il n'a pas de contournement et peut échouer à nouveau
 {what}. Audio restarts by itself when playback stops. => {what}. L'audio redémarrera de lui-même à l'arrêt de la lecture.
 {what}. Audio restarts by itself within a minute. => {what}. L'audio redémarrera de lui-même d'ici une minute.
+Starting audio... => Démarrage de l'audio...

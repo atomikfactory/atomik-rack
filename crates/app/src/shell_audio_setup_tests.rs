@@ -5,18 +5,16 @@ use super::*;
 use crate::audio_setup::{LAMP_FRAMES, Page};
 use crate::audio_setup_view::Kind;
 use crate::midi::{MidiLink, PortInput};
-use crate::session::{AudioBackend, MidiPort};
+use crate::session::{AudioBackend, MidiPort, Starter};
 use crate::settings::HostChoice;
 use crate::settings_dialog::Choice;
 use crate::sink::EngineSink;
 use crate::test_backend::{AcceptedBuffer, FakeAudio, FakeStream};
-use atomik_audio_io::{DeviceInfo, HostInfo, IoError, StreamSpec, Telemetry};
-use atomik_engine::{Engine, FrameClock};
+use atomik_audio_io::{DeviceInfo, HostInfo, IoError, Telemetry};
 use atomik_midi_io::MidiError;
 use atomik_ui::{Key, Modifiers, PointerButton};
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
-use std::sync::Arc;
 
 const BLOCK: usize = 256;
 
@@ -113,14 +111,9 @@ impl AudioBackend for Fake {
         Ok(self.0.audio.list_midi())
     }
 
-    fn start(
-        &self,
-        spec: &StreamSpec,
-        input_device: Option<&str>,
-        engine: Engine,
-        _clock: Arc<FrameClock>,
-    ) -> Result<FakeStream, IoError> {
-        self.0.audio.start(spec, input_device, engine)
+    fn starter(&self) -> Starter<FakeStream> {
+        let audio = self.0.audio.clone();
+        Box::new(move |spec, input_device, engine, _clock| audio.start(spec, input_device, engine))
     }
 
     fn open_midi(&self, name: &str, link: MidiLink) -> Result<FakeMidi, MidiError> {

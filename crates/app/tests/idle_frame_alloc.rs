@@ -6,22 +6,21 @@
 
 use atomik_app::AppCore;
 use atomik_app::midi::{MidiConnection, MidiLink};
-use atomik_app::session::{AudioBackend, LiveStream};
+use atomik_app::session::{AudioBackend, LiveStream, Starter};
 use atomik_app::session::{LiveSession, NullBackend};
 use atomik_app::settings::AudioSettings;
 use atomik_app::shell::{Shell, ShellOptions};
 use atomik_app::windows::WindowKind;
 use atomik_audio_io::{HostInfo, IoError, StreamInfo, StreamSpec, Telemetry};
-use atomik_engine::{Engine, FrameClock};
+use atomik_engine::Engine;
 use atomik_midi_io::MidiError;
 use atomik_model::{
     Command, DeviceKey, MapOptions, MidiMapCommand, MidiMapping, MidiSource, MidiTarget, SourceKind,
 };
 use atomik_ui::UiEvent;
 use atomik_ui::kurbo::Size;
-use std::cell::{Cell, RefCell};
-use std::rc::Rc;
-use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 
 atomik_testkit::install_alloc_guard!();
 
@@ -199,8 +198,8 @@ fn an_idle_frame_with_the_fx_demo_open_allocates_nothing() {
 /// block by block, so the transport moves exactly as far as the test lets it.
 #[derive(Clone, Default)]
 struct Bench {
-    engine: Rc<RefCell<Option<Engine>>>,
-    blocks: Rc<Cell<u64>>,
+    engine: Arc<Mutex<Option<Engine>>>,
+    blocks: Arc<AtomicU64>,
 }
 
 struct BenchStream {
@@ -211,7 +210,7 @@ struct BenchStream {
 impl LiveStream for BenchStream {
     fn telemetry(&self) -> Telemetry {
         Telemetry {
-            callbacks: self.bench.blocks.get(),
+            callbacks: self.bench.blocks.load(Ordering::Relaxed),
             buffer_frames: 256,
             ..Telemetry::default()
         }
@@ -222,7 +221,8 @@ impl LiveStream for BenchStream {
     fn stop(self) -> Result<Engine, IoError> {
         self.bench
             .engine
-            .borrow_mut()
+            .lock()
+            .expect("the bench engine lock")
             .take()
             .ok_or_else(|| IoError::HostUnavailable("the engine is gone".into()))
     }
@@ -240,14 +240,20 @@ impl AudioBackend for Bench {
         Ok(Vec::new())
     }
 
-    fn start(
-        &self,
-        spec: &StreamSpec,
-        _input_device: Option<&str>,
-        engine: Engine,
-        _clock: Arc<FrameClock>,
-    ) -> Result<BenchStream, IoError> {
-        *self.engine.borrow_mut() = Some(engine);
+    fn starter(&self) -> Starter<BenchStream> {
+        let bench = self.clone();
+        Box::new(move |spec, _input_device, engine, _clock| bench.start(spec, engine))
+    }
+
+    fn open_midi(&self, name: &str, _link: MidiLink) -> Result<MidiConnection, MidiError> {
+        Err(MidiError::PortNotFound(name.to_string()))
+    }
+}
+
+impl Bench {
+    /// Keeps the engine the session started where the test renders it.
+    fn start(&self, spec: &StreamSpec, engine: Engine) -> Result<BenchStream, IoError> {
+        *self.engine.lock().expect("the bench engine lock") = Some(engine);
         Ok(BenchStream {
             info: StreamInfo {
                 host: spec.host,
@@ -263,19 +269,13 @@ impl AudioBackend for Bench {
         })
     }
 
-    fn open_midi(&self, name: &str, _link: MidiLink) -> Result<MidiConnection, MidiError> {
-        Err(MidiError::PortNotFound(name.to_string()))
-    }
-}
-
-impl Bench {
     /// Renders `frames` frames of audio, the way the audio callback would.
     fn render(&self, frames: usize) {
-        let mut engine = self.engine.borrow_mut();
+        let mut engine = self.engine.lock().expect("the bench engine lock");
         let engine = engine.as_mut().expect("the engine runs");
         let (mut l, mut r) = (vec![0.0f32; frames], vec![0.0f32; frames]);
         engine.render(&[], &mut [l.as_mut_slice(), r.as_mut_slice()]);
-        self.blocks.set(self.blocks.get() + 1);
+        self.blocks.fetch_add(1, Ordering::Relaxed);
     }
 }
 

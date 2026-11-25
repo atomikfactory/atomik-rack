@@ -126,6 +126,14 @@ may break APIs and the patch and project formats.
   tempo edit, an undo or a new song is still picked up on the next frame. An idle frame of the fx-demo project
   allocates nothing; a playing one only in the frames of the device CPU readout (about five a second). What is shown
   does not change.
+- **A slow audio driver no longer freezes the window.** Opening and stopping the audio stream, which a driver can take
+  seconds to do (up to 5 s each, twice when a fixed buffer size is refused), now happens on a worker thread. The
+  window stays alive and the status line says "Starting audio..."; what you edit, play or set meanwhile is kept and
+  applied when the stream is up, and a new switch of device or buffer replaces one still opening. The timeouts, the
+  messages, the fall back to the last working device, the restart after a lost device or an engine fault, and the
+  handling of a driver that never lets go are as before, and quitting while the stream opens still returns within
+  ten seconds. A call made while the stream opens does not wait for the engine: the plugin devices of a project come
+  in once the stream is up, as after any restart of the audio. Rendered audio and projects do not change.
 
 ### Fixed
 - **Exporting a patch, a MIDI file or MIDI mappings, a tab or chord sheet, the device list or the diagnostics report

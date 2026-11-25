@@ -20,12 +20,17 @@
 //! reports it and stays lost until it is rebuilt. [`FakeAudio::set_telemetry`] pins the figures
 //! instead (the stream then reports exactly that value on every read), for a test that only
 //! needs one number.
+//!
+//! The one thing that waits is a call the test asked to hold ([`FakeAudio::hold_starts`],
+//! [`FakeAudio::hold_stops`]): it blocks on a condition until [`Hold::release`], never on a
+//! clock, so the code that runs a driver call on a worker thread can be tested with a driver that
+//! is slow for exactly as long as the test says.
 
 use atomik_audio_io::{
     DeviceInfo, HostInfo, HostKind, IoError, StreamInfo, StreamSpec, Telemetry, XrunEvent,
 };
 use atomik_engine::Engine;
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
 /// The device a stream opens when its spec names none, unless [`FakeAudio::set_default_output`].
@@ -57,6 +62,41 @@ pub struct StartRecord {
     pub linger: u64,
 }
 
+/// A hold on the calls of the fake that block in a real driver ([`FakeAudio::hold_starts`],
+/// [`FakeAudio::hold_stops`]): while it is closed, a call waits (on a condition, never on a
+/// clock) until [`Hold::release`]. Clones share one hold.
+#[derive(Clone, Default)]
+pub struct Hold(Arc<(Mutex<HoldState>, Condvar)>);
+
+#[derive(Default)]
+struct HoldState {
+    released: bool,
+    waiting: usize,
+}
+
+impl Hold {
+    /// How many calls are waiting on the hold now.
+    pub fn waiting(&self) -> usize {
+        lock(&self.0.0).waiting
+    }
+
+    /// Lets every waiting call go, and every later one pass at once.
+    pub fn release(&self) {
+        lock(&self.0.0).released = true;
+        self.0.1.notify_all();
+    }
+
+    /// Blocks the caller until the hold is released.
+    fn pass(&self) {
+        let mut state = lock(&self.0.0);
+        state.waiting += 1;
+        while !state.released {
+            state = self.0.1.wait(state).unwrap_or_else(PoisonError::into_inner);
+        }
+        state.waiting -= 1;
+    }
+}
+
 /// Shapes a telemetry value after the fake built it: `(reads so far, telemetry)`.
 type Shape = Box<dyn FnMut(u64, &mut Telemetry) + Send>;
 
@@ -84,6 +124,9 @@ struct State {
     accepted: AcceptedBuffer,
     fail_next_start: Option<IoError>,
     fail_starts: Option<IoError>,
+    fail_stops: Option<IoError>,
+    start_hold: Option<Hold>,
+    stop_hold: Option<Hold>,
     fail_list: Option<IoError>,
     broken: Option<(String, Option<IoError>)>,
     fail_input: bool,
@@ -158,6 +201,9 @@ impl FakeAudio {
             accepted: AcceptedBuffer::Refused,
             fail_next_start: None,
             fail_starts: None,
+            fail_stops: None,
+            start_hold: None,
+            stop_hold: None,
             fail_list: None,
             broken: None,
             fail_input: false,
@@ -274,6 +320,32 @@ impl FakeAudio {
     /// Every start fails with `error` until [`FakeAudio::start_works`].
     pub fn fail_starts(&self, error: IoError) {
         self.state().fail_starts = Some(error);
+    }
+
+    /// Every stream stop fails with `error` (a driver that never released the callback: the
+    /// engine is not handed back) until [`FakeAudio::stop_works`].
+    pub fn fail_stops(&self, error: IoError) {
+        self.state().fail_stops = Some(error);
+    }
+
+    /// Stops work again.
+    pub fn stop_works(&self) {
+        self.state().fail_stops = None;
+    }
+
+    /// Every start blocks, as a slow driver does, until the returned hold is released. The call
+    /// is counted and scripted as usual once it goes on.
+    pub fn hold_starts(&self) -> Hold {
+        let hold = Hold::default();
+        self.state().start_hold = Some(hold.clone());
+        hold
+    }
+
+    /// Every stop blocks until the returned hold is released.
+    pub fn hold_stops(&self) -> Hold {
+        let hold = Hold::default();
+        self.state().stop_hold = Some(hold.clone());
+        hold
     }
 
     /// Starts work again.
@@ -583,6 +655,11 @@ impl FakeAudio {
         input_device: Option<&str>,
         engine: Engine,
     ) -> Result<FakeStream, IoError> {
+        // Waits outside the state's lock: the test reads and scripts the fake meanwhile.
+        let hold = self.state().start_hold.clone();
+        if let Some(hold) = hold {
+            hold.pass();
+        }
         let mut state = self.state();
         state.start_calls.push(spec.clone());
         if let Some(error) = state.fail_next_start.take() {
@@ -808,10 +885,21 @@ impl FakeStream {
 
     /// Stops the stream and hands the engine back.
     pub fn stop(self) -> Result<Engine, IoError> {
+        let hold = self.audio.state().stop_hold.clone();
+        if let Some(hold) = hold {
+            hold.pass();
+        }
         let engine = lock(&self.core.engine).take();
         let mut state = self.audio.state();
         state.live.retain(|c| !Arc::ptr_eq(c, &self.core));
         state.stops += 1;
+        if let Some(error) = state.fail_stops.clone() {
+            // The backend kept the callback: the engine is not handed back (it is dropped with
+            // the stream here, which the real one never does).
+            drop(state);
+            drop(engine);
+            return Err(error);
+        }
         match engine {
             Some(engine) => {
                 state.stop_frames.push(engine.host_frames());

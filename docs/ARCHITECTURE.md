@@ -3236,6 +3236,28 @@ when the open input and output are different devices, since their clocks drift a
 like the output is the default input, so one interface for both is what opens unless another input
 is chosen.
 
+**Opening and stopping the stream.** The blocking calls of the backend, `start` (through
+`AudioBackend::starter`, a value the worker owns) and `LiveStream::stop`, run on a worker thread
+(`audio-open`), one job at a time per session: a job stops the streams a reset or a shutdown set aside, then
+opens the stream a reset asked for, with its output-only retry and its fall back to the last working
+configuration, and answers with the stopped engines and the open stream, the engine's handle, its live-note
+sender and the frame clock (or the error). The engine of an attempt is made on the worker, since a retry needs a
+new one. A session is *off* (no stream, nothing in flight; the sink calls are ignored), *starting* (a job opens
+the stream or the request waits for the job in flight; `has_engine` is false, `AudioStatus::starting` is set and
+the status line says "Starting audio...") or *running*. A reset while starting replaces the waiting request (last
+wins) and counts as a new generation: an open that answers for an older one is stopped, never attached. The
+control calls made while there is no engine are kept as an ordered list of operations (`Op`; the newest routing
+and the newest song replace the older ones, the newest value of each parameter goes to `held_params`) and are
+sent, as far as `EngineHandle::control_room` allows, when the stream is attached and by every poll after that;
+until the list is empty a new call goes behind it. The worker's answer is taken by `LiveSession::poll_at`
+(the shell polls about four times a second); the engine a stopped stream gave back is dropped there, on the UI
+thread. A job that opens first waits for the streams other sessions are stopping (a process-wide counter), so
+two songs that hand the audio over never fight for the device. `StartMode::Blocking` (the default: headless
+runs and the tests) waits for the job inside `reset`; the windowed app uses `StartMode::Background`, and the
+shell keeps what depends on the outcome (saving the settings, the notice of a lost device) in `AfterStart` until
+the answer is there. `shutdown` (a quit) waits for the worker for at most `QUIT_WAIT`, then leaves a job that
+does not answer behind and forgets the streams that waited for it.
+
 **Settings that do not open.** `LiveSession` remembers the device configuration that last opened a
 stream (`device_loss.last_good` in `settings.json`). When the current one fails to open, at
 start-up or in Apply, the session opens the remembered one instead and `Shell` says so;
