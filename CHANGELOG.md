@@ -8,6 +8,8 @@ may break APIs and the patch and project formats.
 
 ## [Unreleased]
 
+## [0.5.0-rc.3] - 2026-11-25
+
 ### Added
 - **Performance setting: Auto, Full or Low power.** The Interface tab has a new Performance row. Low power draws every
   window at 30 frames a second instead of 60, renders each main window at three quarters of its size and stretches it
