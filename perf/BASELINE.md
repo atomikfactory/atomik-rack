@@ -1556,3 +1556,24 @@ params   before (all built at start)   at start, after   after 5 plugins are rea
 descriptor read is the same one. A catalogue of 132 plugins with 500 parameters each holds 7.3 MiB less until something
 reads a descriptor. What reads one: a plugin placed in a project (or in the rack), a project that names the plugin,
 the stand-in of a missing plugin, a layout change reported by a live plugin. Nothing on the audio thread does.
+
+## A skipped device is not zeroed again (2026-11-25)
+
+The strips of the section above, `cargo bench -p atomik-render --bench render_batch -- "idle/(channel|bus)"`, skip on,
+256 batches of twenty strips, median of 21 samples (the machine was busier than for the earlier rows: the skip-off
+rows read 6.7 to 7.7 ms against 5.1 to 5.6 then, so the before figures are re-measured on the same tree and run).
+Before is the tree this change started from, after has `Node::clean` (a skipped stage's sockets are not zeroed
+again) and the silence test over a list of the inputs.
+
+| row | before, runs | after, runs |
+|---|---|---|
+| 20 idle channel strips | 2.694 ms, 2.703 ms, 2.145 ms, 2.173 ms | 1.058 ms, 1.146 ms, 1.195 ms |
+| 20 idle bus strips | 2.822 ms, 3.497 ms, 2.927 ms, 2.722 ms | 1.521 ms, 1.293 ms, 1.672 ms |
+| silent-strips-64, workers 0 | 433.9 ms, 468.1 ms | 345.9 ms, 385.0 ms |
+| console-64, workers 0 (busy, must not rise) | 1.661 s, 1.617 s | 1.580 s, 1.577 s |
+
+That is 0.21 to 0.23 us a batch per idle channel strip (0.42 to 0.53 before) and 0.25 to 0.33 us per bus strip
+(0.53 to 0.68 before); the busy row did not rise. The
+time went to the engine's gather (forty sockets of 64 samples zeroed, and for every output a scan of the cabled-input
+list to decide whether to zero it) and to the silence test walking all the sockets; the copies of a skipped node's
+outputs to their slots and the meter publication remain.
