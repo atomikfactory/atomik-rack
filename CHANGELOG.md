@@ -9,6 +9,19 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Save Clip to Library takes audio clips.** The one selected audio clip is saved to the Clips section as an audio
+  loop: a 32-bit float WAV of the span the clip plays, unprocessed and at the clip's gain, named after its track and
+  bar. The section already lists audio and the file browser previews it (Space, or on selection with auto-preview), so
+  a saved audio clip is previewed like any audio file. A clip longer than two minutes is refused. No library format
+  changes.
+- **Library previews follow the keyboard.** While a patch, container or effect item is the one selected row of the file
+  browser, the notes of a MIDI keyboard and of the Piano Keys strip play through it (an effect through a built-in
+  synth) instead of through the selected track, and go back to the track when the selection leaves it. It starts after
+  the selection has rested, plays about 30 ms behind the keys, never records and changes nothing in the song. Space
+  still plays the item's built-in phrase.
+- **Previews of plugin presets.** Selecting a preset in the preset list of a plugin of the rack plays it from the
+  keyboard through a preview instance of the plugin (loaded in the background with `Loading` in the status line, kept
+  while you browse the presets of that plugin, never in the rack or the document).
 - **A glow on the meters and the playhead, as part of a theme.** A theme file can have an optional `glow` section
   (on or off, the colour of what glows or one colour of its own, a strength from 0 to 1 and a reach in pixels). It
   draws a soft halo behind the level meters (the mixer channels, the track meters of the arrangement, the recording

@@ -145,6 +145,14 @@ impl MidiLink {
     /// # Errors
     /// [`EngineError::QueueFull`] when the live queue is full.
     pub fn push(&self, note: ScheduledNote) -> Result<(), EngineError> {
+        // A note for the library preview that has the keyboard goes to its worker, not the engine.
+        if (note.device, note.socket) == crate::preview_notes::PREVIEW_TARGET {
+            return if self.target.preview().push(note.kind) {
+                Ok(())
+            } else {
+                Err(EngineError::QueueFull)
+            };
+        }
         let ceiling = self.ceiling(timing::now());
         let mut feed = self.feed.lock().unwrap_or_else(PoisonError::into_inner);
         feed.push(note, ceiling)
@@ -753,6 +761,32 @@ mod tests {
             Arc::new(ControlHub::new()),
         );
         (link, tap, target)
+    }
+
+    #[test]
+    fn notes_for_the_library_preview_go_to_its_queue_and_the_off_follows_the_on() {
+        use crate::preview_notes::PREVIEW_TARGET;
+        let (link, tap, target) = link_with_tap();
+        let mut input = PortInput::new("Example", link.clone());
+        tap.set_armed(&[DeviceInstanceId(3)]);
+        target.set(Some(PREVIEW_TARGET));
+        input.on_message(&[0x90, 60, 100]);
+        // The target moves back to the track while the key is held: the off goes where the on went.
+        target.set(Some((DeviceInstanceId(3), SocketId(9))));
+        input.on_message(&[0x80, 60, 0]);
+        input.on_message(&[0x90, 62, 100]);
+        let preview = target.preview();
+        assert!(matches!(preview.pop(), Some(NoteKind::On { key: 60, .. })));
+        assert!(matches!(preview.pop(), Some(NoteKind::Off { key: 60 })));
+        assert!(preview.pop().is_none(), "the next note went to the track");
+        let mut recorded = Vec::new();
+        tap.drain(&mut recorded);
+        assert_eq!(
+            recorded.len(),
+            1,
+            "the preview is never recorded: {recorded:?}"
+        );
+        assert_eq!(recorded[0].device, DeviceInstanceId(3));
     }
 
     #[test]

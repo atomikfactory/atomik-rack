@@ -110,6 +110,7 @@ pub mod stress;
 pub mod surface;
 pub mod tab_file;
 pub mod tap_tempo;
+pub mod preview_notes;
 pub mod target;
 #[cfg(test)]
 pub(crate) mod test_backend;

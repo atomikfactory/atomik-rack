@@ -173,3 +173,103 @@ fn the_reader_ends_when_the_stream_is_let_go_of() {
 
 /// More frames than a preview ring holds.
 const PREVIEW_FRAMES: usize = atomik_engine::PREVIEW_RING_FRAMES;
+
+// ------------------------------------------------------------------ audio clips in the library
+
+/// The library folder next to the test's audio and the id of its audio clip.
+fn library_for(
+    c: &mut AppCore<RecordingSink>,
+    dir: &Path,
+) -> (std::path::PathBuf, atomik_model::ClipId) {
+    let library = dir.join("Library");
+    c.set_library_root(Some(library.clone()));
+    let id = c
+        .doc()
+        .song
+        .tracks
+        .iter()
+        .flat_map(|t| t.lanes.iter())
+        .flat_map(|l| l.clips.iter())
+        .find(|clip| clip.content.is_audio())
+        .map(|clip| clip.id)
+        .expect("the import made an audio clip");
+    c.arrangement_mut().set_selected_clips(&[id]);
+    (library, id)
+}
+
+#[test]
+fn an_audio_clip_is_saved_to_the_library_as_an_audio_loop_and_previews() {
+    let (mut c, _, dir) = core_with_asset();
+    let (library, _) = library_for(&mut c, &dir);
+    let before = atomik_model::save_project(c.doc());
+    c.save_clip_to_library();
+    assert_eq!(
+        atomik_model::save_project(c.doc()),
+        before,
+        "saving is not an edit"
+    );
+    let folder = library.join("Clips");
+    let files: Vec<_> = std::fs::read_dir(&folder)
+        .unwrap()
+        .flatten()
+        .map(|e| e.path())
+        .collect();
+    let [saved] = files.as_slice() else {
+        panic!("{files:?}")
+    };
+    assert_eq!(saved.extension().and_then(|e| e.to_str()), Some("wav"));
+    assert_eq!(
+        atomik_library::classify(saved, false),
+        Some(atomik_library::FileKind::Audio(
+            atomik_library::AudioFormat::Wav
+        )),
+        "the library lists it in Clips like any audio loop"
+    );
+    let data = atomik_audio_file::read_wav_f32(saved).expect("a readable WAV");
+    assert_eq!(data.sample_rate, 48_000);
+    assert_eq!(data.frames(), 96_000, "the whole clip");
+    assert!(
+        (data.channels[0][50] - 0.5).abs() < 1e-6,
+        "the clip's own samples"
+    );
+    // The saved clip previews through the file browser's path and stops with it.
+    c.browse(atomik_ui::BrowseAction::Preview(saved.clone()));
+    assert!(c.sink().preview_active());
+    c.browse(atomik_ui::BrowseAction::StopPreview);
+    assert!(!c.sink().preview_active());
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn an_audio_clip_is_saved_at_its_gain() {
+    let (mut c, _, dir) = core_with_asset();
+    let (library, id) = library_for(&mut c, &dir);
+    let mut clip = c
+        .doc()
+        .song
+        .clip(id)
+        .map(|(_, _, clip)| clip.clone())
+        .unwrap();
+    let atomik_model::ClipContent::Audio(a) = &mut clip.content else {
+        panic!("an audio clip")
+    };
+    a.gain_db = -6.0;
+    c.apply_command(atomik_model::Command::Song(
+        atomik_model::SongCommand::SetClipContent {
+            id,
+            content: clip.content.clone(),
+            merge: None,
+        },
+    ))
+    .unwrap();
+    c.save_clip_to_library();
+    let saved = std::fs::read_dir(library.join("Clips"))
+        .unwrap()
+        .flatten()
+        .next()
+        .expect("a file")
+        .path();
+    let data = atomik_audio_file::read_wav_f32(&saved).unwrap();
+    assert!((data.channels[0][50] - 0.5 * 0.501_187).abs() < 1e-4);
+    let _ = std::fs::remove_dir_all(dir);
+}

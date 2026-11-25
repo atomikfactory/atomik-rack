@@ -8189,7 +8189,7 @@ impl<B: AudioBackend> Shell<B> {
                 !sel.is_empty() && sel.iter().all(|i| notes.get(*i).is_some_and(|n| n.muted))
             },
             save_clip: matches!(clips.as_slice(), [id]
-                if doc.song.clip(*id).is_some_and(|(_, _, c)| c.content.is_notes())),
+                if doc.song.clip(*id).is_some_and(|(_, _, c)| c.content.is_notes() || c.content.is_audio())),
             open_clip: clips.iter().any(|id| {
                 doc.song
                     .clip(*id)
