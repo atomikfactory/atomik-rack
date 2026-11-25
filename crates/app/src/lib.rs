@@ -51,6 +51,7 @@ pub mod export_presets;
 pub mod export_worker;
 pub mod factory;
 pub(crate) mod fault_restart;
+pub mod focus_follows;
 pub mod freeze_worker;
 pub mod guide;
 pub mod help;

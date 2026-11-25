@@ -7232,18 +7232,36 @@ winit and GPU code is not (it needs a window and a GPU).
 [`Workspace`](../crates/app/src/workspace.rs) is the application layer above the shells. It holds the open
 songs (`DocId`, ids are not reused in a run), the one calls are routed to (`Workspace::select`; everything that
 is not a workspace method reaches that song's `Shell` through `Deref`, so the platform layer reads like the
-single-song app) and the one with the **play focus**.
+single-song app), the one with the **play focus** and the one with the **input focus**.
 
-- **Audio is unique.** Only the song with the play focus has a running stream, MIDI inputs and control surfaces;
-  every other song runs on a `LiveSession` that is switched off (the state of a song whose stream failed to
-  open: sink calls are accepted and ignored, the status line says "another song has the audio"). `Workspace::focus`
-  gives the audio to another song: `Shell::release_audio` shuts the old song's stream, inputs and surfaces and
-  stops its transport, then `Shell::claim_audio` hands the new song the settings the old one ran with, enables its
+- **Audio is unique.** Only the song with the play focus has a running stream; every other song
+  runs on a `LiveSession` that is switched off (the state of a song whose stream failed to
+  open: sink calls are accepted and ignored, the status line says "another song has the audio").
+  `Workspace::set_play_focus` gives the audio to another song: `Shell::release_audio` shuts the old song's
+  stream and stops its transport, then `Shell::claim_audio` hands the new song the settings the old one ran
+  with, enables its
   session and rebuilds its engine (`AppCore::rebuild_engine`), as a change of the devices does. The old stream is
   closed before the new one opens, so a device that cannot be shared works and no song leaks a note into the
   other. Plugin instances stay loaded in the song that owns them; closing a song shuts its plugin host down.
-- **What a click does.** Giving a window the OS focus gives its song the play focus, so the keys, the MIDI
-  keyboard and the audio follow the window being used. The input focus and the play focus are one for now.
+- **Play focus and input focus.** The play focus is the song that owns the stream; the input focus is the song
+  that takes the live MIDI keyboard, the MIDI controllers and the control surfaces. Both are app state: they are
+  not saved, and the project and its format do not know them. Each song's Audio I/O panel shows two buttons
+  on its plate, a speaker (Play) and a keyboard (Input), lit for the foci the song has; a click sends
+  `UiAction::TakeFocus`, the shell turns it into `ShellRequest::TakePlayFocus` or `TakeInputFocus`, and the
+  workspace answers with `Workspace::set_play_focus` or `set_input_focus`. **Live notes:** the engine that
+  plays a live note is the one of the song that owns the stream, and the notes go to the tracks of the song
+  that took them, so a keyboard cannot play into another song's engine without a second path from the MIDI
+  thread into it. The inputs are therefore held only while one song has both foci: `LiveSession::set_midi_held`
+  opens or closes the enabled MIDI ports of a running stream without touching the engine, and
+  `Shell::set_input_focus` (the surfaces too, in `configure_surface`) calls it with "input focus and not
+  silent". A keyboard whose song has no stream is closed; it opens as that song takes the audio, or when the
+  keyboard comes back to the song that plays. The settings keep the list of inputs either way.
+- **What a click does.** Giving a window the OS focus makes its song the song you work in (`Workspace::focus`:
+  calls are routed to it) and the setting Workflow > **Focus follows the active song** (`FocusFollows`, saved in
+  `workflow.json` as `focus_follows`: Both, the default, Play only, Input only or None) says which foci go with
+  it. With Both the audio and the MIDI keyboard follow the window being used, as before. A new song takes the
+  foci the setting names; closing the song that had a focus hands it to the song next to it. Next Song and
+  Previous Song count from the song you work in.
 - **Commands.** Window > New Song Window (`window.new_song`), Open Song in New Window (`window.open_song`), Close
   Song Window, Next Song, Previous Song and the list of open songs (`window.song`, at most nine) are shell
   requests (`ShellRequest::NewSong`, `PickOpenSong`, `CloseSong`, `ShowSong`) that only a workspace answers
@@ -7299,17 +7317,22 @@ single-song app) and the one with the **play focus**.
   lane kind), devices at the rack slot there (`RackView::drop_slot_at`), tracks after the track there. Files
   dragged out of the file browser follow the same hit test (`Workspace::files_to_song`,
   `Shell::foreign_file_drag`), so a patch, a container or a device row of the shared library drops on whichever
-  song is under the pointer, with the hover outline there. Both go through the ordinary paste commands, so the
-  audio fetch and the rate conversion above apply and the drop is one undo step.
+  song is under the pointer, with the hover outline there. While clips or devices are still being dragged, the
+  same dispatch calls `Workspace::drag_over_song` on every pointer event over another song's window: what the
+  drag carries is worked out once (`Shell::song_drag_carries`, `Carried`) and the target draws the marker files
+  show at the place the drop would use, `ArrangementView::carried_clips_hover` (the lane marker over a note
+  lane that takes the clips, the track marker over an audio track, the new-track marker elsewhere in the track
+  area) and `RackView::carried_devices_hover` (the drop line at the slot `drop_slot_at` gives). Tracks show no
+  marker. `Workspace::drag_left_song` takes it away when the drag leaves, ends or is dropped. Both go through the
+  ordinary paste commands, so the audio fetch and the rate conversion above apply and the drop is one undo step.
 - **Recovery of the other songs.** A song next to the first keeps its snapshots in `recovery/song-<n>` with its own
   session marker. At start, `crashed_song_snapshots` looks in those folders for a marker whose process is gone
   (and removes it, so the copies are offered once) and `Workspace::recover_songs` opens the newest snapshot of
   each as an unsaved song in a window of its own, up to eight, without moving the audio or the focus; a message
   in the first song says how many came back. The first song's own copy is offered by its banner as before.
-- **Not done yet.** Separate Input Focus and Play Focus buttons on the interface panel (the song that has the
-  stream also has the MIDI inputs, so the two are one today: they need a way to feed a song's live notes into the
-  engine of another), a drop marker in the window under the pointer while clips or devices (not files) are dragged
-  over another song, and a session of the MCP server with several songs (it stays one song).
+- **Not done yet.** Feeding one song's live notes into the engine of another (a keyboard with the input focus
+  in a song that does not play is silent, see above), and a session of the MCP server with several songs (it
+  stays one song).
 
 ## 6n. Logs, crash reports and diagnostics
 

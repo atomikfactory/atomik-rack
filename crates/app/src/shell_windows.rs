@@ -1039,6 +1039,22 @@ impl<B: AudioBackend> Shell<B> {
         data: crate::clipboard::ClipboardData,
     ) {
         self.repaint = true;
+        self.song_drag_left();
+        let Some((pane, at)) = self.song_drop_spot(window, pos) else {
+            return self.notify("Drop on the arrangement or the rack");
+        };
+        if let Err(message) = self.core.drop_carried(pane, at, data)
+            && !message.is_empty()
+        {
+            self.notify(message);
+        }
+    }
+
+    /// The pane a drag from another song lands in at `pos` of `window` and the point in that
+    /// pane's own coordinates (the arrangement takes the window's, the rack its view's); the
+    /// editors that sit where the arrangement is count as the arrangement. `None` over anything
+    /// else.
+    fn song_drop_spot(&self, window: WindowKind, pos: Point) -> Option<(Pane, Point)> {
         let pane = match self.hit_in(window, pos) {
             Some(Ok(pane @ Pane::Rack)) => pane,
             Some(Ok(
@@ -1048,9 +1064,8 @@ impl<B: AudioBackend> Shell<B> {
                 | Pane::ChordSheet
                 | Pane::ChordTrainer,
             )) => Pane::Arrangement,
-            _ => return self.notify("Drop on the arrangement or the rack"),
+            _ => return None,
         };
-        // The rack takes positions of its own view.
         let at = match pane {
             Pane::Rack => {
                 let origin = self
@@ -1060,11 +1075,55 @@ impl<B: AudioBackend> Shell<B> {
             }
             _ => pos,
         };
-        if let Err(message) = self.core.drop_carried(pane, at, data)
-            && !message.is_empty()
-        {
-            self.notify(message);
-        }
+        Some((pane, at))
+    }
+
+    /// What the drag of the selection in this song carries, for the markers of the song it is
+    /// over ([`Self::song_drag_over`]): `None` when no such drag is in progress.
+    pub fn song_drag_carries(&self) -> Option<Carried> {
+        let pane = self.song_drag()?;
+        Some(match self.core.carried_data(pane)? {
+            crate::clipboard::ClipboardData::Clips(clips) => Carried::Clips {
+                notes: clips.entries.iter().all(|e| e.lane.is_notes()),
+                audio: clips.entries.iter().all(|e| e.lane.is_audio()),
+            },
+            crate::clipboard::ClipboardData::Devices(_) => Carried::Devices,
+            _ => Carried::Tracks,
+        })
+    }
+
+    /// Something another song is dragging (`carried`) is over `pos` of `window` here, and has
+    /// not been let go: the pane under it draws the marker it draws for files, at the place the
+    /// drop would use: the lane and snapped tick for clips, the drop line at the rack slot for
+    /// devices. Tracks, and anything over a pane that takes nothing of the kind, show none.
+    pub fn song_drag_over(&mut self, window: WindowKind, pos: Point, carried: Carried) {
+        let spot = self.song_drop_spot(window, pos);
+        let rack = spot
+            .filter(|(pane, _)| *pane == Pane::Rack && carried == Carried::Devices)
+            .map(|(_, at)| at);
+        let lanes = spot
+            .filter(|(pane, _)| *pane == Pane::Arrangement)
+            .map(|(_, at)| at);
+        let (notes, audio) = match carried {
+            Carried::Clips { notes, audio } => (notes, audio),
+            _ => (false, false),
+        };
+        let clips = lanes.filter(|_| matches!(carried, Carried::Clips { .. }));
+        self.core.view_mut().carried_devices_hover(rack);
+        self.core
+            .arrangement_mut()
+            .carried_clips_hover(clips, notes, audio);
+        self.repaint = true;
+    }
+
+    /// What another song was dragging over this one has left, was dropped or was cancelled:
+    /// the markers go.
+    pub fn song_drag_left(&mut self) {
+        self.core.view_mut().carried_devices_hover(None);
+        self.core
+            .arrangement_mut()
+            .carried_clips_hover(None, false, false);
+        self.repaint = true;
     }
 
     /// The files of the drag out of the file browser that is in progress (not cancelled).
