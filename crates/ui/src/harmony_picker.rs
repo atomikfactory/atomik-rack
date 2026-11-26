@@ -632,18 +632,21 @@ impl HarmonyPickerView {
                 return help(
                     self.field_rect(),
                     "The name the quantizers list this scale by",
+                    "modal.harmony_picker.scale_name",
                 );
             }
             if (0..12u8).any(|pc| self.root_rect(pc).contains(pos)) {
                 return help(
                     self.root_rect(0).union(self.root_rect(11)),
                     "Turn this note of the scale on or off",
+                    "modal.harmony_picker.scale_notes",
                 );
             }
             if (0..12u8).any(|pc| self.fill_root_rect(pc).contains(pos)) {
                 return help(
                     self.fill_root_rect(0).union(self.fill_root_rect(11)),
                     "The root to fill the notes from",
+                    "modal.harmony_picker.fill_root",
                 );
             }
             if (0..self.scale_kinds().len()).any(|i| self.scale_rect(i).contains(pos)) {
@@ -651,6 +654,7 @@ impl HarmonyPickerView {
                     self.scale_rect(0)
                         .union(self.scale_rect(self.scale_kinds().len() - 1)),
                     "Fill the notes with this scale on the fill root",
+                    "modal.harmony_picker.fill_scale",
                 );
             }
         }

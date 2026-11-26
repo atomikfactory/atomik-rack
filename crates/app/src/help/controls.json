@@ -798,9 +798,25 @@
     "title": "Channels",
     "text": "Keeps the channels of the project's output, or mixes every channel into one before the file is written."
   },
+  "modal.export.ceiling": {
+    "title": "Ceiling",
+    "text": "The true-peak ceiling the limiter keeps the export under when a loudness target is set: -1 dBTP, -2 dBTP or a value you type."
+  },
+  "modal.export.custom_ceiling": {
+    "title": "Custom ceiling",
+    "text": "Type a true-peak ceiling from -9.0 to 0.0 dBTP. Enter keeps it, Esc leaves the one before."
+  },
+  "modal.export.custom_lufs": {
+    "title": "Custom loudness",
+    "text": "Type a loudness target from -40.0 to -5.0 LUFS (a number without a sign is read as negative). Enter keeps it, Esc leaves the one before."
+  },
   "modal.export.loudness": {
     "title": "Loudness",
     "text": "Leaves the level as the song has it, brings it to a loudness target with a limiter that keeps the peaks under -1 dBTP, or only reports the distance to a target without changing anything."
+  },
+  "modal.export.stem_gain": {
+    "title": "Stem gain",
+    "text": "Same gain for all gives every stem the one gain that brings the mix to the target, so the stems still add up to the mix (no limiter). Each stem brings every stem to the target on its own, with the limiter."
   },
   "modal.export.extra": {
     "title": "Also write an MP3",
@@ -1334,9 +1350,29 @@
     "text": "Type a chord such as Am7, F#m7b5, C/G, Bbmaj7 or Dsus4.",
     "more": "Key and chords"
   },
+  "modal.harmony_picker.fill_root": {
+    "title": "Fill root",
+    "text": "The root the scale buttons fill the notes from.",
+    "more": "Key and chords"
+  },
+  "modal.harmony_picker.fill_scale": {
+    "title": "Fill with a scale",
+    "text": "Fills the notes with this scale on the fill root. You can still turn single notes on or off after.",
+    "more": "Key and chords"
+  },
   "modal.harmony_picker.remove": {
     "title": "Remove",
     "text": "Takes the song key away, or deletes the key change or the chord you are editing. It is one undo step.",
+    "more": "Key and chords"
+  },
+  "modal.harmony_picker.scale_name": {
+    "title": "Scale name",
+    "text": "The name the CV quantizers list this song scale by. Renaming it keeps every quantizer that uses it.",
+    "more": "Key and chords"
+  },
+  "modal.harmony_picker.scale_notes": {
+    "title": "Scale notes",
+    "text": "Turns this note of the scale on or off. Every quantizer that uses the scale follows.",
     "more": "Key and chords"
   },
   "modal.stems.stem": {
