@@ -328,7 +328,17 @@ impl TrackPanelView {
             Part::GrooveNext => "Next groove: none, the built-in ones, then the song's",
             Part::Amount => "How much of the groove plays (the notes themselves stay as they are)",
         };
-        Some(Help::new(self.button_rect(self.row_rect(i), part), text))
+        let id = match part {
+            Part::Bypass => "editor.track_panel.bypass",
+            Part::Up | Part::Down => "editor.track_panel.move",
+            Part::Remove => "editor.track_panel.remove",
+            Part::Send => "editor.track_panel.send",
+            Part::Mute => "editor.track_panel.mute",
+            Part::Fader => "editor.track_panel.fader",
+            Part::GroovePrev | Part::GrooveNext => "editor.track_panel.groove",
+            Part::Amount => "editor.track_panel.groove_amount",
+        };
+        Some(Help::new(self.button_rect(self.row_rect(i), part), text).id(id))
     }
 
     /// Handles a pointer event; the actions are commands, one undo step each.

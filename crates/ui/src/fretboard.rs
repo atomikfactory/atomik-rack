@@ -376,14 +376,17 @@ impl FretboardView {
                 rect,
                 "What the dots say: note names, fret numbers or intervals (click to change)",
             )
-            .with_command("view.fretboard_labels"),
+            .with_command("view.fretboard_labels")
+            .id("editor.fretboard.labels"),
             FretboardItem::LeftHanded => {
                 Help::new(rect, "Mirror the neck for a left-handed player")
                     .with_command("view.fretboard_left_handed")
+                    .id("editor.fretboard.left_handed")
             }
             FretboardItem::Voicing => {
                 Help::new(rect, "Show the fingering of the chord at the playhead")
                     .with_command("view.fretboard_voicing")
+                    .id("editor.fretboard.voicing")
             }
         })
     }

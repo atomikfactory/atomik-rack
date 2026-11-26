@@ -218,7 +218,7 @@ fn rust_files(dir: &Path, out: &mut Vec<PathBuf>) {
 /// prefixes of the help ids. The second list holds those that are not command ids (a command id
 /// may also be a control id, as `transport.play` is, and then is looked up like any other).
 fn ids_in_the_views() -> (Vec<String>, Vec<String>) {
-    const PREFIXES: [&str; 7] = [
+    const PREFIXES: [&str; 9] = [
         "transport.",
         "arrangement.",
         "console.",
@@ -226,6 +226,8 @@ fn ids_in_the_views() -> (Vec<String>, Vec<String>) {
         "roll.",
         "launcher.",
         "rack.",
+        "modal.",
+        "editor.",
     ];
     let commands = atomik_ui::keymap::Registry::bundled();
     let mut files = Vec::new();
@@ -242,7 +244,7 @@ fn ids_in_the_views() -> (Vec<String>, Vec<String>) {
         let text = std::fs::read_to_string(&file).unwrap();
         for part in text.split('"').skip(1).step_by(2) {
             let ok = PREFIXES.iter().any(|p| part.starts_with(p))
-                && !part.ends_with('.')
+                && !part.ends_with(['.', '_'])
                 && part
                     .chars()
                     .all(|c| c.is_ascii_lowercase() || c == '.' || c == '_');
@@ -317,4 +319,109 @@ fn the_more_link_of_a_card_opens_the_manual_not_the_browser() {
         &default_registry(),
     );
     assert_eq!(device.manual.as_deref(), Some("Devices"));
+}
+
+/// The names of every parameter of every device, and the labels the panels make from them.
+fn parameter_labels() -> std::collections::BTreeSet<String> {
+    let registry = default_registry();
+    let mut names = std::collections::BTreeSet::new();
+    for id in registry.type_ids() {
+        for p in registry.descriptor(id).unwrap().params {
+            names.insert(p.name.to_owned());
+            names.insert(atomik_ui::autolayout::control_label(p));
+        }
+    }
+    names
+}
+
+#[test]
+fn every_text_of_help_mode_has_a_french_text() {
+    use atomik_ui::Lang;
+    let book = super::book();
+    let mut missing = Vec::new();
+    for id in book.control_ids() {
+        let entry = book.control(id).unwrap();
+        for text in [&entry.title, &entry.text] {
+            if !atomik_ui::i18n::has(Lang::French, text) {
+                missing.push(format!("{id}: {text}"));
+            }
+        }
+    }
+    for id in book.device_ids() {
+        let about = book.about(id).unwrap();
+        if !atomik_ui::i18n::has(Lang::French, about) {
+            missing.push(format!("{id}: {about}"));
+        }
+    }
+    assert!(
+        missing.is_empty(),
+        "no French for:
+{}",
+        missing.join(
+            "
+"
+        )
+    );
+}
+
+#[test]
+fn a_french_card_is_worded_in_french() {
+    use atomik_ui::Lang;
+    let registry = default_registry();
+    atomik_ui::i18n::with_language(Lang::French, || {
+        let play = resolve(&help("Play").id("transport.play"), &keymap(), &registry);
+        assert_eq!(play.card.title, "Lecture");
+        assert!(
+            play.card.text.starts_with("Lance le morceau"),
+            "{}",
+            play.card.text
+        );
+        // A parameter card: the name, the range and the about line, each in French.
+        let bypass = resolve(
+            &help("Bypass: click to switch on or off").id("param:atomik.compressor:bypass"),
+            &keymap(),
+            &registry,
+        );
+        assert!(bypass.card.text.contains("activé"), "{}", bypass.card.text);
+        assert!(
+            bypass.card.text.contains("Compressor : "),
+            "{}",
+            bypass.card.text
+        );
+        let ratio = registry
+            .descriptor("atomik.compressor")
+            .unwrap()
+            .params
+            .iter()
+            .find(|p| p.unit == Unit::None && !p.discrete)
+            .unwrap();
+        let card = resolve(
+            &help("label").id(format!("param:atomik.compressor:{}", ratio.key)),
+            &keymap(),
+            &registry,
+        );
+        assert!(card.card.text.starts_with("De "), "{}", card.card.text);
+    });
+}
+
+#[test]
+fn every_parameter_name_of_a_device_panel_has_a_french_text() {
+    use atomik_ui::Lang;
+    // Texts that read the same in French: units, abbreviations, numbers and single letters.
+    let same = |s: &str| {
+        !s.chars().any(|c| c.is_alphabetic()) || s.chars().count() <= 2 || s == "Hz" || s == "Clap"
+    };
+    let missing: Vec<String> = parameter_labels()
+        .into_iter()
+        .filter(|l| !same(l) && !atomik_ui::i18n::has(Lang::French, l))
+        .collect();
+    assert!(
+        missing.is_empty(),
+        "no French for the names:
+{}",
+        missing.join(
+            "
+"
+        )
+    );
 }

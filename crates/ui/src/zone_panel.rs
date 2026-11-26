@@ -338,20 +338,23 @@ impl ZoneView {
 
     /// What the button or reference under `pos` does, for its tooltip.
     pub fn help_at(&self, pos: Point) -> Option<Help> {
-        let help = |rect: Rect, text: &'static str| Some(Help::new(rect, text));
+        let help =
+            |rect: Rect, text: &'static str, id: &'static str| Some(Help::new(rect, text).id(id));
         if self.close_rect().contains(pos) {
-            return help(self.close_rect(), "Close the panel");
+            return help(self.close_rect(), "Close the panel", "modal.close");
         }
         if self.listen_rect().contains(pos) {
             return help(
                 self.listen_rect(),
                 "Switch between the mix and the selected reference",
+                "modal.zone.listen",
             );
         }
         if self.refresh_rect().contains(pos) {
             return help(
                 self.refresh_rect(),
                 "Render the mix again and measure it against the references",
+                "modal.zone.refresh",
             );
         }
         for (rect, text) in [
@@ -369,7 +372,7 @@ impl ZoneView {
             ),
         ] {
             if rect.contains(pos) {
-                return help(rect, text);
+                return help(rect, text, "modal.zone.trim");
             }
         }
         if self.match_rect().contains(pos) {
@@ -380,12 +383,13 @@ impl ZoneView {
                 } else {
                     "Match the reference to the mix over the time selection or the loop"
                 },
+                "modal.zone.match",
             );
         }
         let first = self.first();
         for n in 0..self.shown() {
             if first + n < self.data.references.len() && self.ref_rect(n).contains(pos) {
-                return help(self.ref_rect(n), "Select this reference");
+                return help(self.ref_rect(n), "Select this reference", "modal.zone.ref");
             }
         }
         None

@@ -639,70 +639,118 @@ impl WavetableView {
 
     /// What the control under `pos` does, for its tooltip.
     pub fn help_at(&self, pos: Point) -> Option<Help> {
-        let tips: [(Rect, &'static str); 21] = [
-            (self.close_rect(), "Close the editor"),
+        let tips: [(Rect, &'static str, &'static str); 21] = [
+            (self.close_rect(), "Close the editor", "editor.close"),
             (
                 self.safe_rect(),
                 "Align the fundamental of every frame when the table is stored, so a morph keeps its level",
+                "editor.wavetable.safe",
             ),
             (
                 self.add_rect(),
                 "Add a frame after this one: the blend of this frame and the next",
+                "editor.wavetable.add",
             ),
-            (self.dup_rect(), "Duplicate this frame"),
-            (self.del_rect(), "Delete this frame (the last one stays)"),
-            (self.up_rect(), "Move this frame earlier in the table"),
-            (self.down_rect(), "Move this frame later in the table"),
+            (
+                self.dup_rect(),
+                "Duplicate this frame",
+                "editor.wavetable.dup",
+            ),
+            (
+                self.del_rect(),
+                "Delete this frame (the last one stays)",
+                "editor.wavetable.del",
+            ),
+            (
+                self.up_rect(),
+                "Move this frame earlier in the table",
+                "editor.wavetable.up",
+            ),
+            (
+                self.down_rect(),
+                "Move this frame later in the table",
+                "editor.wavetable.down",
+            ),
             (
                 self.canvas_rect(),
                 "Draw the frame: the pointer sets the samples it crosses",
+                "editor.wavetable.canvas",
             ),
             (
                 self.level_rect(),
                 "The level of each harmonic of this frame: drag across the bars",
+                "editor.wavetable.level",
             ),
             (
                 self.phase_rect(),
                 "The phase of each harmonic: a full height is half a cycle either way",
+                "editor.wavetable.phase",
             ),
-            (self.norm_rect(), "Scale the frame so it peaks at 1"),
-            (self.dc_rect(), "Take the offset out of the frame"),
-            (self.invert_rect(), "Flip the polarity of the frame"),
-            (self.reverse_rect(), "Play the cycle backwards"),
-            (self.smooth_rect(), "Round off the corners of the frame"),
+            (
+                self.norm_rect(),
+                "Scale the frame so it peaks at 1",
+                "editor.wavetable.norm",
+            ),
+            (
+                self.dc_rect(),
+                "Take the offset out of the frame",
+                "editor.wavetable.dc",
+            ),
+            (
+                self.invert_rect(),
+                "Flip the polarity of the frame",
+                "editor.wavetable.invert",
+            ),
+            (
+                self.reverse_rect(),
+                "Play the cycle backwards",
+                "editor.wavetable.reverse",
+            ),
+            (
+                self.smooth_rect(),
+                "Round off the corners of the frame",
+                "editor.wavetable.smooth",
+            ),
             (
                 self.all_rect(),
                 "Apply NORM, DC, INV, REV and SMOOTH to every frame",
+                "editor.wavetable.all",
             ),
             (
                 self.cut_rect(),
                 "Cut the sample again with one cycle per frame, at the length found",
+                "editor.wavetable.cut",
             ),
             (
                 self.dedupe_rect(),
                 "Drop silent frames and frames that are near copies of the one before",
+                "editor.wavetable.dedupe",
             ),
             (
                 self.edge_rect(),
                 "Make the end of each cycle meet its start by cross-fading the overlap",
+                "editor.wavetable.edge",
             ),
             (
                 self.edge_amount_rect(),
                 "The overlap of EDGE in samples: click for the next",
+                "editor.wavetable.edge_amount",
             ),
             (
                 self.use_rect(),
                 "Make oscillator 1 play this table (its table choice becomes imported)",
+                "editor.wavetable.use",
             ),
         ];
         tips.into_iter()
-            .find(|(r, _)| r.contains(pos))
-            .map(|(r, t)| Help::new(r, t))
+            .find(|(r, _, _)| r.contains(pos))
+            .map(|(r, t, id)| Help::new(r, t).id(id))
             .or_else(|| {
                 let rows = (0..self.usable_rows()).map(|n| self.row_rect(n));
-                rows.into_iter()
-                    .find(|r| r.contains(pos))
-                    .map(|r| Help::new(r, "A key frame of the table: click to select it"))
+                rows.into_iter().find(|r| r.contains(pos)).map(|r| {
+                    Help::new(r, "A key frame of the table: click to select it")
+                        .id("editor.wavetable.frame")
+                })
             })
     }
 

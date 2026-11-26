@@ -647,8 +647,11 @@ fn generic_kind(p: &ParamDescriptor) -> CtrlKind {
     }
 }
 
+/// The label of a generic cell, in capitals. The text is looked up in the language first and
+/// only then put in capitals, so the French label is the one that is fitted to the cell (the
+/// capitals of the English text would match no entry).
 fn short_label(p: &ParamDescriptor) -> String {
-    control_label(p).to_uppercase()
+    crate::i18n::tr(&control_label(p)).to_uppercase()
 }
 
 /// Lays out `rows` of a section starting at `y` within x range `x0..x1`; returns the content
@@ -1314,5 +1317,21 @@ pub fn master_layout(desc: &DeviceDescriptor, height: f64) -> MasterLayout {
         pinned_top,
         fader_x: fx,
         output,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::Lang;
+    use atomik_devices::poly_synth;
+
+    #[test]
+    fn a_generic_cell_label_is_translated_before_it_is_put_in_capitals() {
+        let voices = *poly_synth::DESCRIPTOR.param_by_key("voices").unwrap();
+        assert_eq!(short_label(&voices), "VOICES");
+        crate::i18n::with_language(Lang::French, || {
+            assert_eq!(short_label(&voices), "VOIX");
+        });
     }
 }

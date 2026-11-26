@@ -16,6 +16,21 @@ may break APIs and the patch and project formats.
   it is unprotected (the button is off and its tooltip says why), and a failure leaves the version listed with its
   file. A right-click on a row opens a menu with Restore, Compare, Rename, Protect and Delete. The project file and the
   project format do not change; the song is never a version and is never deleted.
+- **Help Mode explains the controls of the modal panels and of the editors.** About 330 controls now have a
+  long help text with their shortcut and, where the manual has a section, a link: the export and film export panels,
+  version history, backup, share and relink, the macro, modulation matrix and MIDI mapping panels, the analysis and
+  tool panels (delivery, kick and bass, masking, mix check, repetition, quantize, warp and the rest), the stem,
+  camera, plugin manager, plugin settings and plugin parameter panels, the audio clip, sample, slice, wavetable,
+  pattern, step and container editors, the tab, chord sheet, chord trainer, fretboard and practice bar, the piano
+  roll controller lanes and note inspector, and the clip, point and recording inspectors. A test checks that every
+  control id a view names has an entry.
+- **Help Mode and the device parameter names in French.** Every text of Help Mode (about 390 titles, 520
+  explanations and the about line of every device), the sentences of a parameter card and the "Shortcut" and "More"
+  labels are in French when the interface is. About 1,400 parameter names and panel labels of the built-in devices
+  have a French text (the names of the devices stay English). The card is worded before it is wrapped, so the French
+  text is wrapped and fitted, and a language change clears the card. The strip cells of the console now translate
+  their label before they put it in capitals, so a French label is shown and fitted instead of an English one that
+  matches no entry. The French manual is still to come.
 
 ### Changed
 - **The device CPU readout no longer allocates in a playing window.** Each pass (about five a second) rebuilt every

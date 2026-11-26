@@ -784,57 +784,73 @@ impl QuantizeView {
         if self.drag.is_some() {
             return None;
         }
-        let help = |rect: Rect, text: &'static str| Some(Help::new(rect, text));
+        let help =
+            |rect: Rect, text: &'static str, id: &'static str| Some(Help::new(rect, text).id(id));
         if self.close_rect().contains(pos) {
-            return help(self.close_rect(), "Close the panel; the settings are kept");
+            return help(
+                self.close_rect(),
+                "Close the panel; the settings are kept",
+                "modal.close",
+            );
         }
         if self.apply_rect().contains(pos) {
             return help(
                 self.apply_rect(),
                 "Quantize the selection with these settings (one undo step)",
+                "modal.quantize.apply",
             );
         }
         if self.live_rect().contains(pos) {
             return help(
                 self.live_rect(),
                 "Play the selected clips with the chosen groove at the strength above; their notes stay as they are",
+                "modal.quantize.live",
             );
         }
         if self.clear_live_rect().contains(pos) {
             return help(
                 self.clear_live_rect(),
                 "Give the selected clips back to their track's groove",
+                "modal.quantize.clear_live",
             );
         }
         if self.rename_rect().contains(pos) {
             return help(
                 self.rename_rect(),
                 "Rename the chosen groove of this song (Enter does it too)",
+                "modal.quantize.rename",
             );
         }
         if self.name_rect().contains(pos) {
             return help(
                 self.name_rect(),
                 "The name of the chosen groove of this song; type a new one",
+                "modal.quantize.name",
             );
         }
         if self.extract_rect().contains(pos) {
             return help(
                 self.extract_rect(),
                 "Measure the feel of the selected clip as a new groove",
+                "modal.quantize.extract",
             );
         }
         if self.midi_rect().contains(pos) {
             return help(
                 self.midi_rect(),
                 "Measure the feel of a MIDI file as a new groove (a dropped MIDI file does it too)",
+                "modal.quantize.midi",
             );
         }
         for i in 0..self.library().len() {
             if let Some(r) = self.delete_rect(i)
                 && r.contains(pos)
             {
-                return help(r, "Delete this groove from the song");
+                return help(
+                    r,
+                    "Delete this groove from the song",
+                    "modal.quantize.delete",
+                );
             }
         }
         for row in QuantizeRow::TOP

@@ -282,17 +282,20 @@ impl SongInfoView {
 
     /// What the button under `pos` does, for its tooltip.
     pub fn help_at(&self, pos: Point) -> Option<Help> {
-        let help = |rect: Rect, text: &'static str| Some(Help::new(rect, text));
+        let help =
+            |rect: Rect, text: &'static str, id: &'static str| Some(Help::new(rect, text).id(id));
         if self.close_rect().contains(pos) {
             return help(
                 self.close_rect(),
                 "Close the panel without changing anything",
+                "modal.close",
             );
         }
         if self.apply_rect().contains(pos) {
             return help(
                 self.apply_rect(),
                 "Make these texts the song information (one undo step)",
+                "modal.song_info.apply",
             );
         }
         None

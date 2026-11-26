@@ -416,23 +416,27 @@ impl ChordsView {
 
     /// What the button or value under `pos` does, for its tooltip.
     pub fn help_at(&self, pos: Point) -> Option<Help> {
-        let help = |rect: Rect, text: &'static str| Some(Help::new(rect, text));
+        let help =
+            |rect: Rect, text: &'static str, id: &'static str| Some(Help::new(rect, text).id(id));
         if self.close_rect().contains(pos) {
             return help(
                 self.close_rect(),
                 "Close the panel; the lane is left as it is",
+                "modal.close",
             );
         }
         if self.replace_rect().contains(pos) {
             return help(
                 self.replace_rect(),
                 "Put these chords in the lane over the span, replacing its chords (one undo step)",
+                "modal.chords.replace",
             );
         }
         if self.merge_rect().contains(pos) {
             return help(
                 self.merge_rect(),
                 "Put these chords only where the lane has none (one undo step)",
+                "modal.chords.merge",
             );
         }
         if self.cancel_rect().contains(pos) {
@@ -441,18 +445,20 @@ impl ChordsView {
             } else {
                 "Close the panel; the lane is left as it is"
             };
-            return help(self.cancel_rect(), text);
+            return help(self.cancel_rect(), text, "modal.cancel");
         }
         if self.offers_key() && self.key_rect().contains(pos) {
             return help(
                 self.key_rect(),
                 "Also set the song key the audio points to, in the same undo step",
+                "modal.chords.key",
             );
         }
         if self.strip_rect().contains(pos) {
             return help(
                 self.strip_rect(),
                 "The chords found; a dimmed chord is a less sure guess",
+                "modal.chords.strip",
             );
         }
         ChordsRow::ALL.into_iter().find_map(|row| {

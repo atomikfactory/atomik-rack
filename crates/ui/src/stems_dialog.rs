@@ -418,22 +418,28 @@ impl StemsDialogView {
     /// The tooltip of a button or box.
     pub fn help_at(&self, pos: Point) -> Option<Help> {
         if let Some((choice, r)) = self.boxes().into_iter().find(|(_, r)| r.contains(pos)) {
-            let text = match choice {
-                StemsDialogChoice::ToggleMute => {
-                    "Mute the clip that is separated, so only the stems play"
-                }
-                _ => "Make this stem as a new track",
+            let (text, id) = match choice {
+                StemsDialogChoice::ToggleMute => (
+                    "Mute the clip that is separated, so only the stems play",
+                    "modal.stems.mute",
+                ),
+                _ => ("Make this stem as a new track", "modal.stems.stem"),
             };
-            return Some(Help::new(r, text));
+            return Some(Help::new(r, text).id(id));
         }
         let (choice, r) = self.choices().into_iter().find(|(_, r)| r.contains(pos))?;
-        let text = match choice {
-            StemsDialogChoice::Separate => "Make a track for each stem that is checked",
-            StemsDialogChoice::Cancel => "Close this, or stop what is running",
-            StemsDialogChoice::Close => "Close this message",
+        let (text, id) = match choice {
+            StemsDialogChoice::Separate => (
+                "Make a track for each stem that is checked",
+                "modal.stems.separate",
+            ),
+            StemsDialogChoice::Cancel => {
+                ("Close this, or stop what is running", "modal.stems.cancel")
+            }
+            StemsDialogChoice::Close => ("Close this message", "modal.stems.close"),
             StemsDialogChoice::Toggle(_) | StemsDialogChoice::ToggleMute => return None,
         };
-        Some(Help::new(r, text))
+        Some(Help::new(r, text).id(id))
     }
 }
 

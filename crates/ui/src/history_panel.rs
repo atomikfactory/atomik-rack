@@ -228,7 +228,7 @@ impl HistoryView {
         } else {
             "Go forward to the song as it was after this step"
         };
-        Some(Help::new(self.row_rect(i)?, text))
+        Some(Help::new(self.row_rect(i)?, text).id("modal.history.row"))
     }
 
     /// Handles an event; the actions ask the app to move through the history.

@@ -2005,7 +2005,7 @@ impl PianoRollView {
                 } else {
                     "Fold the controller lane away, keeping the lane chips"
                 };
-                Some(Help::new(rect, text))
+                Some(Help::new(rect, text).id("roll.ctl_fold"))
             }
             Hit::CtlChip(chip, _) => {
                 let a = self.controller_area();
@@ -2028,7 +2028,14 @@ impl PianoRollView {
                         "Delete every program change and SysEx message of the clip"
                     }
                 };
-                Some(Help::new(rect, text))
+                Some(Help::new(rect, text).id(match chip {
+                    Chip::Preset(_) | Chip::Cc | Chip::Poly => "roll.ctl_lane",
+                    Chip::Curve => "roll.ctl_curve",
+                    Chip::Thin => "roll.ctl_thin",
+                    Chip::Messages | Chip::Back => "roll.ctl_messages",
+                    Chip::Program | Chip::BankMsb | Chip::BankLsb => "roll.ctl_program",
+                    Chip::AddSysex | Chip::ClearMessages => "roll.ctl_sysex",
+                }))
             }
             _ => None,
         }

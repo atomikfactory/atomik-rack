@@ -275,29 +275,37 @@ impl SoundAnalystView {
 
     /// What the control under `pos` does, for its tooltip.
     pub fn help_at(&self, pos: Point) -> Option<Help> {
-        let help = |rect: Rect, text: &'static str| Some(Help::new(rect, text));
+        let help =
+            |rect: Rect, text: &'static str, id: &'static str| Some(Help::new(rect, text).id(id));
         if self.close_rect().contains(pos) {
-            return help(self.close_rect(), "Close the panel");
+            return help(self.close_rect(), "Close the panel", "modal.close");
         }
         if self.match_rect().contains(pos) {
             return help(
                 self.match_rect(),
                 "Render the patch as it is now on the same note and compare its curves",
+                "modal.sound_analyst.match",
             );
         }
         if self.make_rect().contains(pos) {
             return help(
                 self.make_rect(),
                 "Add the proposed patch on a new track (one undo step)",
+                "modal.sound_analyst.make",
             );
         }
         if self.open_rect().contains(pos) {
             return if self.data.running.is_some() {
-                help(self.open_rect(), "Stop the analysis")
+                help(
+                    self.open_rect(),
+                    "Stop the analysis",
+                    "modal.sound_analyst.open",
+                )
             } else {
                 help(
                     self.open_rect(),
                     "Pick an audio file to analyse (or drop one on the panel)",
+                    "modal.sound_analyst.open",
                 )
             };
         }
@@ -309,7 +317,7 @@ impl SoundAnalystView {
         for (i, text) in curves.iter().enumerate() {
             let r = self.curve_rect(i);
             if r.inflate(0.0, 4.0).contains(pos) {
-                return help(r, text);
+                return help(r, text, "modal.sound_analyst.curve");
             }
         }
         None

@@ -1184,7 +1184,27 @@ impl ChordSheetView {
             SheetButton::ApplyText => ("Make the text the sheet (Ctrl+Enter)", None, None),
             SheetButton::CancelText => ("Leave the text as it was (Esc)", None, None),
         };
-        let h = Help::new(item.rect, text);
+        let h = Help::new(item.rect, text).id(match btn {
+            SheetButton::Prev | SheetButton::Next => "editor.sheet.select",
+            SheetButton::New => "editor.sheet.new",
+            SheetButton::Import => "editor.sheet.import",
+            SheetButton::Rename => "editor.sheet.rename",
+            SheetButton::Delete => "editor.sheet.delete",
+            SheetButton::Edit => "editor.sheet.edit",
+            SheetButton::TransposeDown | SheetButton::TransposeUp | SheetButton::TransposeReset => {
+                "editor.sheet.transpose"
+            }
+            SheetButton::CapoDown | SheetButton::CapoUp => "editor.sheet.capo",
+            SheetButton::Spelling => "editor.sheet.spelling",
+            SheetButton::FontDown | SheetButton::FontUp => "editor.sheet.font",
+            SheetButton::Instrument | SheetButton::Tuning => "editor.sheet.instrument",
+            SheetButton::Apply => "editor.sheet.apply",
+            SheetButton::AutoToggle
+            | SheetButton::AutoSlower
+            | SheetButton::AutoFaster
+            | SheetButton::AutoSync => "editor.sheet.autoscroll",
+            SheetButton::ApplyText | SheetButton::CancelText => "editor.sheet.text",
+        });
         Some(match (cmd, arg) {
             (Some(c), Some(a)) => h.with_arg(c, a),
             (Some(c), None) => h.with_command(c),

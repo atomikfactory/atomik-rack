@@ -677,22 +677,38 @@ impl MacrosView {
             return None;
         }
         let hit = self.hit(pos)?;
-        let help = |r: Rect, text: &'static str| Some(Help::new(r, text));
+        let help = |r: Rect, text: &'static str, id: &'static str| Some(Help::new(r, text).id(id));
         match hit {
-            Hit::Close => help(self.close_rect(), "Close the panel"),
-            Hit::NewBank => help(self.new_bank_rect(), "Start a new bank of eight macros"),
-            Hit::Bank(i) => help(self.bank_rect(i), "Show this bank of macros"),
+            Hit::Close => help(self.close_rect(), "Close the panel", "modal.close"),
+            Hit::NewBank => help(
+                self.new_bank_rect(),
+                "Start a new bank of eight macros",
+                "modal.macros.new_bank",
+            ),
+            Hit::Bank(i) => help(
+                self.bank_rect(i),
+                "Show this bank of macros",
+                "modal.macros.bank",
+            ),
             Hit::Name(n) | Hit::Bar(n) | Hit::Learn(n) | Hit::Clear(n) => {
                 let at = self.items().iter().position(|i| *i == Item::Macro(n))?;
                 let row = self.item_rect(at)?;
                 let c = self.macro_columns(row);
-                let (x, text) = match hit {
-                    Hit::Name(_) => (c.name, "Click to rename this macro"),
-                    Hit::Bar(_) => (c.bar, "Click to set the macro's value"),
-                    Hit::Learn(_) => (c.learn, "Learn: move a knob or key to control this macro"),
-                    _ => (c.clear, "Remove every parameter this macro drives"),
+                let (x, text, id) = match hit {
+                    Hit::Name(_) => (c.name, "Click to rename this macro", "modal.macros.name"),
+                    Hit::Bar(_) => (c.bar, "Click to set the macro's value", "modal.macros.bar"),
+                    Hit::Learn(_) => (
+                        c.learn,
+                        "Learn: move a knob or key to control this macro",
+                        "modal.macros.learn",
+                    ),
+                    _ => (
+                        c.clear,
+                        "Remove every parameter this macro drives",
+                        "modal.macros.clear",
+                    ),
                 };
-                help(self.cell(row, x), text)
+                help(self.cell(row, x), text, id)
             }
             Hit::Target(n, j)
             | Hit::Min(n, j)
@@ -704,28 +720,44 @@ impl MacrosView {
                 let at = self.items().iter().position(|i| *i == Item::Assign(n, j))?;
                 let row = self.item_rect(at)?;
                 let c = self.assign_columns(row);
-                let (x, text) = match hit {
-                    Hit::Target(..) => (c.target, "Show this parameter in the rack"),
+                let (x, text, id) = match hit {
+                    Hit::Target(..) => (
+                        c.target,
+                        "Show this parameter in the rack",
+                        "modal.macros.target",
+                    ),
                     Hit::Min(..) => (
                         c.min,
                         "Value at macro minimum: drag; click raises, right-click lowers; middle-click types",
+                        "modal.macros.min",
                     ),
                     Hit::Max(..) => (
                         c.max,
                         "Value at macro maximum: drag; click raises, right-click lowers; middle-click types",
+                        "modal.macros.max",
                     ),
                     Hit::Curve(..) => (
                         c.curve,
                         "Shape of the travel: linear, exp (slow start) or log (fast start)",
+                        "modal.macros.curve",
                     ),
                     Hit::Smooth(..) => (
                         c.smooth,
                         "Glide time of a live move: click for longer, right-click or wheel to step",
+                        "modal.macros.smooth",
                     ),
-                    Hit::Invert(..) => (c.invert, "Invert the direction of the parameter"),
-                    _ => (c.remove, "Stop this macro driving the parameter"),
+                    Hit::Invert(..) => (
+                        c.invert,
+                        "Invert the direction of the parameter",
+                        "modal.macros.invert",
+                    ),
+                    _ => (
+                        c.remove,
+                        "Stop this macro driving the parameter",
+                        "modal.macros.remove",
+                    ),
                 };
-                help(self.cell(row, x), text)
+                help(self.cell(row, x), text, id)
             }
         }
     }

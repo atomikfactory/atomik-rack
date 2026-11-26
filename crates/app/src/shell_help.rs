@@ -23,6 +23,14 @@ pub(super) struct HelpMode {
     shown: Option<Resolved>,
 }
 
+impl HelpMode {
+    /// Forgets the control the panel explained, so the next one is worded afresh (the language
+    /// changed).
+    pub(super) fn clear_shown(&mut self) {
+        self.shown = None;
+    }
+}
+
 impl<B: AudioBackend> Shell<B> {
     /// Whether Help Mode is on.
     pub fn help_mode(&self) -> bool {
@@ -95,10 +103,15 @@ impl<B: AudioBackend> Shell<B> {
     /// The card before any control was pointed at.
     fn idle_card(&self) -> HelpCard {
         let entry = crate::help::book().control("help.idle");
-        let title = entry.map_or("Help Mode", |e| e.title.as_str());
-        let mut text = entry.map_or_else(String::new, |e| e.text.clone());
+        let title = atomik_ui::i18n::tr(entry.map_or("Help Mode", |e| e.title.as_str()));
+        let mut text =
+            entry.map_or_else(String::new, |e| atomik_ui::i18n::tr(&e.text).into_owned());
         if let Some(chord) = self.router.keymap().shortcut_text("help.hover_help", None) {
-            text.push_str(&format!(" Press {chord} to turn Help Mode off."));
+            text.push(' ');
+            text.push_str(&atomik_ui::i18n::tf(
+                "Press {chord} to turn Help Mode off.",
+                &[("chord", &chord)],
+            ));
         }
         HelpCard::new(title, text)
     }

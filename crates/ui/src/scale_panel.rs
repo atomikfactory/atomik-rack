@@ -219,17 +219,20 @@ impl ScaleView {
 
     /// What the button under `pos` does, for its tooltip.
     pub fn help_at(&self, pos: Point) -> Option<Help> {
-        let help = |rect: Rect, text: &'static str| Some(Help::new(rect, text));
+        let help =
+            |rect: Rect, text: &'static str, id: &'static str| Some(Help::new(rect, text).id(id));
         if self.close_rect().contains(pos) {
             return help(
                 self.close_rect(),
                 "Close the panel and put the clips back as they were",
+                "modal.close",
             );
         }
         if self.apply_rect().contains(pos) {
             return help(
                 self.apply_rect(),
                 "Scale the selected clips to this tempo (one undo step)",
+                "modal.scale.apply",
             );
         }
         None

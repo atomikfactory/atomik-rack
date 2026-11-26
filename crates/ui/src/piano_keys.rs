@@ -549,7 +549,15 @@ impl PianoKeysView {
             KeysButton::Hold => "Latch the keys pressed with the pointer; press again to release",
             KeysButton::Variation => "Change each typed velocity a little at random",
         };
-        Some(Help::new(self.button_rect(b), text))
+        let id = match b {
+            KeysButton::Mode => "editor.keys.mode",
+            KeysButton::OctaveDown | KeysButton::OctaveUp => "editor.keys.octave",
+            KeysButton::VelocityDown | KeysButton::VelocityUp => "editor.keys.velocity",
+            KeysButton::Sustain => "editor.keys.sustain",
+            KeysButton::Hold => "editor.keys.hold",
+            KeysButton::Variation => "editor.keys.variation",
+        };
+        Some(Help::new(self.button_rect(b), text).id(id))
     }
 
     /// Handles a pointer event (window logical coordinates). Keys of the computer keyboard are

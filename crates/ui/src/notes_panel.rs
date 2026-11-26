@@ -525,9 +525,14 @@ impl NotesView {
         if self.drag.is_some() {
             return None;
         }
-        let help = |rect: Rect, text: &'static str| Some(Help::new(rect, text));
+        let help =
+            |rect: Rect, text: &'static str, id: &'static str| Some(Help::new(rect, text).id(id));
         if self.close_rect().contains(pos) {
-            return help(self.close_rect(), "Close the panel; the settings are kept");
+            return help(
+                self.close_rect(),
+                "Close the panel; the settings are kept",
+                "modal.close",
+            );
         }
         if self.apply_rect().contains(pos) {
             let text = if self.progress.is_some() {
@@ -535,7 +540,7 @@ impl NotesView {
             } else {
                 "Turn the selected audio clips into notes (one undo step each)"
             };
-            return help(self.apply_rect(), text);
+            return help(self.apply_rect(), text, "modal.notes.apply");
         }
         NotesRow::ALL.into_iter().find_map(|row| {
             let rects = (
