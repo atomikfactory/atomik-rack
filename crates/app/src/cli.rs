@@ -617,11 +617,7 @@ mod tests {
                         path.display()
                     )
                 })
-                .replace(
-                    "
-", "
-",
-                );
+                .replace("\r\n", "\n");
             assert!(
                 committed == generated,
                 "{file} differs from `atomik {}`; regenerate with ATOMIK_UPDATE_GOLDEN=1",
