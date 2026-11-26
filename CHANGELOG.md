@@ -21,6 +21,11 @@ may break APIs and the patch and project formats.
   two and four bars of the time signature, taken from the transport tempo; a tempo change moves a synced time at once.
   A synced delay is kept inside the delay line (a minute); a synced length always replaces the gate. The switches are
   off in a project saved before them, which plays and bounces exactly as it did.
+- **Sample and Hold can track for a set length.** In track mode, `track.length` picks how long the output follows the
+  input from each tick: half a cycle (as before), a time in ms (`track.ms`) or a note value of the tempo
+  (`track.note`, 1/64 to four bars, triplet and dotted). The next tick starts the stretch again; with the trigger clock
+  it starts at the rising edge and no longer depends on how long the gate stays high. A project saved before the
+  setting tracks half a cycle, as it did.
 
 ### Changed
 - **The device CPU readout no longer allocates in a playing window.** Each pass (about five a second) rebuilt every
