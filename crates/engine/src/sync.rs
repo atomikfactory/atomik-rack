@@ -19,10 +19,11 @@
 //! locate); the player reads it at every batch boundary while following. The cell is a seqlock
 //! like the transport cell: one writer, any number of readers, nobody waits.
 
+use crate::phase_lock::LockStrength;
 use atomik_core::{PPQ, TempoMap};
 use atomik_device_sdk::{MidiEvent, MidiTap};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering, fence};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, AtomicU64, Ordering, fence};
 
 /// Ticks between two MIDI clocks (24 per quarter note).
 pub const TICKS_PER_CLOCK: i64 = PPQ / 24;
@@ -318,9 +319,11 @@ pub struct ExternalState {
 /// Lock-free (seqlock) cell holding an [`ExternalState`]: one writer (the clock input's thread),
 /// any number of readers (the audio thread among them). Also holds the switch that tells the
 /// player to follow it.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct ExternalClock {
     enabled: AtomicBool,
+    tempo_only: AtomicBool,
+    lock: AtomicU8,
     seq: AtomicU64,
     tempo: AtomicU64,
     flags: AtomicU64,
@@ -330,8 +333,25 @@ pub struct ExternalClock {
     phase: AtomicU64,
 }
 
+impl Default for ExternalClock {
+    fn default() -> Self {
+        Self {
+            enabled: AtomicBool::new(false),
+            tempo_only: AtomicBool::new(false),
+            lock: AtomicU8::new(LockStrength::Normal.to_byte()),
+            seq: AtomicU64::new(0),
+            tempo: AtomicU64::new(0),
+            flags: AtomicU64::new(0),
+            position: AtomicU64::new(0),
+            locates: AtomicU64::new(0),
+            clocks: AtomicU64::new(0),
+            phase: AtomicU64::new(0),
+        }
+    }
+}
+
 impl ExternalClock {
-    /// An empty cell, not followed.
+    /// An empty cell, not followed, holding at the normal strength.
     pub fn new() -> Arc<Self> {
         Arc::new(Self::default())
     }
@@ -344,6 +364,29 @@ impl ExternalClock {
     /// Switches following on or off (taken at the next batch).
     pub fn set_following(&self, on: bool) {
         self.enabled.store(on, Ordering::Relaxed);
+    }
+
+    /// Whether the player takes only the tempo of the clock: the transport stays the user's
+    /// (Start, Continue, Stop and Song Position Pointer are not acted on, a lost clock does not
+    /// stop the song).
+    pub fn tempo_only(&self) -> bool {
+        self.tempo_only.load(Ordering::Relaxed)
+    }
+
+    /// Sets whether only the tempo is followed (taken at the next batch; a change while
+    /// following stops the transport, like switching following on or off).
+    pub fn set_tempo_only(&self, on: bool) {
+        self.tempo_only.store(on, Ordering::Relaxed);
+    }
+
+    /// How tightly the song is held to the sender's position (Normal by default).
+    pub fn lock_strength(&self) -> LockStrength {
+        LockStrength::from_byte(self.lock.load(Ordering::Relaxed))
+    }
+
+    /// Sets how tightly the song is held to the sender's position (taken at the next batch).
+    pub fn set_lock_strength(&self, strength: LockStrength) {
+        self.lock.store(strength.to_byte(), Ordering::Relaxed);
     }
 
     /// Publishes `state` (single writer; wait-free: a few stores).
@@ -463,5 +506,16 @@ mod tests {
         assert_eq!(cell.read(), unphased);
         cell.publish(&ExternalState::default());
         assert_eq!(cell.read(), ExternalState::default());
+    }
+
+    #[test]
+    fn the_cell_starts_with_the_whole_clock_and_the_normal_lock() {
+        let cell = ExternalClock::new();
+        assert!(!cell.tempo_only());
+        assert_eq!(cell.lock_strength(), LockStrength::Normal);
+        cell.set_tempo_only(true);
+        cell.set_lock_strength(LockStrength::Loose);
+        assert!(cell.tempo_only());
+        assert_eq!(cell.lock_strength(), LockStrength::Loose);
     }
 }

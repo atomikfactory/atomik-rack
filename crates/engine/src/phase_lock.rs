@@ -10,12 +10,17 @@
 //!   player's tick (a clock marks the start of its tick, so the count runs one clock ahead of
 //!   the sender's position and moves in steps: the middle of the step is half a clock back);
 //!   inside a loop both are folded into the loop and the error is the shortest way round;
-//! * the correction is proportional: the error is closed over [`LOCK_TICKS`] (an eighth of a
-//!   beat), a first-order low-pass that looks through the staircase of the count and the jitter
-//!   of the port and follows a tempo that wanders over a second or two;
-//! * it is bounded: at most [`MAX_RATE`] of the ticks a batch spans, so a song never lurches
-//!   (catching up half a beat takes five beats), and it is made of whole frames with the
-//!   remainder carried to the next batch, so the same inputs always give the same positions;
+//! * the correction is proportional: the error is closed over [`LockStrength::lock_ticks`] (an
+//!   eighth of a beat at the normal strength), a first-order low-pass that looks through the
+//!   staircase of the count and the jitter of the port and follows a tempo that wanders over a
+//!   second or two;
+//! * it is bounded: at most [`LockStrength::max_rate`] of the ticks a batch spans (a tenth at the
+//!   normal strength), so a song never lurches (catching up half a beat takes five beats), and it
+//!   is made of whole frames with the remainder carried to the next batch, so the same inputs
+//!   always give the same positions;
+//! * the strength is the one setting of the rule (see [`LockStrength`]): tight closes the error
+//!   over half the time at twice the rate, loose closes it over twice the time and leaves an
+//!   error alone while it is inside a dead band of one clock, for a sender that wanders;
 //! * an error beyond [`RELOCATE_TICKS`] is not drift (clocks were dropped, or the sender moved
 //!   without saying so): the player locates to where the sender is.
 //!
@@ -28,11 +33,65 @@
 use crate::sync::TICKS_PER_CLOCK;
 use atomik_core::{BATCH, PPQ};
 
-/// The time over which an error is closed, in ticks (an eighth of a beat: three clocks).
-const LOCK_TICKS: f64 = (PPQ / 8) as f64;
+/// How tightly the song is held to the sender's position (the Clock lock setting). Normal is the
+/// rule the lock always had.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum LockStrength {
+    /// Corrects faster: the error is closed over a sixteenth of a beat at up to a fifth of the
+    /// ticks of a batch, and nothing is left alone.
+    Tight,
+    /// An eighth of a beat at up to a tenth of the ticks of a batch.
+    #[default]
+    Normal,
+    /// Tolerates more drift before it corrects, for a sender that wanders: an error inside a
+    /// clock is left alone, the rest is closed over a quarter of a beat at up to a tenth.
+    Loose,
+}
 
-/// The most the lock changes the pace: a share of the ticks a batch spans.
-const MAX_RATE: f64 = 0.1;
+impl LockStrength {
+    /// The time over which an error is closed, in ticks.
+    pub fn lock_ticks(self) -> f64 {
+        match self {
+            Self::Tight => (PPQ / 16) as f64,
+            Self::Normal => (PPQ / 8) as f64,
+            Self::Loose => (PPQ / 4) as f64,
+        }
+    }
+
+    /// The most the lock changes the pace: a share of the ticks a batch spans.
+    pub fn max_rate(self) -> f64 {
+        match self {
+            Self::Tight => 0.2,
+            Self::Normal | Self::Loose => 0.1,
+        }
+    }
+
+    /// The error in ticks that is left alone (the correction acts on what lies beyond it).
+    pub fn dead_band(self) -> f64 {
+        match self {
+            Self::Loose => TICKS_PER_CLOCK as f64,
+            Self::Tight | Self::Normal => 0.0,
+        }
+    }
+
+    /// The strength stored as a byte (an unknown byte is Normal).
+    pub fn to_byte(self) -> u8 {
+        match self {
+            Self::Tight => 0,
+            Self::Normal => 1,
+            Self::Loose => 2,
+        }
+    }
+
+    /// The strength stored as `byte` (an unknown byte is Normal).
+    pub fn from_byte(byte: u8) -> Self {
+        match byte {
+            0 => Self::Tight,
+            2 => Self::Loose,
+            _ => Self::Normal,
+        }
+    }
+}
 
 /// An error larger than this (one beat) is a jump rather than a drift.
 pub(crate) const RELOCATE_TICKS: f64 = PPQ as f64;
@@ -83,8 +142,14 @@ impl PhaseLock {
         self.carry = 0.0;
     }
 
-    /// The correction for one batch given the `error` in ticks and the pace `ticks_per_frame`.
-    pub(crate) fn step(&mut self, error: f64, ticks_per_frame: f64) -> Correction {
+    /// The correction for one batch given the `error` in ticks, the pace `ticks_per_frame` and
+    /// how tightly to hold.
+    pub(crate) fn step(
+        &mut self,
+        error: f64,
+        ticks_per_frame: f64,
+        strength: LockStrength,
+    ) -> Correction {
         if !error.is_finite() || !ticks_per_frame.is_finite() || ticks_per_frame <= 0.0 {
             return Correction::Frames(0);
         }
@@ -93,7 +158,10 @@ impl PhaseLock {
             return Correction::Relocate;
         }
         let span = BATCH as f64 * ticks_per_frame;
-        let ticks = (error * span / LOCK_TICKS).clamp(-MAX_RATE * span, MAX_RATE * span);
+        // An error inside the dead band is left alone; beyond it the excess is closed.
+        let error = error.signum() * (error.abs() - strength.dead_band()).max(0.0);
+        let rate = strength.max_rate();
+        let ticks = (error * span / strength.lock_ticks()).clamp(-rate * span, rate * span);
         let frames = ticks / ticks_per_frame + self.carry;
         let whole = frames.trunc();
         self.carry = frames - whole;
@@ -106,6 +174,7 @@ mod tests {
     use super::*;
 
     const SR: f64 = 48_000.0;
+    const N: LockStrength = LockStrength::Normal;
 
     #[test]
     fn the_expected_tick_is_the_middle_of_the_clock_being_counted() {
@@ -138,20 +207,20 @@ mod tests {
         let mut lock = PhaseLock::default();
         let tpf = 0.64; // 120 BPM at 48 kHz
         // A beat of error is relocated only above one beat: a large one is capped by the rate.
-        let Correction::Frames(big) = lock.step(PPQ as f64 * 0.9, tpf) else {
+        let Correction::Frames(big) = lock.step(PPQ as f64 * 0.9, tpf, N) else {
             panic!("a drift, not a jump");
         };
-        let cap = (MAX_RATE * BATCH as f64).ceil() as i64;
+        let cap = (N.max_rate() * BATCH as f64).ceil() as i64;
         assert!((1..=cap).contains(&big), "{big}");
         // A small error takes whole frames only, and the pieces add up.
         let mut lock = PhaseLock::default();
         let total: i64 = (0..1000)
-            .map(|_| match lock.step(100.0, tpf) {
+            .map(|_| match lock.step(100.0, tpf, N) {
                 Correction::Frames(n) => n,
                 Correction::Relocate => panic!(),
             })
             .sum();
-        let frames = 1000.0 * 100.0 * BATCH as f64 / LOCK_TICKS; // ticks per batch / tpf
+        let frames = 1000.0 * 100.0 * BATCH as f64 / N.lock_ticks(); // ticks per batch / tpf
 
         assert!((total as f64 - frames).abs() <= 1.0, "{total} vs {frames}");
     }
@@ -159,17 +228,23 @@ mod tests {
     #[test]
     fn a_jump_is_relocated_and_nonsense_does_nothing() {
         let mut lock = PhaseLock::default();
-        assert_eq!(lock.step(RELOCATE_TICKS + 1.0, 0.64), Correction::Relocate);
-        assert_eq!(lock.step(-RELOCATE_TICKS - 1.0, 0.64), Correction::Relocate);
-        assert_eq!(lock.step(f64::NAN, 0.64), Correction::Frames(0));
-        assert_eq!(lock.step(5.0, 0.0), Correction::Frames(0));
+        assert_eq!(
+            lock.step(RELOCATE_TICKS + 1.0, 0.64, N),
+            Correction::Relocate
+        );
+        assert_eq!(
+            lock.step(-RELOCATE_TICKS - 1.0, 0.64, N),
+            Correction::Relocate
+        );
+        assert_eq!(lock.step(f64::NAN, 0.64, N), Correction::Frames(0));
+        assert_eq!(lock.step(5.0, 0.0, N), Correction::Frames(0));
     }
 
     /// The closed loop against a scripted sender, in batches and ticks, with no clock: the
     /// sender's tempo wanders 10 % either way, the measured tempo is the mean of the last beat
     /// (what the follower reports) and the count is the sender's tick in whole clocks. Returns
     /// the largest distance between the player and the sender once settled.
-    fn worst_drift(locked: bool, wander: f64) -> f64 {
+    fn worst_drift(locked: bool, wander: f64, strength: LockStrength) -> f64 {
         let batch_secs = BATCH as f64 / SR;
         let window = 400; // batches in about a beat at 120 BPM
         let mut history: Vec<f64> = Vec::new();
@@ -186,7 +261,7 @@ mod tests {
             let tpf = measured * PPQ as f64 / (60.0 * SR);
             if locked {
                 let e = error_ticks(expected_tick(phase, None), player, None);
-                match lock.step(e, tpf) {
+                match lock.step(e, tpf, strength) {
                     Correction::Frames(f) => player += f as f64 * tpf,
                     Correction::Relocate => player = expected_tick(phase, None),
                 }
@@ -202,8 +277,8 @@ mod tests {
 
     #[test]
     fn a_wandering_tempo_drifts_without_the_lock_and_stays_close_with_it() {
-        let free = worst_drift(false, 0.10);
-        let held = worst_drift(true, 0.10);
+        let free = worst_drift(false, 0.10, N);
+        let held = worst_drift(true, 0.10, N);
         let clock = TICKS_PER_CLOCK as f64;
         assert!(free > clock, "free drift {free}");
         assert!(held < clock / 2.0, "locked drift {held} free {free}");
@@ -219,7 +294,7 @@ mod tests {
         for _ in 0..(SR * 8.0 / BATCH as f64) as usize {
             let phase = ((sender / TICKS_PER_CLOCK as f64).floor() as i64 + 1) * TICKS_PER_CLOCK;
             let e = error_ticks(expected_tick(phase, None), player, None);
-            if let Correction::Frames(f) = lock.step(e, tpf) {
+            if let Correction::Frames(f) = lock.step(e, tpf, N) {
                 player += f as f64 * tpf;
             }
             sender += tpf * BATCH as f64;
@@ -237,9 +312,72 @@ mod tests {
         let run = || {
             let mut lock = PhaseLock::default();
             (0..500)
-                .map(|k| lock.step(f64::from(k % 40) * 10.0 - 200.0, 0.62))
+                .map(|k| lock.step(f64::from(k % 40) * 10.0 - 200.0, 0.62, N))
                 .collect::<Vec<_>>()
         };
         assert_eq!(run(), run());
+    }
+
+    #[test]
+    fn the_default_strength_is_normal_and_bytes_round_trip() {
+        assert_eq!(LockStrength::default(), LockStrength::Normal);
+        for s in [
+            LockStrength::Tight,
+            LockStrength::Normal,
+            LockStrength::Loose,
+        ] {
+            assert_eq!(LockStrength::from_byte(s.to_byte()), s);
+        }
+        assert_eq!(LockStrength::from_byte(200), LockStrength::Normal);
+    }
+
+    #[test]
+    fn tight_corrects_faster_and_loose_leaves_a_small_error_alone() {
+        let tpf = 0.64;
+        let first = |strength, error| {
+            let mut lock = PhaseLock::default();
+            match lock.step(error, tpf, strength) {
+                Correction::Frames(n) => n,
+                Correction::Relocate => panic!(),
+            }
+        };
+        // The same error is closed faster tight than normal, and slower loose.
+        let e = 400.0;
+        let (t, n, l) = (
+            first(LockStrength::Tight, e),
+            first(LockStrength::Normal, e),
+            first(LockStrength::Loose, e),
+        );
+        assert!(t > n && n > l && l >= 0, "{t} {n} {l}");
+        // Inside the dead band loose does nothing, either way round; beyond it, it acts.
+        let dead = LockStrength::Loose.dead_band();
+        assert_eq!(first(LockStrength::Loose, dead - 1.0), 0);
+        assert_eq!(first(LockStrength::Loose, -(dead - 1.0)), 0);
+        assert!(first(LockStrength::Loose, dead + 200.0) > 0);
+        assert!(first(LockStrength::Loose, -(dead + 200.0)) < 0);
+        // The others have no dead band.
+        assert!(first(LockStrength::Normal, 100.0) > 0);
+        assert!(first(LockStrength::Tight, 100.0) > 0);
+    }
+
+    #[test]
+    fn every_strength_holds_a_wandering_sender_within_its_bound() {
+        let clock = TICKS_PER_CLOCK as f64;
+        let tight = worst_drift(true, 0.10, LockStrength::Tight);
+        let normal = worst_drift(true, 0.10, LockStrength::Normal);
+        let loose = worst_drift(true, 0.10, LockStrength::Loose);
+        assert!(tight < clock / 2.0, "tight {tight}");
+        assert!(normal < clock / 2.0, "normal {normal}");
+        // Loose tolerates its dead band (one clock) and half a clock of staircase.
+        assert!(
+            loose < LockStrength::Loose.dead_band() + clock,
+            "loose {loose}"
+        );
+        assert!(
+            tight <= normal && normal <= loose,
+            "{tight} {normal} {loose}"
+        );
+        let free = worst_drift(false, 0.10, N);
+        assert!(loose < free, "loose {loose} free {free}");
     }
 }
