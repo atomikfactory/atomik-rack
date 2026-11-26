@@ -402,6 +402,9 @@ SelectReference(0) | Reference 1
 SendPlayersToTrack | Send Players to Track
 SeparateStems | Separate Stems…
 SequencerOnly | Sequencer Only
+SetClockLock(Loose) | Clock Lock: Loose
+SetClockLock(Normal) | Clock Lock: Normal
+SetClockLock(Tight) | Clock Lock: Tight
 SetDefaultSong | Use Song as Default Song
 SetEndMarker | Set End Marker at Playhead
 SetFretLabels(Frets) | Fret Numbers
@@ -441,6 +444,7 @@ ToggleChordSheet | Chord Sheet
 ToggleChordTrainer | Chord Trainer
 ToggleClockIn | Follow MIDI Clock
 ToggleClockOut | MIDI Clock Out
+ToggleClockTempoOnly | Follow Tempo Only
 ToggleClockWhileStopped | Send Clock While Stopped
 ToggleCompensation | Delay Compensation
 ToggleCompensation | Delay Compensation
