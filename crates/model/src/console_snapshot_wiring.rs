@@ -13,8 +13,9 @@
 //! cables between the devices the rack has, and nothing more.
 //!
 //! **Recall** re-cables what differs, in the same undo step as the params: the old chains come
-//! off their loops first, then the effects the snapshot does not name leave the rack, the ones
-//! it names that the rack lacks are added again from their kept state (a plugin comes back as
+//! off their loops first, then the effects the snapshot does not name leave the rack (one that has
+//! automation in the song only leaves the chain and waits in the rack, uncabled), the ones it
+//! names that the rack lacks are added again from their kept state (a plugin comes back as
 //! one added by an undo does, loading off the interface thread), each strip's chain is cabled
 //! from the snapshot's members, then the outputs are routed. An effect the rack has and the
 //! snapshot names is the same instance: it is moved into place and its params are updated by
@@ -248,13 +249,19 @@ impl RackDoc {
             }
         }
         // A strip whose snapshot kept the states of its effects says exactly which ones play:
-        // the others, that no chain of the snapshot names, leave the rack.
+        // the others, that no chain of the snapshot names, leave the rack. One that has a track in
+        // the song (its automation) only leaves the chain: deleting it would delete the track, and
+        // a recall back could not bring it back. It waits in the rack, uncabled, and takes its place
+        // in the chain again when a snapshot names it.
         for strip in strips
             .iter()
             .filter(|k| held(k) && wiring[*k].effects.is_some())
         {
             for e in insert_chain(self, registry, strip) {
-                if !taken.contains(&e) && !changes.removes.contains(&e) {
+                if !taken.contains(&e)
+                    && !changes.removes.contains(&e)
+                    && self.song.track(&e).is_none()
+                {
                     changes.removes.push(e);
                 }
             }

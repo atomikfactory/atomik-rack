@@ -7,8 +7,8 @@ mod common;
 
 use atomik_device_sdk::Registry;
 use atomik_model::{
-    Command, ConsoleCommand, Document, InsertEffect, MAX_SNAPSHOTS, SnapshotScope, SyncOp,
-    insert_chain, load_project, save_project,
+    Command, ConsoleCommand, Document, InsertEffect, MAX_SNAPSHOTS, SnapshotScope, SongCommand,
+    SyncOp, insert_chain, load_project, save_project,
 };
 use common::console_ops::assert_console_invariants;
 use common::plugin::{add_plugin, fx_layout, fx_ref, plugin_console_registry, sync_state};
@@ -469,4 +469,32 @@ fn a_new_snapshot_never_takes_an_id_past_what_a_lane_can_name() {
         marker: None,
     });
     assert_eq!(console.next_snapshot_id(), 1, "the lowest free id");
+}
+
+#[test]
+fn an_effect_with_automation_leaves_the_chain_but_stays_in_the_rack() {
+    let (mut d, r) = project();
+    run(&mut d, &r, [store("A")]);
+    run(&mut d, &r, [add_insert_new("channel", 1, DELAY)]);
+    let extra = chain(&d, &r, "channel")[1].clone();
+    run(
+        &mut d,
+        &r,
+        [Command::Song(SongCommand::AddAutomationLane {
+            device: key(&extra),
+            param: "mix".into(),
+        })],
+    );
+    assert!(d.doc().song.track(&key(&extra)).is_some(), "it has a track");
+    one_step(&mut d, &r, recall(1));
+    assert_eq!(chain(&d, &r, "channel"), ["comp"]);
+    assert!(has(&d, &extra), "deleting it would delete its automation");
+    assert!(d.doc().song.track(&key(&extra)).is_some());
+    assert!(
+        d.doc()
+            .cables
+            .iter()
+            .all(|c| c.from.device.0 != extra && c.to.device.0 != extra),
+        "uncabled"
+    );
 }
