@@ -2586,6 +2586,14 @@ Nothing to apply: the sheet is shown as written => Rien à appliquer : la grille
 The song already holds as many chord sheets as it can => Le morceau contient déjà le maximum de grilles d'accords
 
 # Tooltips (one short line each, 90 characters at most)
+Scale source: own notes, song key or a song scale (click: next, right click: before) => Source : propre, ton ou gamme du morceau (clic : suivante, clic droit : précédente)
+Save this device's own scale as a new song scale => Enregistrer la gamme de cet appareil comme gamme du morceau
+Edit the song scale in use: every quantizer that uses it follows => Modifier la gamme du morceau : tous les quantificateurs qui l'utilisent la suivent
+Delete this scale (a quantizer that uses it goes back to its own scale) => Supprimer cette gamme (un quantificateur qui l'utilise reprend la sienne)
+The name the quantizers list this scale by => Le nom sous lequel les quantificateurs listent cette gamme
+Turn this note of the scale on or off => Activer ou couper cette note de la gamme
+The root to fill the notes from => La fondamentale à partir de laquelle remplir les notes
+Fill the notes with this scale on the fill root => Remplir les notes avec cette gamme sur la fondamentale choisie
 Note value of the next typed note => Valeur de la prochaine note saisie
 Dotted note value => Valeur de note pointée
 Triplet note value => Valeur de note en triolet
@@ -3681,3 +3689,11 @@ Play Focus: this song owns the audio stream and plays. Click another song's butt
 Play Focus: click to give the audio stream to this song (the song that has it stops) => Focus de lecture : cliquez pour donner le flux audio à ce morceau (celui qui l'a s'arrête)
 Input Focus: this song takes the MIDI keyboard and controllers, while it also has the Play Focus => Focus d'entrée : ce morceau reçoit le clavier MIDI et les contrôleurs, tant qu'il a aussi le focus de lecture
 Input Focus: click to give the MIDI keyboard and controllers to this song (they sound while it also has the Play Focus) => Focus d'entrée : cliquez pour donner le clavier MIDI et les contrôleurs à ce morceau (ils sonnent tant qu'il a aussi le focus de lecture)
+
+# Song scales
+OWN => PROPRE
+NEW SONG SCALE => NOUVELLE GAMME
+SONG SCALE => GAMME DU MORCEAU
+Give the scale a name => Donnez un nom à la gamme
+Pick at least one note => Choisissez au moins une note
+NEW => NOUVEAU

@@ -461,6 +461,7 @@ pub mod reverb_send_panel;
 pub mod sample_editor;
 pub mod saturation_panel;
 pub mod scale_panel;
+pub mod scale_strip;
 pub mod scene_canvas;
 pub mod search_field;
 pub mod segment_field;

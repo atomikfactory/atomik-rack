@@ -20,6 +20,20 @@
 //! The chord symbol field takes `Am7`, `F#m7b5`, `C/G` and the like (see
 //! [`atomik_model::chord_symbol`]); the buttons and the field follow each other. A symbol that
 //! cannot be read is shown as a hint under the field and `APPLY` waits.
+//!
+//! A **song scale** ([`HarmonyTarget::Scale`], opened from the panel of a CV Quantizer) has a name
+//! field, the twelve notes as toggles and two rows that fill the notes from a root and a scale of the
+//! piano roll; `APPLY` saves it in the song (every quantizer that names it follows) and `REMOVE`
+//! deletes it.
+//!
+//! ```text
+//! SONG SCALE
+//! Name    [ Pentatonic                        ]
+//!         C  D  E  G  A
+//! Notes   [C][C#][D][D#][E][F][F#][G][G#][A][A#][B]      (toggles)
+//! Fill    [C][C#][D] ...                                   (the root to fill from)
+//! Scale   [Chromatic][Major][Natural Minor] ...            (click to fill the notes)
+//! ```
 
 use crate::action::UiAction;
 use crate::canvas::{Align, Canvas};
@@ -30,7 +44,7 @@ use crate::text_field::{FieldColors, TextField};
 use crate::theme::{Theme, mix};
 use crate::tooltip::Help;
 use atomik_model::chord_symbol::{format_chord, parse_chord};
-use atomik_model::harmony::{ChordEvent, Harmony, Key};
+use atomik_model::harmony::{ChordEvent, Harmony, Key, MAX_SCALE_NAME, SongScale};
 use atomik_model::theory::{ChordKind, ScaleKind, pitch_name};
 use vello::kurbo::{Affine, Point, Rect};
 
@@ -66,6 +80,11 @@ pub enum HarmonyTarget {
         /// Its length in ticks.
         length: i64,
     },
+    /// A named song scale: the one with this id, or a new one (`None`).
+    Scale {
+        /// The id of the scale being edited; `None` for a scale that does not exist yet.
+        id: Option<u8>,
+    },
 }
 
 /// What the picker asks the app to do.
@@ -93,6 +112,11 @@ pub enum PickerValue {
         /// The bass note when it is not the root.
         bass: Option<u8>,
     },
+    /// The notes of a song scale (bit `pc` for pitch class `pc`); its name is the text field's.
+    Scale {
+        /// The pitch classes.
+        mask: u16,
+    },
 }
 
 /// The scale kinds a key can have, in menu order.
@@ -119,6 +143,15 @@ fn tones(root: u8, quality: ChordKind, bass: Option<u8>) -> String {
     names.join("  ")
 }
 
+/// The pitch names of the notes of a scale mask, lowest pitch class first (`C  D  E  G  A`).
+fn scale_notes(mask: u16) -> String {
+    (0..12u8)
+        .filter(|pc| mask & (1 << pc) != 0)
+        .map(pitch_name)
+        .collect::<Vec<_>>()
+        .join("  ")
+}
+
 /// The key and chord picker. See the module documentation.
 #[derive(Debug)]
 pub struct HarmonyPickerView {
@@ -134,6 +167,8 @@ pub struct HarmonyPickerView {
     text: TextField,
     /// Why the symbol cannot be read.
     error: Option<String>,
+    /// The root the fill row of a scale picker fills from.
+    fill_root: u8,
     dragging: bool,
     hover: Option<Point>,
     repaint: bool,
@@ -155,7 +190,7 @@ impl HarmonyPickerView {
                 quality,
                 bass,
             } => format_chord(root, quality, bass),
-            PickerValue::Key(_) => String::new(),
+            PickerValue::Key(_) | PickerValue::Scale { .. } => String::new(),
         };
         let mut field = TextField::new(&text, 24, false);
         field.select_all();
@@ -169,6 +204,7 @@ impl HarmonyPickerView {
             existing,
             text: field,
             error: None,
+            fill_root: 0,
             dragging: false,
             hover: None,
             repaint: true,
@@ -215,9 +251,23 @@ impl HarmonyPickerView {
         self.text.text()
     }
 
-    /// Whether the panel takes typed text: a chord picker has a symbol field.
+    /// Whether the panel takes typed text: a chord picker has a symbol field, a scale picker a
+    /// name field.
     pub fn is_text_owner(&self) -> bool {
-        self.is_chord()
+        self.has_field()
+    }
+
+    /// The scale picker with `name` in its name field.
+    pub fn named(mut self, name: &str) -> Self {
+        self.text = TextField::new(name, MAX_SCALE_NAME, false);
+        self.text.select_all();
+        self.refresh_scale_error();
+        self
+    }
+
+    /// The name typed in a scale picker (trimmed).
+    pub fn scale_name(&self) -> &str {
+        self.text.text().trim()
     }
 
     /// True when something changed since the last [`Self::paint`].
@@ -227,6 +277,38 @@ impl HarmonyPickerView {
 
     fn is_chord(&self) -> bool {
         matches!(self.value, PickerValue::Chord { .. })
+    }
+
+    fn is_scale(&self) -> bool {
+        matches!(self.value, PickerValue::Scale { .. })
+    }
+
+    /// Whether the panel has a text field (the chord symbol or the scale name).
+    fn has_field(&self) -> bool {
+        self.is_chord() || self.is_scale()
+    }
+
+    /// What keeps a scale from being saved: no name, or no note.
+    fn refresh_scale_error(&mut self) {
+        if let PickerValue::Scale { mask } = self.value {
+            self.error = if self.scale_name().is_empty() {
+                Some("Give the scale a name".to_owned())
+            } else if mask == 0 {
+                Some("Pick at least one note".to_owned())
+            } else {
+                None
+            };
+        }
+        self.repaint = true;
+    }
+
+    /// The scales the fill row offers: a key never is chromatic, a scale can be.
+    fn scale_kinds(&self) -> Vec<ScaleKind> {
+        if self.is_scale() {
+            ScaleKind::ALL.to_vec()
+        } else {
+            key_scales().collect()
+        }
     }
 
     /// Whether `APPLY` can go ahead (a chord symbol that cannot be read waits).
@@ -262,6 +344,12 @@ impl HarmonyPickerView {
                     harmony.with_chord(chord)
                 }
             }
+            (HarmonyTarget::Scale { id }, PickerValue::Scale { mask }) => {
+                let id = id
+                    .or_else(|| harmony.next_scale_id())
+                    .ok_or_else(|| "the song has the most scales already".to_owned())?;
+                harmony.with_scale(SongScale::new(id, self.scale_name(), mask))
+            }
             _ => Err("the picker holds the wrong kind of value".to_owned()),
         }
     }
@@ -272,6 +360,9 @@ impl HarmonyPickerView {
             HarmonyTarget::SongKey => harmony.with_key(None),
             HarmonyTarget::KeyChange { tick } => harmony.with_key_change(tick, None),
             HarmonyTarget::Chord { tick, .. } => Ok(harmony.without_chord(tick)),
+            HarmonyTarget::Scale { id } => {
+                Ok(id.map_or_else(|| harmony.clone(), |id| harmony.without_scale(id)))
+            }
         }
     }
 
@@ -286,6 +377,7 @@ impl HarmonyPickerView {
                     *bass = None;
                 }
             }
+            PickerValue::Scale { .. } => {}
         }
         self.sync_text();
     }
@@ -311,6 +403,22 @@ impl HarmonyPickerView {
         self.repaint = true;
     }
 
+    /// Turns note `pc` of a scale on or off.
+    fn toggle_note(&mut self, pc: u8) {
+        if let PickerValue::Scale { mask } = &mut self.value {
+            *mask ^= 1 << (pc % 12);
+        }
+        self.refresh_scale_error();
+    }
+
+    /// Fills the notes of a scale picker from `kind` on the fill root.
+    fn fill_notes(&mut self, kind: ScaleKind) {
+        if let PickerValue::Scale { mask } = &mut self.value {
+            *mask = atomik_model::theory::Scale::new(self.fill_root, kind).pitch_mask();
+        }
+        self.refresh_scale_error();
+    }
+
     /// Writes the chord of the buttons into the symbol field.
     fn sync_text(&mut self) {
         if let PickerValue::Chord {
@@ -323,6 +431,15 @@ impl HarmonyPickerView {
             self.error = None;
         }
         self.repaint = true;
+    }
+
+    /// The text field changed: a chord symbol moves the buttons, a scale name is checked.
+    fn text_edited(&mut self) {
+        if self.is_scale() {
+            self.refresh_scale_error();
+        } else {
+            self.sync_value();
+        }
     }
 
     /// Reads the symbol field into the buttons' value.
@@ -344,7 +461,7 @@ impl HarmonyPickerView {
     // ------------------------------------------------------------------ geometry
 
     fn field_row_h(&self) -> f64 {
-        if self.is_chord() {
+        if self.has_field() {
             FIELD_H + NOTE_H + ROW_GAP
         } else {
             0.0
@@ -353,6 +470,10 @@ impl HarmonyPickerView {
 
     fn lower_rows_h(&self) -> f64 {
         let root = BTN_H + ROW_GAP;
+        if self.is_scale() {
+            let rows = self.scale_kinds().len().div_ceil(SCALE_COLUMNS) as f64;
+            return root * 2.0 + rows * (BTN_H + GAP) - GAP + ROW_GAP;
+        }
         if self.is_chord() {
             let rows = ChordKind::ALL.len().div_ceil(QUALITY_COLUMNS) as f64;
             root + rows * (BTN_H + GAP) - GAP + ROW_GAP + BTN_H + ROW_GAP
@@ -384,7 +505,7 @@ impl HarmonyPickerView {
         self.panel().y0 + HEADER_H + ROW_GAP
     }
 
-    /// The symbol field (a chord picker only).
+    /// The symbol or name field (a chord or scale picker only).
     pub fn field_rect(&self) -> Rect {
         let (x0, x1) = self.content_x();
         Rect::new(x0, self.top(), x1, self.top() + FIELD_H)
@@ -409,7 +530,13 @@ impl HarmonyPickerView {
     }
 
     fn lower_top(&self) -> f64 {
-        self.root_top() + BTN_H + ROW_GAP
+        let rows = if self.is_scale() { 2.0 } else { 1.0 };
+        self.root_top() + rows * (BTN_H + ROW_GAP)
+    }
+
+    /// The button of pitch class `pc` in the fill row of a scale picker.
+    pub fn fill_root_rect(&self, pc: u8) -> Rect {
+        self.grid_button(self.root_top() + BTN_H + ROW_GAP, usize::from(pc % 12), 12)
     }
 
     /// The button of the chord quality `i` (an index into [`ChordKind::ALL`]).
@@ -481,6 +608,9 @@ impl HarmonyPickerView {
                 HarmonyTarget::SongKey => "Take the song key away (one undo step)",
                 HarmonyTarget::KeyChange { .. } => "Delete this key change (one undo step)",
                 HarmonyTarget::Chord { .. } => "Delete this chord (one undo step)",
+                HarmonyTarget::Scale { .. } => {
+                    "Delete this scale (a quantizer that uses it goes back to its own scale)"
+                }
             };
             return help(self.remove_rect(), text);
         }
@@ -489,6 +619,33 @@ impl HarmonyPickerView {
                 self.field_rect(),
                 "Type a chord: Am7, F#m7b5, C/G, Bbmaj7, Dsus4",
             );
+        }
+        if self.is_scale() {
+            if self.field_rect().contains(pos) {
+                return help(
+                    self.field_rect(),
+                    "The name the quantizers list this scale by",
+                );
+            }
+            if (0..12u8).any(|pc| self.root_rect(pc).contains(pos)) {
+                return help(
+                    self.root_rect(0).union(self.root_rect(11)),
+                    "Turn this note of the scale on or off",
+                );
+            }
+            if (0..12u8).any(|pc| self.fill_root_rect(pc).contains(pos)) {
+                return help(
+                    self.fill_root_rect(0).union(self.fill_root_rect(11)),
+                    "The root to fill the notes from",
+                );
+            }
+            if (0..self.scale_kinds().len()).any(|i| self.scale_rect(i).contains(pos)) {
+                return help(
+                    self.scale_rect(0)
+                        .union(self.scale_rect(self.scale_kinds().len() - 1)),
+                    "Fill the notes with this scale on the fill root",
+                );
+            }
         }
         None
     }
@@ -520,8 +677,8 @@ impl HarmonyPickerView {
                 clicks,
             } => self.press(*pos, *clicks, modifiers.shift, &mut out),
             UiEvent::Ime(ime) => {
-                if self.is_chord() && self.text.handle_ime(ime) {
-                    self.sync_value();
+                if self.has_field() && self.text.handle_ime(ime) {
+                    self.text_edited();
                 }
             }
             UiEvent::Key {
@@ -529,9 +686,9 @@ impl HarmonyPickerView {
                 modifiers,
                 pressed: true,
             } => {
-                let used = self.is_chord() && self.text.handle_key(key, *modifiers).handled();
+                let used = self.has_field() && self.text.handle_key(key, *modifiers).handled();
                 if used {
-                    self.sync_value();
+                    self.text_edited();
                 } else if matches!(key, UiKey::Enter) && self.can_apply() {
                     out.push(UiAction::Harmony(HarmonyPickerAction::Apply));
                 }
@@ -551,9 +708,11 @@ impl HarmonyPickerView {
             }
         } else if self.existing && self.remove_rect().contains(pos) {
             out.push(UiAction::Harmony(HarmonyPickerAction::Remove));
-        } else if self.is_chord() && self.field_rect().contains(pos) {
+        } else if self.has_field() && self.field_rect().contains(pos) {
             self.dragging = true;
             self.text.press(pos, clicks, shift);
+        } else if self.is_scale() {
+            self.press_scale(pos);
         } else if let Some(pc) = (0..12u8).find(|pc| self.root_rect(*pc).contains(pos)) {
             self.set_root(pc);
             self.audition(out);
@@ -575,6 +734,24 @@ impl HarmonyPickerView {
             .map(|(_, k)| k)
         {
             self.set_scale_kind(kind);
+        }
+    }
+
+    /// A press in a scale picker below the name field: a note, a fill root or a scale to fill from.
+    fn press_scale(&mut self, pos: Point) {
+        if let Some(pc) = (0..12u8).find(|pc| self.root_rect(*pc).contains(pos)) {
+            self.toggle_note(pc);
+        } else if let Some(pc) = (0..12u8).find(|pc| self.fill_root_rect(*pc).contains(pos)) {
+            self.fill_root = pc;
+            self.repaint = true;
+        } else if let Some(kind) = self
+            .scale_kinds()
+            .into_iter()
+            .enumerate()
+            .find(|(i, _)| self.scale_rect(*i).contains(pos))
+            .map(|(_, k)| k)
+        {
+            self.fill_notes(kind);
         }
     }
 
@@ -669,6 +846,56 @@ impl HarmonyPickerView {
             for pc in 0..12u8 {
                 let r = self.bass_rect(Some(pc));
                 sp::button(c, st, r, pitch_name(pc), lit(bass == Some(pc)), hovered(r));
+            }
+        } else if let PickerValue::Scale { mask } = self.value {
+            let r = self.field_rect();
+            label(c, "Name", r.y0 + 2.0);
+            sp::lcd(c, st, r, Some(t.focus));
+            let colors = FieldColors {
+                text: t.text,
+                caret: t.text,
+                selection: mix(t.lcd, t.focus, 0.5),
+            };
+            self.text.paint(c, r, FONT, 14.0, colors, true);
+            let (x0, x1) = self.content_x();
+            let (note, color) = match &self.error {
+                Some(e) => (e.clone(), st.mute),
+                None => (scale_notes(mask), t.text_muted),
+            };
+            sp::label(
+                c,
+                &fit_label(&note, x1 - x0, 9.5),
+                x0,
+                r.y1 + 13.0,
+                9.5,
+                color,
+                Align::Start,
+            );
+            label(c, "Notes", self.root_rect(0).y0);
+            for pc in 0..12u8 {
+                let r = self.root_rect(pc);
+                let on = mask & (1 << pc) != 0;
+                sp::button(c, st, r, pitch_name(pc), lit(on), hovered(r));
+            }
+            label(c, "Fill", self.fill_root_rect(0).y0);
+            for pc in 0..12u8 {
+                let r = self.fill_root_rect(pc);
+                sp::button(
+                    c,
+                    st,
+                    r,
+                    pitch_name(pc),
+                    lit(pc == self.fill_root),
+                    hovered(r),
+                );
+            }
+            label(c, "Scale", self.scale_rect(0).y0);
+            for (i, kind) in self.scale_kinds().into_iter().enumerate() {
+                let r = self.scale_rect(i);
+                let text = fit_label(kind.label(), r.width() - 6.0, 9.0);
+                let same =
+                    atomik_model::theory::Scale::new(self.fill_root, kind).pitch_mask() == mask;
+                sp::button(c, st, r, &text, lit(same), hovered(r));
             }
         } else if let PickerValue::Key(key) = self.value {
             label(c, "Root", self.root_rect(0).y0);
@@ -878,5 +1105,129 @@ mod tests {
         assert!(p.contains_rect(v.bass_rect(None)));
         assert!(p.contains_rect(v.bass_rect(Some(11))));
         assert!(p.contains_rect(v.apply_rect()) && p.contains_rect(v.remove_rect()));
+    }
+
+    fn scale_picker(id: Option<u8>, name: &str, mask: u16) -> HarmonyPickerView {
+        HarmonyPickerView::new(
+            Theme::dark(),
+            HarmonyTarget::Scale { id },
+            "SONG SCALE",
+            PickerValue::Scale { mask },
+            id.is_some(),
+        )
+        .named(name)
+    }
+
+    fn type_text(v: &mut HarmonyPickerView, text: &str) {
+        for ch in text.chars() {
+            v.handle(&UiEvent::Key {
+                key: UiKey::Char(ch),
+                modifiers: Modifiers::NONE,
+                pressed: true,
+            });
+        }
+    }
+
+    #[test]
+    fn a_scale_picker_toggles_notes_and_fills_them_from_a_root_and_a_scale() {
+        let mut v = scale_picker(None, "Mine", 0b1);
+        assert!(v.is_text_owner());
+        let r = v.root_rect(4);
+        click(&mut v, r);
+        assert_eq!(v.value(), PickerValue::Scale { mask: 0b1_0001 });
+        let r = v.root_rect(4);
+        click(&mut v, r);
+        assert_eq!(
+            v.value(),
+            PickerValue::Scale { mask: 0b1 },
+            "a second click turns it off"
+        );
+        // Fill from A minor pentatonic: A C D E G.
+        let r = v.fill_root_rect(9);
+        click(&mut v, r);
+        let i = v
+            .scale_kinds()
+            .iter()
+            .position(|k| *k == ScaleKind::MinorPentatonic)
+            .unwrap();
+        let r = v.scale_rect(i);
+        click(&mut v, r);
+        assert_eq!(
+            v.value(),
+            PickerValue::Scale {
+                mask: 0b10_1001_0101
+            }
+        );
+        assert!(
+            v.scale_kinds().contains(&ScaleKind::Chromatic),
+            "a scale may be chromatic"
+        );
+    }
+
+    #[test]
+    fn a_scale_needs_a_name_and_a_note_before_apply_goes_ahead() {
+        let mut v = scale_picker(None, "", 0b1);
+        assert!(v.error().is_some() && !v.can_apply(), "no name");
+        let apply = v.apply_rect();
+        assert!(click(&mut v, apply).is_empty());
+        type_text(&mut v, "Dream");
+        assert!(v.can_apply(), "{:?}", v.error());
+        // Turn the only note off.
+        let r = v.root_rect(0);
+        click(&mut v, r);
+        assert_eq!(v.error(), Some("Pick at least one note"));
+        assert!(!v.can_apply());
+        let r = v.root_rect(2);
+        click(&mut v, r);
+        let apply = v.apply_rect();
+        assert!(matches!(
+            click(&mut v, apply).as_slice(),
+            [UiAction::Harmony(HarmonyPickerAction::Apply)]
+        ));
+    }
+
+    #[test]
+    fn a_new_scale_takes_the_next_id_and_an_old_one_keeps_its_id() {
+        let base = Harmony::default()
+            .with_scale(SongScale::new(1, "One", 0b1))
+            .unwrap();
+        let new = scale_picker(None, "Two", 0b101);
+        let h = new.apply_to(&base).unwrap();
+        assert_eq!(h.scales.len(), 2);
+        assert_eq!(h.scale_named("two").unwrap().id, 2);
+        let edit = scale_picker(Some(1), "Uno", 0b11);
+        let h = edit.apply_to(&base).unwrap();
+        assert_eq!(h.scales, vec![SongScale::new(1, "Uno", 0b11)]);
+        assert!(
+            h.scale_named("One").is_none(),
+            "a rename drops the old name"
+        );
+        // A name another scale has is refused.
+        let clash = scale_picker(None, "one", 0b1);
+        assert!(clash.apply_to(&base).is_err());
+        // REMOVE deletes it.
+        let gone = edit.remove_from(&h).unwrap();
+        assert!(gone.scales.is_empty());
+        let remove = edit.remove_rect();
+        let mut edit = edit;
+        assert!(matches!(
+            click(&mut edit, remove).as_slice(),
+            [UiAction::Harmony(HarmonyPickerAction::Remove)]
+        ));
+    }
+
+    #[test]
+    fn the_scale_picker_fits_its_panel() {
+        let v = scale_picker(Some(1), "X", 0b1);
+        let p = v.panel();
+        for pc in 0..12 {
+            assert!(p.contains_rect(v.root_rect(pc)), "{pc}");
+            assert!(p.contains_rect(v.fill_root_rect(pc)), "{pc}");
+        }
+        for i in 0..v.scale_kinds().len() {
+            assert!(p.contains_rect(v.scale_rect(i)), "{i}");
+        }
+        assert!(p.contains_rect(v.apply_rect()) && p.contains_rect(v.remove_rect()));
+        assert!(p.contains_rect(v.field_rect()));
     }
 }

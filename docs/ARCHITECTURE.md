@@ -269,7 +269,8 @@ WAV ◄──wav::write── Vec<Vec<f32>> ◄──render_offline── Engine
   `"compat": 44` and list the root `"headphone"` map (the data imported into Headphone Correction devices, keyed by the device's
   path key, written only when a device has any; see `crates/model/src/headphone.rs`), the launcher, the per-note
   expression, a note clip's `"tab"`, the song's `"sheets"` (see 6s) and the song's `"key"`, `"key_changes"` and
-  `"chords"` (the song key and the chord lane, written only when set; see `Song::harmony`) as ignorable, so a reader of
+  `"chords"` (the song key and the chord lane) and `"scales"` (the named scales of the quantizers), written only
+  when set (see `Song::harmony`), as ignorable, so a reader of
   44 opens them; version 44
   adds a note track's own `"controllers"` (pitch bend, aftertouch and CC lanes outside the note clips, written
   only when a track has any; a reader of 43 refuses them, since it would play the track without them; see

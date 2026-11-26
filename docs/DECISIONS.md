@@ -2437,3 +2437,21 @@ frame step in small slices (a slice of a project load cannot be cut); one cache 
 change).
 
 **Status.** Default (not yet confirmed). Decided by: none yet.
+## CB. Song scales are part of the harmony, quantizers name them by id, and the format stays
+
+**Question.** Where do scales shared between quantizers live, and how does a quantizer pick one by name?
+
+**Decision.** The named scales (up to 16: an id, a name, twelve pitch classes) are a field of `Harmony`, saved as the
+optional ignorable song field `scales` of the current format, so an edit is one `SetHarmony` (one undo step) and
+reaches the engine with the song swap. The engine carries the whole table in every batch's `HarmonyNow`. A CV
+Quantizer saves the scale's id (`scale.source` named, `scale.id`), so a rename keeps every link; an id the song lacks
+leaves it on its own scale. A new scale takes the id after the highest in use. The delay line of the Gate Processor is
+one bit per sample and a minute long so a synced delay of four bars fits at any tempo.
+
+**Why.** Reusing the harmony command and compile path needs no new command, history entry or engine message. Ids keep
+links through renames and edits.
+
+**Rejected.** Storing the name in the device (a rename would break links, and the audio thread would need strings); a
+separate song command for scales (more plumbing for the same undo behaviour); a format bump (the field is ignorable).
+
+**Status.** Chosen by the implementing agent for review.

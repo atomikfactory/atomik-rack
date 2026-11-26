@@ -185,6 +185,7 @@ fn a_harmony_edit_reaches_the_engine_with_the_song() {
     let mut c = core();
     c.sink_mut().take();
     let h = Harmony {
+        scales: Vec::new(),
         key: Some(Key::new(0, ScaleKind::Major)),
         changes: Vec::new(),
         chords: vec![ChordEvent::new(0, BAR, 9, ChordKind::Minor)],
@@ -210,6 +211,7 @@ fn the_rack_is_told_the_key_and_chord_at_the_playhead() {
     c.frame();
     assert_eq!(c.view().song_harmony(), (None, None));
     c.set_harmony(Harmony {
+        scales: Vec::new(),
         key: Some(Key::new(9, ScaleKind::NaturalMinor)),
         changes: Vec::new(),
         chords: vec![ChordEvent::new(0, BAR, 5, ChordKind::MajorSeventh)],

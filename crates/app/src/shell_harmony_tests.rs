@@ -219,3 +219,76 @@ fn detect_song_key_sets_the_key_of_the_notes_in_one_undo_step() {
     assert!(s.core_mut().undo());
     assert_eq!(s.core().harmony().key, None);
 }
+
+fn with_quantizer() -> Shell<NullBackend> {
+    let mut s = shell();
+    s.core_mut()
+        .apply_command(atomik_model::Command::AddDevice {
+            index: usize::MAX,
+            type_id: "atomik.cv-quantizer".into(),
+            key: Some(atomik_model::DeviceKey("q".into())),
+        })
+        .unwrap();
+    s
+}
+
+fn picker_action(own: u16, id: Option<u8>) -> UiAction {
+    UiAction::SongScalePicker {
+        device: atomik_model::DeviceKey("q".into()),
+        id,
+        own,
+    }
+}
+
+#[test]
+fn a_new_song_scale_from_a_quantizer_is_saved_in_the_song_and_the_quantizer_names_it() {
+    let mut s = with_quantizer();
+    s.pane_actions(&[picker_action(0b1_0001_0101, None)]);
+    let v = s.harmony_picker_view().expect("the scale picker");
+    assert_eq!(v.target(), HarmonyTarget::Scale { id: None });
+    assert_eq!(v.scale_name(), "Scale", "a name nobody has");
+    assert!(s.wants_text_input(), "the name field takes typed text");
+    let apply = v.apply_rect().center();
+    click_n(&mut s, apply, 1);
+    assert!(s.harmony_picker_view().is_none());
+    let scales = s.core().harmony().scales.clone();
+    assert_eq!(scales.len(), 1);
+    assert_eq!(
+        (scales[0].name.as_str(), scales[0].mask),
+        ("Scale", 0b1_0001_0101)
+    );
+    // The quantizer follows the new scale (source named, its id).
+    let dev = s
+        .core()
+        .doc()
+        .devices
+        .iter()
+        .find(|d| d.key.0 == "q")
+        .unwrap();
+    assert_eq!(dev.params.get("scale.source"), Some(&2.0));
+    assert_eq!(dev.params.get("scale.id"), Some(&f32::from(scales[0].id)));
+}
+
+#[test]
+fn editing_a_song_scale_is_one_undo_step_and_remove_deletes_it() {
+    let mut s = with_quantizer();
+    s.pane_actions(&[picker_action(0b101, None)]);
+    let apply = s.harmony_picker_view().unwrap().apply_rect().center();
+    click_n(&mut s, apply, 1);
+    let id = s.core().harmony().scales[0].id;
+    // Edit: turn the note D (pitch class 2) off.
+    s.pane_actions(&[picker_action(0, Some(id))]);
+    let v = s.harmony_picker_view().unwrap();
+    assert_eq!(v.target(), HarmonyTarget::Scale { id: Some(id) });
+    let (d, apply) = (v.root_rect(1).center(), v.apply_rect().center());
+    click_n(&mut s, d, 1);
+    click_n(&mut s, apply, 1);
+    assert_eq!(s.core().harmony().scales[0].mask, 0b111);
+    assert!(s.core_mut().undo());
+    assert_eq!(s.core().harmony().scales[0].mask, 0b101);
+    // REMOVE.
+    s.pane_actions(&[picker_action(0, Some(id))]);
+    let remove = s.harmony_picker_view().unwrap().remove_rect().center();
+    click_n(&mut s, remove, 1);
+    assert!(s.core().harmony().scales.is_empty());
+}

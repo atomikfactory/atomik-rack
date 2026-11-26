@@ -300,7 +300,10 @@ pub use console_snapshot_lane::{SNAPSHOT_LANE_KEY, SNAPSHOT_LANE_PARAM, lane_sna
 pub use console_snapshot_wiring::SnapshotWiring;
 pub use controller::{ControllerKind, ControllerLane};
 pub use groove::{Groove, GrooveSlot, QuantizeParams};
-pub use harmony::{ChordEvent, Harmony, Key, KeyChange, MAX_CHORDS, MAX_KEY_CHANGES};
+pub use harmony::{
+    ChordEvent, Harmony, Key, KeyChange, MAX_CHORDS, MAX_KEY_CHANGES, MAX_SCALE_NAME, MAX_SCALES,
+    SongScale,
+};
 pub use history::InvariantError;
 use history::{Edit, Swap, song_end_growth};
 pub use key_detect::{

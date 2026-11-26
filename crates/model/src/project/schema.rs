@@ -87,6 +87,7 @@ pub(crate) enum Obj {
     Key,
     KeyChange,
     Chord,
+    SongScale,
 }
 
 impl Obj {
@@ -118,6 +119,7 @@ impl Obj {
             Obj::Key => &["song.key"],
             Obj::KeyChange => &["song.key_changes[]"],
             Obj::Chord => &["song.chords[]"],
+            Obj::SongScale => &["song.scales[]"],
             Obj::Track => &["song.tracks[]"],
             Obj::Frozen => &["song.tracks[].frozen"],
             Obj::NotesLane | Obj::AudioLane | Obj::AutomationLane => &["song.tracks[].lanes[]"],
@@ -404,6 +406,7 @@ pub(crate) static SPECS: &[FieldSpec] = &[
     field(Song, "key", 45).ignorable(),
     field(Song, "key_changes", 45).ignorable(),
     field(Song, "chords", 45).ignorable(),
+    field(Song, "scales", 46).ignorable(),
     field(Song, "sheets", 45).ignorable(),
     field(Song, "tracks", 1).req(),
     field(Key, "root", 45).ignorable().req(),
@@ -416,6 +419,9 @@ pub(crate) static SPECS: &[FieldSpec] = &[
     field(Chord, "root", 45).ignorable().req(),
     field(Chord, "quality", 45).ignorable().req(),
     field(Chord, "bass", 45).ignorable(),
+    field(SongScale, "id", 46).ignorable().req(),
+    field(SongScale, "name", 46).ignorable().req(),
+    field(SongScale, "mask", 46).ignorable().req(),
     field(Launcher, "quantize", 45).ignorable(),
     field(Launcher, "stop_empty", 45).ignorable(),
     field(Launcher, "scenes", 45).ignorable(),

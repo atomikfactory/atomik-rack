@@ -287,6 +287,7 @@ pub fn plugin_layout(desc: &DeviceDescriptor, doc: &PluginDoc) -> PanelSpec {
         drum_gen: None,
         arp: None,
         key_chord: None,
+        scale_strip: None,
         chord_wheel: None,
         modsrc: None,
         wavetable: None,

@@ -152,6 +152,7 @@ fn the_key_at_the_start_of_the_clip_is_the_one_it_follows() {
         Vec::new(),
     );
     let h = Harmony {
+        scales: Vec::new(),
         key: Some(a_minor()),
         changes: vec![KeyChange {
             tick: 0,
@@ -163,6 +164,7 @@ fn the_key_at_the_start_of_the_clip_is_the_one_it_follows() {
     assert_eq!(v.scale(), Some(Scale::new(0, ScaleKind::Major)));
     // A change after the clip's start does not move what it follows.
     let h = Harmony {
+        scales: Vec::new(),
         key: Some(a_minor()),
         changes: vec![KeyChange {
             tick: 8 * BAR,
@@ -177,6 +179,7 @@ fn the_key_at_the_start_of_the_clip_is_the_one_it_follows() {
 #[test]
 fn a_clip_that_moves_follows_the_key_at_its_new_start() {
     let h = Harmony {
+        scales: Vec::new(),
         key: Some(a_minor()),
         changes: vec![KeyChange {
             tick: 8 * BAR,
