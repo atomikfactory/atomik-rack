@@ -215,6 +215,41 @@ pub(crate) static DIVISIONS: [&str; 12] = [
     "1/32", "1/16T", "1/16", "1/16D", "1/8T", "1/8", "1/8D", "1/4T", "1/4", "1/4D", "1/2", "1/1",
 ];
 
+/// The note values of a time that follows the tempo, shortest first: 1/64 to 1/1, each as a
+/// triplet (`T`), plain and dotted (`D`), then one, two and four bars.
+pub(crate) static NOTE_VALUES: [&str; 24] = [
+    "1/64T", "1/64", "1/64D", "1/32T", "1/32", "1/32D", "1/16T", "1/16", "1/16D", "1/8T", "1/8",
+    "1/8D", "1/4T", "1/4", "1/4D", "1/2T", "1/2", "1/2D", "1/1T", "1/1", "1/1D", "1 bar", "2 bars",
+    "4 bars",
+];
+
+/// The index in [`NOTE_VALUES`] of 1/8.
+pub(crate) const NOTE_1_8: f32 = 10.0;
+
+/// The length of the note value `index` of [`NOTE_VALUES`] in quarter-note beats. A bar is the
+/// bar of the time signature `(numerator, denominator)` in effect; the other values are fixed
+/// fractions of a whole note (4 beats), a triplet two thirds and a dotted one three halves of
+/// the plain value. An index past the table is the last one.
+pub(crate) fn note_value_beats(index: usize, time_signature: (u8, u8)) -> f64 {
+    let index = index.min(NOTE_VALUES.len() - 1);
+    if index < 21 {
+        let base = 4.0 / f64::from(1u32 << (6 - index / 3));
+        return match index % 3 {
+            0 => base * 2.0 / 3.0,
+            1 => base,
+            _ => base * 1.5,
+        };
+    }
+    let (num, den) = time_signature;
+    let bar = f64::from(num.max(1)) * 4.0 / f64::from(den.max(1));
+    bar * f64::from([1u32, 2, 4][index - 21])
+}
+
+/// A time of `beats` quarter notes at `bpm` as a whole number of samples (rounded).
+pub(crate) fn beats_to_samples(beats: f64, bpm: f64, sample_rate: f32) -> f64 {
+    (beats * 60.0 / bpm * f64::from(sample_rate)).round()
+}
+
 /// The one-pole coefficient `1 - exp(-1 / (ms * sample_rate / 1000))` of a time constant, from the
 /// deterministic `2^x` (the same bits on every platform). A time of one sample or less gives 1
 /// (instant). Devices with long times keep their state in `f64` so a small step still counts.

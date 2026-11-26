@@ -19,7 +19,9 @@ pub mod theory;
 mod time;
 
 pub use callback_deadline::CallbackDeadline;
-pub use harmony::{HarmonyMark, HarmonyNow, SongChord, SongHarmony};
+pub use harmony::{
+    HarmonyMark, HarmonyNow, MAX_SONG_SCALES, ScaleSlot, ScaleTable, SongChord, SongHarmony,
+};
 pub use meter_map::{
     BEAT_UNITS, MAX_BEATS_PER_BAR, MeterEvent, MeterMap, MeterSegment, MeterTable, compile_meter,
     meter_ok,

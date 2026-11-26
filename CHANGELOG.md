@@ -129,6 +129,24 @@ may break APIs and the patch and project formats.
   "Channel <name> is locked" is shown once per gesture. Mixer > Channel Strip > Lock / Unlock Channel (no default key)
   and the strip's right-click menu do the same for the selection. The lock is an undoable edit and is saved in the
   project (a new optional field, project format 46, which older builds ignore: they open the mix unlocked).
+- **The gate processor's delay and length can be set in note values.** Each has a sync switch (`delay.sync`,
+  `length.sync`) and a note value (`delay.note`, `length.note`) from 1/64 to 1/1 as triplet, plain and dotted, then one,
+  two and four bars of the time signature, taken from the transport tempo; a tempo change moves a synced time at once.
+  A synced delay is kept inside the delay line (a minute); a synced length always replaces the gate. The switches are
+  off in a project saved before them, which plays and bounces exactly as it did.
+- **Sample and Hold can track for a set length.** In track mode, `track.length` picks how long the output follows the
+  input from each tick: half a cycle (as before), a time in ms (`track.ms`) or a note value of the tempo
+  (`track.note`, 1/64 to four bars, triplet and dotted). The next tick starts the stretch again; with the trigger clock
+  it starts at the rising edge and no longer depends on how long the gate stays high. A project saved before the
+  setting tracks half a cycle, as it did.
+- **Song scales that several CV Quantizers share.** The song can hold up to 16 named scales (a name and any set of the
+  twelve notes), saved in the project as the optional field `scales` (ignorable, so the project format does not change
+  and an older build opens the song with every quantizer on its own scale). A quantizer's panel has a name tag that a
+  click cycles through its own notes, the song key and the song scales by name (right click goes back), NEW to save
+  its own scale as a song scale and EDIT to change the one in use: a name, the notes, or a fill from a root and a
+  scale of the piano roll, with REMOVE to delete it. Every quantizer that uses a scale follows an edit at once, and
+  one undo takes it back. A quantizer saves the scale's id, so renaming keeps the links and a deleted scale leaves
+  its quantizers on their own notes.
 
 ### Changed
 - **The device CPU readout no longer allocates in a playing window.** Each pass (about five a second) rebuilt every

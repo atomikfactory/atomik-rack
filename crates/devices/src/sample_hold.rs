@@ -24,10 +24,17 @@
 //!   while `trig_in` is high; with `free` and `tempo` it tracks for the first half of every
 //!   cycle. In both modes `clock_out` pulses at each tick (the start of a tracking stretch). With
 //!   no cable on `cv_in` the tracked value is the noise sampled at the tick.
+//! * **Track length.** `track.length` `half` is the tracking above. `ms` tracks for `track.ms` and
+//!   `note` for the note value `track.note` (1/64 to four bars, triplet and dotted, bars of the time
+//!   signature) of the transport tempo, from each tick; the next tick starts it again, and a length
+//!   longer than the cycle tracks all the time. With the `trigger` clock the stretch starts at the
+//!   rising edge and no longer depends on how long the gate stays high. The length is counted in
+//!   samples from the tick (at least one), so a locate and a bounce count it the same way.
 //! * Before the first tick the output is 0. No latency; allocation-free.
 
 use crate::tool_support::{
-    DIVISIONS, GateIn, choice, cv_in, cv_out, expo, finite, linear, pulse_samples,
+    DIVISIONS, GateIn, NOTE_VALUES, beats_to_samples, choice, cv_in, cv_out, expo,
+    finite, linear, note_value_beats, pulse_samples,
 };
 use atomik_core::{BATCH, PPQ, ParamDescriptor, ParamId, Unit};
 use atomik_device_sdk::{
@@ -41,6 +48,9 @@ const P_RATE: u32 = 1;
 const P_DIVISION: u32 = 2;
 const P_LEVEL: u32 = 3;
 const P_MODE: u32 = 4;
+const P_TRACK_LENGTH: u32 = 5;
+const P_TRACK_MS: u32 = 6;
+const P_TRACK_NOTE: u32 = 7;
 
 const CV_IN: SocketId = SocketId(0);
 const TRIG_IN: SocketId = SocketId(1);
@@ -59,12 +69,44 @@ static CLOCKS: [&str; 3] = ["trigger", "free", "tempo"];
 
 static MODES: [&str; 2] = ["sample", "track"];
 
-static PARAMS: [ParamDescriptor; 5] = [
+/// The index in `NOTE_VALUES` of 1/16, the default `track.note`.
+const DEFAULT_NOTE: f32 = 7.0;
+
+const TRACK_HALF: u8 = 0;
+const TRACK_MS: u8 = 1;
+const TRACK_NOTE: u8 = 2;
+
+static TRACK_LENGTHS: [&str; 3] = ["half", "ms", "note"];
+
+static PARAMS: [ParamDescriptor; 8] = [
     choice(P_CLOCK, "clock", "Clock", &CLOCKS, 0.0),
     expo(P_RATE, "rate", "Rate", 0.1, 200.0, 4.0, Unit::Hz),
     choice(P_DIVISION, "division", "Division", &DIVISIONS, 5.0),
     linear(P_LEVEL, "level", "Level", -1.0, 1.0, 1.0, Unit::Percent),
     choice(P_MODE, "mode", "Mode", &MODES, 0.0),
+    choice(
+        P_TRACK_LENGTH,
+        "track.length",
+        "Track length",
+        &TRACK_LENGTHS,
+        0.0,
+    ),
+    linear(
+        P_TRACK_MS,
+        "track.ms",
+        "Track time",
+        1.0,
+        2000.0,
+        100.0,
+        Unit::Ms,
+    ),
+    choice(
+        P_TRACK_NOTE,
+        "track.note",
+        "Track note",
+        &NOTE_VALUES,
+        DEFAULT_NOTE,
+    ),
 ];
 
 static SOCKETS: [SocketDescriptor; 4] = [
@@ -102,6 +144,13 @@ pub struct SampleHold {
     level: f32,
     /// Track-and-hold instead of sample-and-hold.
     track: bool,
+    /// How long track mode follows the input from a tick: `TRACK_HALF` (half a cycle), `TRACK_MS`
+    /// or `TRACK_NOTE`.
+    track_length: u8,
+    track_ms: f32,
+    track_note: usize,
+    /// Samples left of a timed tracking stretch.
+    track_left: u32,
     sample_rate: f32,
     seed: u64,
     rng: Rng,
@@ -125,6 +174,10 @@ impl SampleHold {
             beats: crate::stereo_delay::SYNC_BEATS[5],
             level: 1.0,
             track: false,
+            track_length: TRACK_HALF,
+            track_ms: 100.0,
+            track_note: DEFAULT_NOTE as usize,
+            track_left: 0,
             sample_rate: 48_000.0,
             seed: 0,
             rng: Rng::new(0),
@@ -159,6 +212,7 @@ impl Device for SampleHold {
         self.cycle = None;
         self.first = true;
         self.pulse_left = 0;
+        self.track_left = 0;
     }
 
     fn set_param(&mut self, id: ParamId, plain: f32) {
@@ -172,6 +226,11 @@ impl Device for SampleHold {
             }
             P_LEVEL => self.level = v.clamp(-1.0, 1.0),
             P_MODE => self.track = v >= 0.5,
+            P_TRACK_LENGTH => self.track_length = v.clamp(0.0, 2.0).round() as u8,
+            P_TRACK_MS => self.track_ms = v.clamp(1.0, 2000.0),
+            P_TRACK_NOTE => {
+                self.track_note = v.clamp(0.0, (NOTE_VALUES.len() - 1) as f32).round() as usize;
+            }
             _ => {}
         }
     }
@@ -192,6 +251,21 @@ impl Device for SampleHold {
             self.cycle = None;
         }
 
+        // The samples a timed track stretch lasts from a tick (0: track half a cycle).
+        let timed = if !self.track {
+            0
+        } else {
+            match self.track_length {
+                TRACK_MS => ((f64::from(self.track_ms) * 0.001 * f64::from(self.sample_rate))
+                    .round() as u32)
+                    .max(1),
+                TRACK_NOTE => {
+                    let beats = note_value_beats(self.track_note, ctx.time.time_signature);
+                    (beats_to_samples(beats, ctx.time.tempo.bpm(), self.sample_rate) as u32).max(1)
+                }
+                _ => 0,
+            }
+        };
         let mut out = [0.0f32; BATCH];
         let mut clock_out = [0.0f32; BATCH];
         for n in 0..BATCH {
@@ -231,6 +305,16 @@ impl Device for SampleHold {
             if self.clock != CLOCK_TRIGGER {
                 self.first = false;
             }
+            let tracking = if timed > 0 {
+                if tick {
+                    self.track_left = timed;
+                }
+                let on = self.track_left > 0;
+                self.track_left = self.track_left.saturating_sub(1);
+                on
+            } else {
+                tracking
+            };
             if tick {
                 self.held = if cabled {
                     finite(cv[n]).clamp(-1.0, 1.0)
@@ -285,7 +369,16 @@ mod tests {
     fn descriptor_lists_the_keys_in_order() {
         assert_keys(
             &DESCRIPTOR,
-            &["clock", "rate", "division", "level", "mode"],
+            &[
+                "clock",
+                "rate",
+                "division",
+                "level",
+                "mode",
+                "track.length",
+                "track.ms",
+                "track.note",
+            ],
             &["cv_in", "trig_in", "cv_out", "clock_out"],
         );
         assert_eq!(DESCRIPTOR.kind, DeviceKind::Utility);
@@ -538,5 +631,118 @@ mod tests {
         *h.input_mut("trig_in") = [0.7; BATCH];
         *h.input_mut("cv_in") = [0.25; BATCH];
         sweep_params_min_max(&mut h, &DESCRIPTOR);
+    }
+
+    /// A slow ramp that does not wrap within a few thousand samples.
+    fn slope_batch(base: usize) -> [f32; BATCH] {
+        let mut x = [0.0f32; BATCH];
+        for (i, v) in x.iter_mut().enumerate() {
+            *v = (base + i) as f32 * 1e-4;
+        }
+        x
+    }
+
+    /// The output of `samples` samples (whole batches) of the slope.
+    fn run_slope(h: &mut DeviceHarness, samples: usize) -> Vec<f32> {
+        let mut seen = Vec::new();
+        for b in 0..samples.div_ceil(BATCH) {
+            *h.input_mut("cv_in") = slope_batch(b * BATCH);
+            h.process();
+            seen.extend_from_slice(h.output("cv_out"));
+        }
+        seen
+    }
+
+    #[test]
+    fn a_timed_track_follows_for_the_set_ms_from_each_tick() {
+        let mut h = harness(Box::new(SampleHold::new()));
+        h.set_param("mode", 1.0);
+        h.set_param("clock", 1.0);
+        h.set_param("rate", 100.0); // 480 samples a cycle
+        h.set_param("track.length", 1.0);
+        h.set_param("track.ms", 2.0); // 96 samples
+        let seen = run_slope(&mut h, 1024);
+        for n in 0..96 {
+            assert_eq!(seen[n], n as f32 * 1e-4, "follows at {n}");
+        }
+        for n in 96..480 {
+            assert_eq!(seen[n], 95.0 * 1e-4, "holds at {n}");
+        }
+        assert_eq!(seen[480], 480.0 * 1e-4, "the next tick tracks again");
+        assert_eq!(seen[480 + 95], 575.0 * 1e-4);
+        assert_eq!(seen[480 + 96], 575.0 * 1e-4);
+    }
+
+    #[test]
+    fn a_timed_track_can_be_longer_than_the_cycle() {
+        let mut h = harness(Box::new(SampleHold::new()));
+        h.set_param("mode", 1.0);
+        h.set_param("clock", 1.0);
+        h.set_param("rate", 100.0);
+        h.set_param("track.length", 1.0);
+        h.set_param("track.ms", 20.0); // two cycles
+        let seen = run_slope(&mut h, 1024);
+        for n in 0..1024 {
+            assert_eq!(seen[n], n as f32 * 1e-4, "follows at {n}");
+        }
+    }
+
+    #[test]
+    fn a_timed_track_follows_a_note_value_of_the_tempo() {
+        let mut h = harness(Box::new(SampleHold::new()));
+        h.set_param("mode", 1.0);
+        h.set_param("clock", 1.0);
+        h.set_param("rate", 10.0); // 4800 samples a cycle
+        h.set_param("track.length", 2.0);
+        h.set_param("track.note", 1.0); // 1/64 at 120 BPM: 1500 samples
+        let seen = run_slope(&mut h, 3072);
+        assert_eq!(seen[1499], 1499.0 * 1e-4);
+        assert_eq!(seen[1500], 1499.0 * 1e-4, "holds from the end of the note");
+        assert_eq!(seen[3000], 1499.0 * 1e-4);
+        // Half the tempo doubles it.
+        let mut h = harness(Box::new(SampleHold::new()));
+        h.time_mut().tempo = atomik_core::Tempo::new(60.0).unwrap();
+        h.set_param("mode", 1.0);
+        h.set_param("clock", 1.0);
+        h.set_param("rate", 10.0);
+        h.set_param("track.length", 2.0);
+        h.set_param("track.note", 1.0);
+        let seen = run_slope(&mut h, 3072);
+        assert_eq!(seen[2999], 2999.0 * 1e-4);
+        assert_eq!(seen[3000], 2999.0 * 1e-4);
+    }
+
+    #[test]
+    fn a_timed_track_with_a_trigger_counts_from_the_edge_not_the_gate() {
+        let mut h = harness(Box::new(SampleHold::new()));
+        h.set_param("mode", 1.0);
+        h.set_param("track.length", 1.0);
+        h.set_param("track.ms", 1.0); // 48 samples
+        let mut trig = [0.0f32; BATCH];
+        trig[10..].fill(1.0); // the gate stays high to the end of the batch
+        *h.input_mut("trig_in") = trig;
+        *h.input_mut("cv_in") = slope_batch(0);
+        h.process();
+        let out = *h.output("cv_out");
+        assert_eq!(out[10], 10.0 * 1e-4);
+        assert!((out[BATCH - 1] - 57.0 * 1e-4).abs() < 1e-9);
+    }
+
+    #[test]
+    fn the_track_length_defaults_to_half_a_cycle_so_old_projects_play_as_before() {
+        for (key, want) in [
+            ("track.length", 0.0),
+            ("track.ms", 100.0),
+            ("track.note", 7.0),
+        ] {
+            assert_eq!(DESCRIPTOR.param_by_key(key).unwrap().default, want, "{key}");
+        }
+        // A timed length has no effect in sample mode.
+        let mut h = harness(Box::new(SampleHold::new()));
+        h.set_param("track.length", 1.0);
+        h.set_param("clock", 1.0);
+        h.set_param("rate", 100.0);
+        let seen = run_slope(&mut h, 512);
+        assert!(seen[..480].iter().all(|v| *v == seen[0]));
     }
 }

@@ -247,6 +247,7 @@ fn lane_harmony() -> atomik_model::Harmony {
     use atomik_model::theory::{ChordKind, ScaleKind};
     use atomik_model::{ChordEvent, Key};
     atomik_model::Harmony {
+        scales: Vec::new(),
         key: Some(Key::new(0, ScaleKind::Major)),
         changes: Vec::new(),
         chords: vec![

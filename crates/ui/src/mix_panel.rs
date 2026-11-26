@@ -230,6 +230,7 @@ pub fn mix_layout(desc: &DeviceDescriptor) -> crate::autolayout::PanelSpec {
         drum_gen: None,
         arp: None,
         key_chord: None,
+        scale_strip: None,
         chord_wheel: None,
         modsrc: None,
         wavetable: None,

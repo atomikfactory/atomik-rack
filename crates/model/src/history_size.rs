@@ -51,6 +51,7 @@ impl Edit {
                     let size = |h: &crate::harmony::Harmony| {
                         h.chords.len() * size_of::<crate::harmony::ChordEvent>()
                             + h.changes.len() * size_of::<crate::harmony::KeyChange>()
+                            + h.scales.len() * size_of::<crate::harmony::SongScale>()
                     };
                     size(old) + size(new)
                 }

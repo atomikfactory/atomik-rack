@@ -3935,6 +3935,18 @@ Nothing allocates or locks, and a bounce sees exactly the same harmony at every 
 worker count. A song without key and chords gives devices no harmony at all. See
 [DECISIONS AB](DECISIONS.md#ab-the-song-harmony-reaches-devices-compiled-with-the-song-looked-up-per-batch).
 
+### Song scales
+
+The song also holds up to 16 **named scales**: a name and a set of the twelve pitch classes, saved in
+the song (the optional `"scales"` field, ignorable like the key and the chords) and edited in the
+scale picker that the NEW and EDIT buttons of a CV Quantizer panel open. They are part of the harmony,
+so an edit is one undo step and reaches
+the engine with the next song swap. They do not change along the song, so every batch carries the
+whole table (`HarmonyNow::scale_mask(id)`, a fixed array: nothing allocates). The CV Quantizer picks
+one with `scale.source` named and `scale.id`; any number of quantizers can name the same scale and
+all follow its edits. A device saves the scale's id, so a rename keeps every link; a scale that was
+deleted leaves a quantizer on its own scale.
+
 ## Note Filter: `atomik.note-filter` (Utility, "Players")
 
 Transposes and filters the notes of `notes_in` onto `notes_out`: one stateless per-event map.
@@ -5836,7 +5848,8 @@ Sockets: `pitch_cv_in` (CV in), `pitch_cv_out`, `trig_out` (CV out).
 | `scale.custom` | off, on | off | toggle |
 | `scale.note.0` to `scale.note.11` | off, on: one per pitch class from C | C major | toggle |
 | `hysteresis` | 0 to 1 | 0 | semitones (shown as percent) |
-| `scale.source` | device, song | device | choice |
+| `scale.source` | device, song, named | device | choice |
+| `scale.id` | 0 to 255: the id of a song scale (the panel shows its name) | 0 | none |
 
 - The pitch CV is the one of the sequencers, `(key - 60) / 24`: 0 is middle C, +-1 two octaves
   either way, one semitone 1/24. An input beyond +-1 still quantizes (limited to +-8).
@@ -5854,6 +5867,10 @@ Sockets: `pitch_cv_in` (CV in), `pitch_cv_out`, `trig_out` (CV out).
 - `scale.source` song quantizes to the song key at the playhead (key changes included, see
   [How harmony reaches the devices](#how-harmony-reaches-the-devices)); with no song key every
   semitone passes.
+- `scale.source` named quantizes to the song scale with the id `scale.id`: a set of notes with a name
+  that belongs to the song (up to 16, see [Song scales](#song-scales)), shared by every quantizer
+  that names it, so editing the scale moves them all. A quantizer saves the id, not the name. With
+  no song, or after the scale was deleted, it keeps its own scale.
 
 ### Sample and Hold: `atomik.sample-hold` (Utility)
 
@@ -5869,6 +5886,9 @@ Sockets: `cv_in`, `trig_in` (CV in), `cv_out`, `clock_out` (CV out).
 | `division` | 0 to 11: 1/32 to 1/1 with triplets and dotted values | 5 (1/8) | choice |
 | `level` | -1 to 1 | 1 | percent |
 | `mode` | 0 to 1: sample, track | 0 | choice |
+| `track.length` | 0 to 2: half, ms, note | 0 (half) | choice |
+| `track.ms` | 1 to 2000 | 100 | ms |
+| `track.note` | 0 to 23: 1/64T to 1/1D, 1 bar, 2 bars, 4 bars | 7 (1/16) | choice |
 
 - `trigger` ticks at every rising edge of `trig_in` (high above 0.5, low below 0.3). `free` ticks at
   `rate`. `tempo` ticks at the note value `division` of the transport tempo; while the transport
@@ -5884,6 +5904,13 @@ Sockets: `cv_in`, `trig_in` (CV in), `cv_out`, `clock_out` (CV out).
 - `mode` `track` follows `cv_in` while the clock is on and holds the last value while it is off:
   with the `trigger` clock it tracks while `trig_in` is high, with `free` and `tempo` for the first
   half of each cycle. `clock_out` still pulses at the start of every tracking stretch.
+- `track.length` sets how long track mode follows the input from each tick: `half` is the half cycle
+  above, `ms` follows for `track.ms` and `note` for the note value `track.note` of the transport
+  tempo (the note values of the Gate Processor, bars of the time signature). The next tick starts the
+  stretch again, and a length longer than the cycle tracks all the time. With the `trigger` clock the
+  stretch starts at the rising edge and no longer depends on how long the gate stays high. The length
+  is counted in samples from the tick (at least one), so a locate and a bounce count it alike. A
+  project saved before these params loads with `half` and plays as it did.
 
 ### Slew Limiter: `atomik.slew-limiter` (Utility)
 
@@ -5919,6 +5946,10 @@ Sockets: `gate_in`, `gate_b_in` (CV in), `gate_out`, `trig_out` (CV out).
 | `divide` | 1 to 16 | 1 | none |
 | `delay` | 0 to 2000 | 0 | ms |
 | `length` | 0 to 2000 | 0 | ms |
+| `delay.sync` | off, on | off | toggle |
+| `delay.note` | 0 to 23: 1/64T to 1/1D, 1 bar, 2 bars, 4 bars | 10 (1/8) | choice |
+| `length.sync` | off, on | off | toggle |
+| `length.note` | 0 to 23: the same note values | 10 (1/8) | choice |
 
 - The chain is logic, divide, delay, length. Gates have hysteresis (high above 0.5, low below 0.3).
 - `logic` combines `gate_in` (A) with `gate_b_in` (B; unconnected counts as low); `a` ignores B. A
@@ -5926,9 +5957,18 @@ Sockets: `gate_in`, `gate_b_in` (CV in), `gate_out`, `trig_out` (CV out).
 - `divide` passes the first of every N rising edges together with its gate and drops the rest.
 - `delay` shifts the result later by up to two seconds, edges and length together. It is a
   deliberate delay, not a latency. A change takes effect at once.
+- `delay.sync` makes the delay the note value `delay.note` of the transport tempo instead of `delay`.
+  The note values run from 1/64 to 1/1 as triplet (`T`), plain and dotted (`D`), then `1 bar`,
+  `2 bars` and `4 bars` of the time signature at the batch (a whole note is four beats). The time is
+  worked out for every batch from the tempo and the meter, rounded to a whole number of samples, so
+  a tempo ramp moves it; it is cut to the delay line, which holds a minute. A bounce and the live
+  engine read the same tempo map, so they agree.
 - `length` 0 keeps the gate as long as it was; above 0 each rising edge makes a gate of exactly that
   many ms (at least one sample), and an edge inside a running gate restarts it, so a trigger
   becomes a gate of a set length.
+- `length.sync` makes the length the note value `length.note` (the same table) instead of `length`;
+  a note value is never zero, so a synced length always replaces the gate. A project saved before
+  these params loads with both switches off and plays exactly as it did.
 - `trig_out` is a 1 ms pulse at every rising edge of `gate_out`, a gate to trigger converter.
 
 ### Envelope Follower: `atomik.envelope-follower` (Utility)

@@ -857,6 +857,16 @@ pub enum UiAction {
     /// The share panel ([`crate::ShareView`]) asks for something: ask for the file and share, work
     /// out the size again after a check box, or close.
     Share(crate::share_panel::ShareAction),
+    /// Open the song scale picker (see [`crate::HarmonyPickerView`]) for the CV Quantizer `device`:
+    /// on the scale `id`, or on a new scale made from the notes `own` when `id` is `None`.
+    SongScalePicker {
+        /// The quantizer that asked.
+        device: atomik_model::DeviceKey,
+        /// The song scale to edit; `None` for a new one.
+        id: Option<u8>,
+        /// The device's own notes (a 12-bit mask), the start of a new scale.
+        own: u16,
+    },
     /// Open the key and chord picker (see [`crate::HarmonyPickerView`]) on the song key, a key
     /// change or a chord: a double click on a lane item, or a click on the transport bar's Key.
     HarmonyPicker(crate::harmony_picker::HarmonyTarget),

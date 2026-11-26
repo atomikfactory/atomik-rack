@@ -37,10 +37,13 @@ impl<S: EngineSink> AppCore<S> {
     /// devices that follow the song (from [`Self::frame`]; the view repaints only on a change).
     pub(super) fn feed_song_harmony(&mut self) {
         let tick = self.position().max(0);
-        let h = &self.doc().song.harmony;
+        let h = &self.document.doc().song.harmony;
         let key = h.key_at(tick).map(Key::short);
         let chord = h.chord_at(tick).map(|c| c.symbol());
         self.view.set_song_harmony(key, chord);
+        let h = &self.document.doc().song.harmony;
+        self.view
+            .set_song_scales(h.scales.iter().map(|s| (s.id, s.name.as_str())));
     }
 
     /// Makes `harmony` the song's key and chords (one undo step).

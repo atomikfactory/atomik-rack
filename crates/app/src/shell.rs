@@ -810,6 +810,8 @@ pub struct Shell<B: AudioBackend> {
     /// The key and chord picker (a double click in the key or chord lane, the transport bar's Key
     /// field) while it is open.
     harmony_picker: Option<HarmonyPickerView>,
+    /// The CV Quantizer whose NEW button opened the scale picker: it takes the scale made there.
+    scale_picker_device: Option<DeviceKey>,
     /// The reverb send wizard (Track > Add Reverb Send) while it is open.
     reverb_send: Option<ReverbSendView>,
     /// Its choices, kept between openings.
@@ -1087,6 +1089,7 @@ impl<B: AudioBackend> Shell<B> {
             song_info: None,
             share: None,
             harmony_picker: None,
+            scale_picker_device: None,
             reverb_send: None,
             reverb_send_values: ReverbSendValues::default(),
             kick_bass: None,
@@ -1916,6 +1919,12 @@ impl<B: AudioBackend> Shell<B> {
 
     /// Opens the key and chord picker on `target`, showing what is there now (or a start value).
     fn open_harmony_picker(&mut self, target: HarmonyTarget) {
+        self.open_harmony_picker_with(target, 0);
+    }
+
+    /// [`Self::open_harmony_picker`]; `own_mask` is the notes a new song scale starts with.
+    fn open_harmony_picker_with(&mut self, target: HarmonyTarget, own_mask: u16) {
+        let mut named: Option<String> = None;
         let harmony = self.core.harmony().clone();
         let bars = atomik_ui::timeline::Bars::of(&self.core.doc().song);
         let bar = |tick: i64| bars.bar_of(tick).max(1);
@@ -1938,6 +1947,23 @@ impl<B: AudioBackend> Shell<B> {
                     here.is_some(),
                 )
             }
+            HarmonyTarget::Scale { id } => {
+                let here = id.and_then(|id| harmony.scale(id));
+                let name =
+                    here.map_or_else(|| harmony.free_scale_name("Scale"), |s| s.name.clone());
+                let mask = here.map_or(own_mask, |s| s.mask);
+                named = Some(name);
+                (
+                    if here.is_some() {
+                        "SONG SCALE"
+                    } else {
+                        "NEW SONG SCALE"
+                    }
+                    .to_owned(),
+                    PickerValue::Scale { mask },
+                    here.is_some(),
+                )
+            }
             HarmonyTarget::Chord { tick, length } => {
                 let here = harmony.chord_index(tick).map(|i| harmony.chords[i]);
                 let chord = here.unwrap_or_else(|| harmony.suggested_chord(tick, length));
@@ -1954,6 +1980,9 @@ impl<B: AudioBackend> Shell<B> {
         };
         let theme = self.core.view().theme().clone();
         let mut view = HarmonyPickerView::new(theme, target, title, value, existing);
+        if let Some(name) = named {
+            view = view.named(&name);
+        }
         view.set_scale(self.scale());
         view.set_bounds(self.plugin_modal_rect());
         self.harmony_picker = Some(view);
@@ -1992,9 +2021,36 @@ impl<B: AudioBackend> Shell<B> {
             if result.is_err() {
                 return;
             }
+            self.use_new_scale(apply);
         }
+        self.scale_picker_device = None;
         self.harmony_picker = None;
         self.repaint = true;
+    }
+
+    /// After a scale picker applied a new scale from a quantizer's NEW button: that quantizer
+    /// names it (one more undo step).
+    fn use_new_scale(&mut self, applied: bool) {
+        let (Some(view), Some(device)) = (&self.harmony_picker, self.scale_picker_device.clone())
+        else {
+            return;
+        };
+        if !applied || view.target() != (HarmonyTarget::Scale { id: None }) {
+            return;
+        }
+        let Some(id) = self
+            .core
+            .harmony()
+            .scale_named(view.scale_name())
+            .map(|s| s.id)
+        else {
+            return;
+        };
+        let cmd = atomik_ui::scale_strip::source_command(
+            &device,
+            atomik_ui::scale_strip::Source::Named(id),
+        );
+        let _ = self.core.apply_command(cmd);
     }
 
     /// What the song information panel asked for: APPLY makes its texts the song information (one
@@ -8642,6 +8698,10 @@ impl<B: AudioBackend> Shell<B> {
                 }
                 UiAction::PickColor(target) => self.open_color_picker(target.clone()),
                 UiAction::HarmonyPicker(target) => self.open_harmony_picker(*target),
+                UiAction::SongScalePicker { device, id, own } => {
+                    self.scale_picker_device = id.is_none().then(|| device.clone());
+                    self.open_harmony_picker_with(HarmonyTarget::Scale { id: *id }, *own);
+                }
                 UiAction::AuditionChord(chord) => self.core.audition_chord(chord),
                 UiAction::EditWavetable(device) => self.open_wavetable_editor(device.clone()),
                 UiAction::TakeFocus(atomik_ui::SongFocus::Play) => {

@@ -469,6 +469,8 @@ pub struct PanelInfo<'a> {
     pub mix: crate::mix_panel::MixInfo<'a>,
     /// Key & Chord panel: the FROM CLIP button is enabled (the open clip has a scale).
     pub from_clip: bool,
+    /// The scales saved in the song (id, name), for the name tag of a CV Quantizer.
+    pub song_scales: &'a [(u8, String)],
     /// The song key at the playhead, short (`Am`), for the SONG tag of a following device.
     pub song_key: Option<&'a str>,
     /// The chord of the lane at the playhead (`Am7`), for the SONG tag of a following device.
@@ -1439,6 +1441,12 @@ fn record_panel_body<C: Canvas + ?Sized>(c: &mut C, theme: &Theme, info: &PanelI
                     info.accent,
                     &info.grain,
                 );
+            }
+            if let (Some(strip), Some(device)) = (info.spec.scale_strip, info.device) {
+                let source = crate::scale_strip::source_of(device, desc);
+                let text = crate::scale_strip::tag_text(source, info.song_scales);
+                let named = source != crate::scale_strip::Source::Own;
+                crate::scale_strip::paint_panel(c, theme, &strip, &text, named, info.accent);
             }
             if let (Some(panel), Some(device)) = (info.spec.key_chord, info.device) {
                 let song = crate::key_chord_panel::follows_song(device, desc).map(|chord| {

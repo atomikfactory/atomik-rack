@@ -362,6 +362,7 @@ fn keyed_doc() -> RackDoc {
     use atomik_model::theory::ScaleKind;
     let mut doc = song_doc();
     doc.song_mut().harmony = Harmony {
+        scales: Vec::new(),
         key: Some(SongKey::new(9, ScaleKind::NaturalMinor)),
         changes: vec![KeyChange {
             tick: 4 * BAR,

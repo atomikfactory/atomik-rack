@@ -1537,6 +1537,7 @@ impl Player {
         // The harmony at the playhead; a playing batch rebuilds it stretch by stretch below.
         if let Some(h) = harmony {
             harmony_marks(h, map, sr, (*pos, *pos + 1, 0), &mut time.harmony);
+            time.harmony.set_scales(h.scales());
         }
         *click_count = 0;
         *counting = false;

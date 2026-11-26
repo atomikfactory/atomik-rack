@@ -243,6 +243,15 @@ fn text(hit: Hit) -> Option<Cow<'static, str>> {
         Hit::Player(_, PlayerBtn::FromClip) => {
             s("Copy the scale of the clip open in the piano roll into this device")
         }
+        Hit::Player(_, PlayerBtn::ScaleTag) => s(
+            "Scale source: own notes, song key or a song scale (click: next, right click: before)",
+        ),
+        Hit::Player(_, PlayerBtn::ScaleNew) => {
+            s("Save this device's own scale as a new song scale")
+        }
+        Hit::Player(_, PlayerBtn::ScaleEdit) => {
+            s("Edit the song scale in use: every quantizer that uses it follows")
+        }
         _ => None,
     }
 }
