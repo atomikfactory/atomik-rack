@@ -625,6 +625,11 @@ Options
     Sortie d'horloge MIDI
     Envoyer l'horloge à l'arrêt
     Suivre l'horloge MIDI
+    Suivre le tempo seulement
+    ---
+    Verrouillage de l'horloge : serré
+    Verrouillage de l'horloge : normal
+    Verrouillage de l'horloge : souple
   ---
   Réglages… [Ctrl+,]
   Configuration audio et MIDI…

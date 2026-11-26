@@ -317,6 +317,38 @@ fn the_menu_has_the_entry_in_options() {
 }
 
 #[test]
+fn the_sync_menu_sets_tempo_only_and_the_clock_lock_in_the_settings() {
+    use crate::settings::ClockLock;
+    let dir = scratch("clock-lock");
+    let mut s = shell(&world(), &dir);
+    assert!(!s.core().sink().settings().sync.follow_tempo_only);
+    assert_eq!(
+        s.core().sink().settings().sync.clock_lock,
+        ClockLock::Normal
+    );
+    s.execute(AppCommand::ToggleClockTempoOnly);
+    s.execute(AppCommand::SetClockLock(ClockLock::Loose));
+    let y = s.core().sink().settings().sync.clone();
+    assert!(y.follow_tempo_only);
+    assert_eq!(y.clock_lock, ClockLock::Loose);
+    // The menu shows them, and the keymap ids reach the same commands.
+    let menu = s.menu_model();
+    let options = menu.iter().find(|m| m.title == "Options").unwrap();
+    let checked = |label: &str| {
+        options
+            .items()
+            .find(|i| i.label == label)
+            .and_then(|i| i.checked)
+    };
+    assert_eq!(checked("Follow Tempo Only"), Some(true));
+    assert_eq!(checked("Clock Lock: Loose"), Some(true));
+    assert_eq!(checked("Clock Lock: Normal"), Some(false));
+    s.execute(AppCommand::ToggleClockTempoOnly);
+    assert!(!s.core().sink().settings().sync.follow_tempo_only);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn what_is_chosen_is_saved_in_the_audio_settings_file() {
     let dir = scratch("saved");
     let w = world();

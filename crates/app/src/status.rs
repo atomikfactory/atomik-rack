@@ -125,6 +125,8 @@ pub struct SyncStatus {
     pub clock_in_error: Option<String>,
     /// The transport follows the clock: its buttons do nothing.
     pub following: bool,
+    /// Only the clock's tempo is followed: the transport is the user's (`following` is off).
+    pub tempo_only: bool,
     /// The tempo measured from the clock, in BPM.
     pub external_tempo: Option<f64>,
     /// The sender runs (Start or Continue came, Stop did not).
@@ -150,6 +152,12 @@ impl SyncStatus {
             };
             parts.push(match (self.receiving, self.external_tempo) {
                 (true, Some(bpm)) => format!("following clock {bpm:.1} BPM ({run})"),
+                (false, Some(bpm)) => format!("no clock, last {bpm:.1} BPM"),
+                _ => "waiting for clock".to_string(),
+            });
+        } else if self.tempo_only {
+            parts.push(match (self.receiving, self.external_tempo) {
+                (true, Some(bpm)) => format!("following clock tempo {bpm:.1} BPM"),
                 (false, Some(bpm)) => format!("no clock, last {bpm:.1} BPM"),
                 _ => "waiting for clock".to_string(),
             });

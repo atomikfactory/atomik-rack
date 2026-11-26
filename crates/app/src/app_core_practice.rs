@@ -91,9 +91,17 @@ impl<S: EngineSink> AppCore<S> {
 
     /// Whether a speed change must be refused now (and says why).
     fn practice_blocked(&mut self) -> bool {
-        if self.sink.sync_status().following {
+        let sync = self.sink.sync_status();
+        if sync.following {
             self.reject(
                 "the transport follows the MIDI clock: switch Options > Sync > Follow MIDI Clock off to change the practice speed"
+                    .to_string(),
+            );
+            return true;
+        }
+        if sync.tempo_only {
+            self.reject(
+                "the song follows the tempo of the MIDI clock: switch Options > Sync > Follow MIDI Clock off to change the practice speed"
                     .to_string(),
             );
             return true;

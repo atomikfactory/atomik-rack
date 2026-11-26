@@ -625,6 +625,11 @@ Options
     MIDI Clock Out
     Send Clock While Stopped
     Follow MIDI Clock
+    Follow Tempo Only
+    ---
+    Clock Lock: Tight
+    Clock Lock: Normal
+    Clock Lock: Loose
   ---
   Settings…
   Audio and MIDI Setup…

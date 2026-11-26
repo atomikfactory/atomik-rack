@@ -1445,6 +1445,41 @@ fn following_opens_the_clock_port_once_and_closing_it_ends_the_following() {
 }
 
 #[test]
+fn the_tempo_only_and_lock_settings_reach_the_clock_cell_and_the_status() {
+    let fake = Fake::default();
+    let mut s = LiveSession::new(&fake, follow("Sequencer"), true);
+    s.reset(&config(48_000.0));
+    let cell = fake.clock_cell.borrow().clone().unwrap();
+    // The defaults: the whole clock, the normal lock; the transport is the clock's.
+    assert!(!cell.tempo_only());
+    assert_eq!(cell.lock_strength(), atomik_engine::LockStrength::Normal);
+    assert!(s.sync_status().following && !s.sync_status().tempo_only);
+    // Tempo only with a loose lock: the cell says so, and the transport is the user's again.
+    s.set_settings(sync_settings(|y| {
+        y.follow_clock = true;
+        y.clock_in_port = Some("Sequencer".into());
+        y.follow_tempo_only = true;
+        y.clock_lock = crate::settings::ClockLock::Loose;
+    }));
+    assert_eq!(fake.clock_opened.borrow().len(), 1, "the port stays open");
+    assert!(cell.tempo_only());
+    assert_eq!(cell.lock_strength(), atomik_engine::LockStrength::Loose);
+    let status = s.sync_status();
+    assert!(status.tempo_only && !status.following);
+    cell.publish(&atomik_engine::ExternalState {
+        tempo: Some(88.0),
+        clocks: 5,
+        ..atomik_engine::ExternalState::default()
+    });
+    s.poll();
+    let text = crate::status::status_text(s.status());
+    assert!(text.contains("following clock tempo 88.0 BPM"), "{text}");
+    // Following off: neither is reported.
+    s.set_settings(settings());
+    assert!(!s.sync_status().tempo_only);
+}
+
+#[test]
 fn a_clock_port_that_will_not_open_is_reported_and_tried_again_on_rescan() {
     let fake = Fake::default();
     fake.clock_missing.set(true);

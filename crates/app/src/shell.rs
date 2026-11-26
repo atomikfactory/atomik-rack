@@ -4741,6 +4741,8 @@ impl<B: AudioBackend> Shell<B> {
             clock_out: self.core.sink().settings().sync.clock_out,
             clock_while_stopped: self.core.sink().settings().sync.send_while_stopped,
             follow_clock: self.core.sink().settings().sync.follow_clock,
+            follow_tempo_only: self.core.sink().settings().sync.follow_tempo_only,
+            clock_lock: self.core.sink().settings().sync.clock_lock,
             sample_rate: self.core.doc().sample_rate,
             midi_resolution: self.core.midi_resolution(),
             midi_chords: self.core.midi_chords_from_notes(),
@@ -9832,6 +9834,20 @@ impl<B: AudioBackend> Shell<B> {
                 if settings.sync.follow_clock && settings.sync.clock_in_port.is_none() {
                     self.notify("MIDI clock in has no port yet: choose one in Settings > Sync");
                 }
+                self.apply_settings(settings);
+                self.close_menubars();
+                Vec::new()
+            }
+            AppCommand::ToggleClockTempoOnly => {
+                let mut settings = self.core.sink().settings().clone();
+                settings.sync.follow_tempo_only = !settings.sync.follow_tempo_only;
+                self.apply_settings(settings);
+                self.close_menubars();
+                Vec::new()
+            }
+            AppCommand::SetClockLock(lock) => {
+                let mut settings = self.core.sink().settings().clone();
+                settings.sync.clock_lock = lock;
                 self.apply_settings(settings);
                 self.close_menubars();
                 Vec::new()
