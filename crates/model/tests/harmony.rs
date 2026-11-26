@@ -399,9 +399,9 @@ fn the_scales_field_is_ignorable_so_an_older_reader_drops_it_and_the_format_stay
     let mut d = doc(&reg);
     set(&mut d, &reg, with_scales());
     let v = text(&d);
-    assert_eq!(v["version"], 45, "no format bump");
+    assert_eq!(v["version"], 46, "no format bump");
     assert_eq!(v["compat"], 44);
-    assert_eq!(v["ignorable"]["song.scales"], 45);
+    assert_eq!(v["ignorable"]["song.scales"], 46);
 }
 
 #[test]

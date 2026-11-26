@@ -27,6 +27,7 @@ mod console_cmd;
 mod console_folder;
 mod console_group_bus;
 mod console_insert;
+mod console_lock;
 mod console_loop;
 mod console_mix;
 mod console_settings;
@@ -1181,6 +1182,10 @@ pub enum ModelError {
     /// message names the track and says to unfreeze it.
     #[error("{0}")]
     Frozen(String),
+    /// A locked console strip was asked to change (see [`crate::console_lock`]): the message names
+    /// the strip.
+    #[error("{0}")]
+    Locked(String),
     /// A batch was rejected: it is empty, or holds a command that cannot be batched.
     #[error("batch: {0}")]
     BadBatch(String),
@@ -1248,6 +1253,8 @@ pub struct Document {
     /// The assets that steps the history has let go of (trimmed, or redo steps a new edit
     /// replaced) referenced: candidates for [`Document::release_dropped_assets`].
     dropped_assets: BTreeSet<String>,
+    /// The locked strips the latest command left out (see [`Document::take_lock_skips`]).
+    lock_skips: Vec<DeviceKey>,
 }
 
 /// A drag-merge group that ends with the guard (see [`Document::begin_gesture`]). It reads and
@@ -1406,6 +1413,7 @@ impl Document {
             trial_redo: Vec::new(),
             labels: Labels::default(),
             dropped_assets: BTreeSet::new(),
+            lock_skips: Vec::new(),
         }
     }
 
@@ -1499,6 +1507,13 @@ impl Document {
     /// does not hold (a change and its undo leave two different numbers on equal content).
     pub fn revision(&self) -> u64 {
         self.revision
+    }
+
+    /// The locked strips the latest applied command left out (see [`console_lock`]): a ganged
+    /// edit, a recall or a paste that skipped them and changed the others. Empty after a command
+    /// that touched no locked strip; taking them empties the list.
+    pub fn take_lock_skips(&mut self) -> Vec<DeviceKey> {
+        std::mem::take(&mut self.lock_skips)
     }
 
     /// Applies a command (validated with `registry`) and records it for undo.
@@ -1674,9 +1689,15 @@ impl Document {
         // with the arrangement the mode asks for (one undo step).
         let mut command = command;
         rack_groups::expand_moves(&self.doc, registry, &mut command);
+        // A locked strip takes no edit: a paste leaves it out, the planned edit is screened.
+        self.lock_skips.clear();
+        let (command, mut skipped) = console_lock::trim_command(&self.doc, command)?;
         let (edit, new_clip) = Self::plan(&self.doc, command, registry)?;
+        let (edit, left_out) = console_lock::screen(&self.doc, registry, edit)?;
+        skipped.extend(left_out);
         let edit = rack_groups::finish(&self.doc, registry, edit);
         let mut ops = edit.perform(&mut self.doc)?;
+        self.lock_skips = skipped;
         let edit = match song_end_growth(&self.doc, &edit) {
             Some(grow) => {
                 match grow.perform(&mut self.doc) {

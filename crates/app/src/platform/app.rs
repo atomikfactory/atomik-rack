@@ -472,6 +472,7 @@ pub fn run(cli: Cli) -> Result<(), String> {
         last_focused: (DocId::FIRST, WindowKind::Main),
         drag_noted: false,
         foreign_hover: None,
+        song_hover: None,
         text,
         modifiers: Modifiers::NONE,
         mod_events: translate::ModifierTracker::default(),
@@ -598,6 +599,9 @@ struct App {
     drag_noted: bool,
     /// The song whose window the files of a drag out of another song's file browser hover over.
     foreign_hover: Option<DocId>,
+    /// The song whose window the clips or devices dragged out of another song hover over: it
+    /// draws the drop marker.
+    song_hover: Option<DocId>,
     text: TextEngine,
     modifiers: Modifiers,
     /// Emits `UiEvent::ModifiersChanged` once per real modifier change.
@@ -1162,6 +1166,26 @@ impl App {
     fn dispatch(&mut self, key: Key, event: &UiEvent) -> Vec<ShellRequest> {
         self.shell.select(key.0);
         let kind = key.1;
+        // A drag of the selection over another song's window: that window draws the drop marker
+        // until the drag leaves it, is let go or is cancelled.
+        let over = if self.shell.song_drag().is_some() {
+            window_logic::pointer_of(event)
+                .filter(|_| !matches!(event, UiEvent::PointerUp { .. }))
+                .filter(|pos| self.window_under_pointer(key, *pos).is_none())
+                .and_then(|pos| self.other_song_under(key, pos))
+        } else {
+            None
+        };
+        let now = over.as_ref().map(|(to, _)| *to);
+        if let Some(left) = self.song_hover.filter(|s| Some(*s) != now) {
+            self.shell.drag_left_song(left);
+        }
+        self.song_hover = None;
+        if let Some((to, hit)) = over
+            && self.shell.drag_over_song(key.0, to, hit)
+        {
+            self.song_hover = Some(to);
+        }
         if let UiEvent::PointerUp { pos, .. } = event
             && self.shell.song_drag().is_some()
             && self.window_under_pointer(key, *pos).is_none()
@@ -2510,7 +2534,11 @@ impl App {
                     }
                 }
                 // The workspace answers these before they get here.
-                ShellRequest::NewSong | ShellRequest::CloseSong | ShellRequest::ShowSong(_) => {}
+                ShellRequest::NewSong
+                | ShellRequest::CloseSong
+                | ShellRequest::ShowSong(_)
+                | ShellRequest::TakePlayFocus
+                | ShellRequest::TakeInputFocus => {}
                 ShellRequest::OpenUrl(url) => open_url(url),
                 ShellRequest::OpenRelease(url) => open_url(&url),
                 ShellRequest::ToggleMaximise(kind) => {

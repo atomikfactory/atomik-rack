@@ -420,3 +420,44 @@ fn golden_master_panel_sends() {
     let mut v = fresh(doc, &reg);
     check_golden("master_panel_sends_1x.json", &paint_json(&mut v, doc, &reg));
 }
+
+#[test]
+fn the_plate_has_a_play_and_an_input_button_that_light_up_and_ask_for_their_focus() {
+    use atomik_ui::SongFocus;
+    let reg = registry();
+    let d = starter();
+    let doc = d.doc();
+    let mut v = fresh(doc, &reg);
+    // A single song has both.
+    assert!(v.io_focus().play && v.io_focus().input);
+    v.set_io_focus(false, true);
+    assert_eq!((v.io_focus().play, v.io_focus().input), (false, true));
+    let lit = paint_json(&mut v, doc, &reg);
+    v.set_io_focus(false, false);
+    assert_ne!(
+        lit,
+        paint_json(&mut v, doc, &reg),
+        "the buttons show the focus"
+    );
+    for (which, word) in [
+        (SongFocus::Play, "Play Focus"),
+        (SongFocus::Input, "Input Focus"),
+    ] {
+        let at = v.io_focus_center(which).unwrap();
+        let _ = v.handle(&mv(at), doc, &reg);
+        assert!(v.tooltip().unwrap().contains(word));
+        let mut out = v.handle(&down(at), doc, &reg);
+        out.extend(v.handle(&up(at), doc, &reg));
+        assert!(
+            out.iter()
+                .any(|a| matches!(a, UiAction::TakeFocus(w) if *w == which)),
+            "{which:?}: {out:?}"
+        );
+    }
+    // The plate's own click (reset the clip lamps) is not taken by the buttons.
+    v.set_io_peaks(&vec![2.0; v.io_socket_count()]);
+    let at = v.io_focus_center(SongFocus::Play).unwrap();
+    let _ = v.handle(&down(at), doc, &reg);
+    let _ = v.handle(&up(at), doc, &reg);
+    assert!(v.io_clips().iter().all(|c| *c));
+}

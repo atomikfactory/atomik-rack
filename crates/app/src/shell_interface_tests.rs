@@ -574,3 +574,30 @@ fn the_performance_setting_resolves_against_what_auto_picked_and_reaches_the_ses
     assert_eq!(s.performance_level(), Level::Low);
     assert!(s.core().sink().low_power());
 }
+
+#[test]
+fn the_glow_of_a_theme_is_left_out_at_low_power_and_comes_back_with_full() {
+    use crate::performance::{Level, Performance};
+    let mut s = shell();
+    s.run_command("view.next_theme", None);
+    s.run_command("view.next_theme", None);
+    assert_eq!(s.active_theme_id(), "synthwave");
+    assert!(
+        s.core().view().theme().glow.active(),
+        "Synthwave glows at Full"
+    );
+    // Every view has the glow-less theme at Low power, the theme itself is unchanged.
+    prefs_with(&mut s, |w| w.performance = Performance::LowPower);
+    assert!(!s.core().view().theme().glow.active());
+    assert!(!s.theme().glow.active());
+    assert_eq!(s.theme().meter_mid, Theme::synthwave().meter_mid);
+    // Auto on a small machine is Low power too, and a machine that is not small glows.
+    prefs_with(&mut s, |w| w.performance = Performance::Auto);
+    s.set_auto_level(Level::Low);
+    assert!(!s.core().view().theme().glow.active());
+    s.set_auto_level(Level::Full);
+    assert!(s.core().view().theme().glow.active());
+    // A theme with no glow has none at any level.
+    s.run_command("view.theme", Some("dark"));
+    assert!(!s.core().view().theme().glow.active());
+}

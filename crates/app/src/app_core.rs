@@ -319,6 +319,9 @@ pub struct AppCore<S: EngineSink> {
     open_stages: Stages,
     target: Arc<NoteTarget>,
     rejection: Option<String>,
+    /// The last "channel is locked" message shown: not shown again until a gesture ends or a command
+    /// goes through, so a drag on a locked fader reports once.
+    lock_notice: Option<String>,
     /// A safe-mode run (`--safe`): only the window title reads it.
     safe_mode: bool,
     arrangement: ArrangementView,
@@ -404,6 +407,8 @@ pub struct AppCore<S: EngineSink> {
     clip_preview: Option<clip_preview_ops::LiveClipPreview>,
     /// The library patch preview that renders on a worker (see `app_core_patch_preview.rs`).
     patch_preview: Option<patch_preview_ops::PatchPreview>,
+    /// The keyboard preview of the selected library patch (see `app_core_live_preview.rs`).
+    live_follow: live_follow_ops::LiveFollowState,
     /// The kick and bass check: the picked tracks and the worker (see `app_core_kick_bass.rs`).
     kick_bass: kick_bass_ops::KickBass,
     /// The pattern clipboard both sequencer views last agreed on.
@@ -697,6 +702,7 @@ impl<S: EngineSink> AppCore<S> {
             recent_path: None,
             target,
             rejection: None,
+            lock_notice: None,
             safe_mode: false,
             arrangement: ArrangementView::new(theme.clone()),
             piano_roll: PianoRollView::new(theme.clone()),
@@ -743,6 +749,7 @@ impl<S: EngineSink> AppCore<S> {
             zone: zone_ops::ZoneState::new(),
             clip_preview: None,
             patch_preview: None,
+            live_follow: live_follow_ops::LiveFollowState::default(),
             kick_bass: kick_bass_ops::KickBass::default(),
             pattern_clip_seen: (None, None),
             drum_draws: clock_entropy(),
@@ -1227,10 +1234,20 @@ impl<S: EngineSink> AppCore<S> {
                 if !moved_notes.is_empty() {
                     self.report(moved_notes.join(" "));
                 }
+                let skipped = self.document.take_lock_skips();
+                if skipped.is_empty() {
+                    self.lock_notice = None;
+                } else {
+                    self.report_locked(&skipped);
+                }
                 Ok(())
             }
             Err(e) => {
-                self.reject(e.to_string());
+                if let ModelError::Locked(message) = &e {
+                    self.note_locked(message.clone());
+                } else {
+                    self.reject(e.to_string());
+                }
                 Err(e)
             }
         }
@@ -1274,6 +1291,7 @@ impl<S: EngineSink> AppCore<S> {
                 self.history_goto(row);
             }
             UiAction::EndMerge => {
+                self.lock_notice = None;
                 if let Some(id) = self.keep_pending.take() {
                     self.complete_note_edit(id);
                 }
@@ -2089,6 +2107,7 @@ impl<S: EngineSink> AppCore<S> {
         self.plugins_frame();
         self.poll_background();
         self.camera_frame();
+        self.poll_live_follow();
         // The kick and bass worker's answer is taken before the panels read it: the platform
         // stops ticking once nothing is busy, so a frame that read the old progress would be
         // the last one painted.
@@ -3008,6 +3027,26 @@ impl<S: EngineSink> AppCore<S> {
         self.reject(message.into());
     }
 
+    /// Tells the user, once per gesture, that locked strips were left out of an edit.
+    pub(super) fn report_locked(&mut self, strips: &[DeviceKey]) {
+        let Some(first) = strips.first() else {
+            return;
+        };
+        let name = self
+            .doc()
+            .device(first)
+            .map_or_else(|| first.0.clone(), |d| d.name.clone());
+        self.note_locked(format!("Channel {name} is locked"));
+    }
+
+    fn note_locked(&mut self, message: String) {
+        if self.lock_notice.as_ref() == Some(&message) {
+            return;
+        }
+        self.lock_notice = Some(message.clone());
+        self.reject(message);
+    }
+
     fn reject(&mut self, message: String) {
         self.view.notify_rejected(message.clone());
         // The console shows it too: it may be maximised over the rack.
@@ -3486,6 +3525,11 @@ impl<S: EngineSink> AppCore<S> {
     /// receives the keyboard). Otherwise the selected device's first notes input if it has
     /// one, else the first device in rack order with a notes input.
     pub fn notes_target(&self) -> Option<Target> {
+        // A library preview that follows the keyboard takes every note (see
+        // `app_core_live_preview.rs`).
+        if self.live_follow_has_keys() {
+            return Some(crate::preview_notes::PREVIEW_TARGET);
+        }
         let doc = self.doc();
         if self.master_keyboard == crate::master_keyboard::MasterKeyboard::Separated
             && let Some(target) = self.mki.as_ref().and_then(|k| self.target_of(k))
@@ -4553,10 +4597,14 @@ mod clip_preview_ops;
 mod dub_ops;
 #[path = "app_core_kick_bass.rs"]
 mod kick_bass_ops;
+#[path = "app_core_live_preview.rs"]
+mod live_follow_ops;
 #[path = "app_core_patch_preview.rs"]
 mod patch_preview_ops;
 #[path = "app_core_player_stack.rs"]
 mod player_stack_ops;
+#[path = "app_core_plugin_preview.rs"]
+mod plugin_follow_ops;
 #[path = "app_core_preview.rs"]
 mod preview_ops;
 #[path = "app_core_reference.rs"]

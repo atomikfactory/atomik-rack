@@ -27,7 +27,18 @@
 //! file and leaves no result file. The loudness in the toast is that of the audio that went into
 //! the encoder; the encoder can raise the true peak a little, so leave headroom (docs/README.md).
 //! Without FFmpeg the three formats are refused ([`AppCore::export_encoder`] says how to set it
-//! up); stems are WAV, AIFF or FLAC only.
+//! up). **Stems** can be MP3, AAC or Opus too: each stem goes to a temporary WAV file as its pass
+//! of the render ends and FFmpeg encodes it to the stem's file in the folder (the same bitrate
+//! choices as the song; the tags are the stem's name as the title, the song's title as the album
+//! and its author as the artist), with one progress bar and one cancel across all the stems, and
+//! no file left behind when it is cancelled or fails.
+//!
+//! **A loudness for stems.** The panel's loudness choices (a target, a custom target or a guide,
+//! with its true-peak ceiling) also apply to stems ([`stems_level_for`]): by default one gain
+//! for every stem, worked out from the loudness of the mix they add up to (the master's stem),
+//! so that they still sum to the mix; or each stem brought to the target on its own
+//! ([`atomik_render::stems::StemsLevel`]). The toast says what was done, the log what each stem
+//! was and became.
 //!
 //! **Film with Mix** (File > Export > Film with Mix, [`AppCore::start_film_export`], in
 //! `app_core_film.rs`) is the same export once more: the mix of the part of the song the film
@@ -48,7 +59,7 @@ use atomik_render::export::{
     ExportSpan, span_frames,
 };
 use atomik_render::normalise::{Finish, Loudness};
-use atomik_render::stems::StemStrip;
+use atomik_render::stems::{StemStrip, StemsLevel};
 use atomik_ui::export_panel::rate_label;
 use atomik_ui::{
     ALSO_MP3_KBPS, EncoderState, ExportDepth, ExportDither, ExportFile, ExportLoudness,
@@ -146,20 +157,28 @@ pub fn export_file(scope: ExportScope, path: &Path, values: &ExportValues) -> Pa
 }
 
 /// What is done to the render before it is written, for the panel's mix-down and loudness
-/// choices.
-pub fn finish_for(mono: bool, loudness: ExportLoudness) -> Finish {
+/// choices; `ceiling` is the true-peak ceiling of a target in tenths of a dBTP.
+pub fn finish_for(mono: bool, loudness: ExportLoudness, ceiling: i16) -> Finish {
+    let ceiling_dbtp = f32::from(ceiling) / 10.0;
     Finish {
         mono,
-        loudness: match loudness {
-            ExportLoudness::Off => Loudness::Off,
-            ExportLoudness::Target(lufs) => Loudness::Target {
-                lufs: f32::from(lufs),
-                ceiling_dbtp: ExportLoudness::CEILING_DBTP,
-            },
-            ExportLoudness::Guide(lufs) => Loudness::Guide {
+        loudness: match (loudness, loudness.target_lufs()) {
+            (ExportLoudness::Off, _) => Loudness::Off,
+            (_, Some(lufs)) => Loudness::Target { lufs, ceiling_dbtp },
+            (ExportLoudness::Guide(lufs), None) => Loudness::Guide {
                 lufs: f32::from(lufs),
             },
+            // A target always has its LUFS.
+            (_, None) => Loudness::Off,
         },
+    }
+}
+
+/// What is done to the level of the stems, for the panel's loudness and stem gain choices.
+pub fn stems_level_for(values: &ExportValues) -> StemsLevel {
+    StemsLevel {
+        loudness: finish_for(false, values.loudness, values.ceiling).loudness,
+        together: values.stems_together,
     }
 }
 
@@ -265,6 +284,44 @@ fn depth_label(values: &ExportValues) -> String {
     .to_owned()
 }
 
+/// What the loudness did to the stems, as the end of the toast of a finished export of stems:
+/// `; mix was -18.2 LUFS, -3.1 dBTP; every stem turned up 4.2 dB` when they were taken together,
+/// `; each stem brought to -14 LUFS` when each had its own gain, and a warning for the stems
+/// whose peaks pass full scale.
+fn stems_levelled(report: &atomik_render::stems::StemsReport) -> String {
+    let mut out = match &report.common {
+        Some(common) => format!("; mix {}", common.summary()),
+        None => report
+            .normalise
+            .iter()
+            .flatten()
+            .find_map(|n| n.target_lufs.map(|t| (t, n.guide)))
+            .map_or_else(String::new, |(target, guide)| {
+                if guide {
+                    format!(
+                        "; each stem measured against the {target:.0} LUFS guide, nothing changed"
+                    )
+                } else {
+                    format!("; each stem brought to {target:.1} LUFS")
+                }
+            }),
+    };
+    let clipped = report
+        .normalise
+        .iter()
+        .flatten()
+        .filter(|n| n.clipped)
+        .count();
+    if clipped > 0 {
+        out.push_str(&format!(
+            "; WARNING: {clipped} stem{} pass{} full scale",
+            if clipped == 1 { "" } else { "s" },
+            if clipped == 1 { "es" } else { "" }
+        ));
+    }
+    out
+}
+
 /// The toast of a finished export of stems: "Exported 5 stems to Bounced song: 24-bit, 48 kHz,
 /// 1:05.3; Master -14.2 LUFS, -0.8 dBTP".
 fn describe_stems(
@@ -300,11 +357,12 @@ fn describe_stems(
             format!("; {} {}", s.name, l.summary())
         });
     format!(
-        "Exported {n} stem{} to {folder}: {}, {}, {}{tail}{warnings}{loud}",
+        "Exported {n} stem{} to {folder}: {}, {}, {}{tail}{warnings}{loud}{}",
         if n == 1 { "" } else { "s" },
         depth_label(values),
         rate_label(report.sample_rate),
-        clock(seconds)
+        clock(seconds),
+        stems_levelled(report)
     )
 }
 
@@ -465,9 +523,6 @@ impl<S: EngineSink> AppCore<S> {
                 return Some("FLAC holds 16-bit and 24-bit audio, not 32-bit float".to_owned());
             }
             if values.file.is_lossy() {
-                if scope == ExportScope::Stems {
-                    return Some("Stems are written as WAV, AIFF or FLAC files".to_owned());
-                }
                 if self.video_tool_and_folder().is_none() {
                     return Some(
                         "MP3, AAC and Opus need FFmpeg, which is not available here".to_owned(),
@@ -589,6 +644,7 @@ impl<S: EngineSink> AppCore<S> {
                     } else {
                         StemStrip::Full
                     },
+                    level: stems_level_for(values),
                 },
                 _ => Target::File(path),
             },
@@ -603,7 +659,7 @@ impl<S: EngineSink> AppCore<S> {
             finish: if scope == ExportScope::Stems {
                 Finish::default()
             } else {
-                finish_for(values.mono, values.loudness)
+                finish_for(values.mono, values.loudness, values.ceiling)
             },
             also: extra_file(scope, &path_for_extra, values)
                 .and_then(|extra| Some((self.mp3_job(values)?, extra))),
@@ -623,6 +679,7 @@ impl<S: EngineSink> AppCore<S> {
             tags: Tags {
                 title: info.title.clone(),
                 author: info.author.clone(),
+                ..Tags::default()
             },
         })
     }
@@ -639,6 +696,7 @@ impl<S: EngineSink> AppCore<S> {
             tags: Tags {
                 title: info.title.clone(),
                 author: info.author.clone(),
+                ..Tags::default()
             },
         })
     }
@@ -681,11 +739,20 @@ impl<S: EngineSink> AppCore<S> {
                         describe(&report, &running.values, rate) + &against(&report.loudness)
                     }
                     Done::Stems(report) => {
-                        for ((path, _), loudness) in report.files.iter().zip(&report.loudness) {
+                        for (((path, _), loudness), level) in report
+                            .files
+                            .iter()
+                            .zip(&report.loudness)
+                            .zip(&report.normalise)
+                        {
                             let name = path
                                 .file_name()
                                 .map_or_else(String::new, |n| n.to_string_lossy().into_owned());
-                            log::info!("exported stem {name}: {}", loudness.summary());
+                            // With a loudness target the line says what the stem was before.
+                            let was = level
+                                .as_ref()
+                                .map_or_else(String::new, |n| format!("; {}", n.summary()));
+                            log::info!("exported stem {name}: {}{was}", loudness.summary());
                         }
                         let master = report
                             .files

@@ -845,17 +845,220 @@ fn ffmpeg_found_makes_the_encoder_ready() {
     assert_eq!(c.export_encoder(), EncoderState::Ready);
 }
 
+/// The names of the files in `folder`, sorted.
+fn names_in(folder: &Path) -> Vec<String> {
+    let mut names: Vec<String> = std::fs::read_dir(folder)
+        .map(|d| {
+            d.map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+                .collect()
+        })
+        .unwrap_or_default();
+    names.sort();
+    names
+}
+
 #[test]
-fn stems_are_not_compressed() {
+fn stems_are_encoded_one_file_each_with_the_song_and_the_stem_in_the_tags() {
     let t = Tmp::new();
     let tool = encoder();
     let mut c = lossy_core(&t, &tool);
-    let err = c
-        .start_audio_export(ExportScope::Stems, t.file("stems"), lossy(ExportFile::Mp3))
-        .unwrap_err();
-    assert!(err.contains("WAV, AIFF or FLAC"), "{err}");
-    assert!(encodes(&tool).is_empty());
+    c.apply_command(Command::SetSongInfo(atomik_model::SongInfo {
+        title: "Night \"Drive\"".to_owned(),
+        author: "Zoe".to_owned(),
+        ..atomik_model::SongInfo::default()
+    }))
+    .unwrap();
+    let dirty = c.is_dirty();
+    let chosen = ExportValues {
+        mp3: ExportQuality::Cbr(256),
+        ..lossy(ExportFile::Mp3)
+    };
+    let folder = t.file("Bounced song");
+    c.start_audio_export(ExportScope::Stems, folder.clone(), chosen)
+        .unwrap();
+    assert!(c.audio_export_busy());
+    c.wait_background();
+    // One file per strip, numbered, with the extension of the format and nothing else.
+    let names = names_in(&folder);
+    assert_eq!(names.len(), 2, "{names:?}");
+    assert!(names[0].starts_with("01 ") && names[0].ends_with(".mp3"));
+    assert_eq!(names[1], "02 Master.mp3");
+    for n in &names {
+        assert_eq!(std::fs::read(folder.join(n)).unwrap(), b"ENCODED");
+    }
+    let message = c.last_rejection().unwrap();
+    assert!(
+        message.contains("Exported 2 stems to Bounced song") && message.contains("MP3 256 kbps"),
+        "{message}"
+    );
+    // The same encoder choices as the song, one call per stem, the stem named in the title.
+    let calls = encodes(&tool);
+    assert_eq!(calls.len(), 2, "one encoding call per stem");
+    for (call, stem) in calls.iter().zip(["Poly Synth", "Master"]) {
+        assert_eq!(call.after("-c:a").unwrap(), "libmp3lame");
+        assert_eq!(call.after("-b:a").unwrap(), "256k");
+        let tags = tags_of(call);
+        assert_eq!(tags.len(), 3, "{tags:?}");
+        assert!(
+            tags[0].starts_with("title=") && tags[0].contains(stem),
+            "{tags:?}"
+        );
+        assert_eq!(tags[1], "artist=Zoe");
+        assert_eq!(tags[2], "album=Night \"Drive\"");
+        // The input is a temporary WAV that is gone with its folder.
+        let input = call.after("-i").unwrap().to_string_lossy().into_owned();
+        let wav = PathBuf::from(input.strip_prefix("file:").unwrap());
+        assert!(!wav.exists(), "the temporary WAV was removed");
+        assert!(!wav.parent().unwrap().exists());
+    }
+    assert_eq!(c.is_dirty(), dirty, "the project is untouched");
+    assert!(c.sink_mut().take().is_empty(), "the engine was not touched");
+}
+
+#[test]
+fn aac_and_opus_stems_use_their_containers_and_a_loudness_goes_into_the_encoder() {
+    let t = Tmp::new();
+    let tool = encoder();
+    let mut c = lossy_core(&t, &tool);
+    c.start_audio_export(ExportScope::Stems, t.file("a"), lossy(ExportFile::Aac))
+        .unwrap();
+    c.wait_background();
+    assert_eq!(
+        names_in(&t.file("a")),
+        ["01 Poly Synth.m4a", "02 Master.m4a"]
+    );
+    c.start_audio_export(ExportScope::Stems, t.file("o"), lossy(ExportFile::Opus))
+        .unwrap();
+    c.wait_background();
+    assert_eq!(
+        names_in(&t.file("o")),
+        ["01 Poly Synth.opus", "02 Master.opus"]
+    );
+    let calls = encodes(&tool);
+    assert_eq!(calls.len(), 4);
+    assert_eq!(calls[0].after("-c:a").unwrap(), "aac");
+    assert_eq!(calls[2].after("-c:a").unwrap(), "libopus");
+}
+
+#[test]
+fn a_cancel_while_a_stem_encodes_leaves_no_file_no_folder_and_no_temporary_wav() {
+    use std::sync::mpsc::channel;
+    let t = Tmp::new();
+    let (at_step, reached) = channel::<()>();
+    let (release, wait) = channel::<()>();
+    let wait = std::sync::Mutex::new(wait);
+    let at_step = std::sync::Mutex::new(at_step);
+    let tool = Arc::new(FakeTool::new().audio(b"HALF".to_vec()).on_frame(move |n| {
+        if n == 1 {
+            let _ = at_step.lock().unwrap().send(());
+            let _ = wait
+                .lock()
+                .unwrap()
+                .recv_timeout(std::time::Duration::from_secs(30));
+        }
+    }));
+    let mut c = lossy_core(&t, &tool);
+    let folder = t.file("Bounced song");
+    c.start_audio_export(ExportScope::Stems, folder.clone(), lossy(ExportFile::Mp3))
+        .unwrap();
+    reached
+        .recv_timeout(std::time::Duration::from_secs(60))
+        .unwrap();
+    c.cancel_audio_export();
+    release.send(()).unwrap();
+    c.wait_background();
     assert!(!c.audio_export_busy());
+    assert!(!folder.exists(), "the folder it made is gone");
+    let call = &encodes(&tool)[0];
+    let input = call.after("-i").unwrap().to_string_lossy().into_owned();
+    let wav = PathBuf::from(input.strip_prefix("file:").unwrap());
+    assert!(!wav.exists(), "the temporary WAV was removed");
+    assert!(c.last_rejection().unwrap().contains("cancelled"));
+}
+
+#[test]
+fn a_cancel_before_the_first_stem_and_a_failing_encoder_leave_nothing() {
+    let t = Tmp::new();
+    let tool = encoder();
+    let mut c = lossy_core(&t, &tool);
+    let hold = crate::export_worker::hold::next_export();
+    c.start_audio_export(ExportScope::Stems, t.file("early"), lossy(ExportFile::Mp3))
+        .unwrap();
+    c.cancel_audio_export();
+    drop(hold);
+    c.wait_background();
+    assert!(!t.file("early").exists());
+    assert!(encodes(&tool).is_empty(), "the encoder never started");
+    // An encoder that fails says why and leaves no stem behind, though an older file stays.
+    let tool = Arc::new(
+        FakeTool::new()
+            .audio(b"HALF".to_vec())
+            .stream_fails("Unknown encoder 'libopus'"),
+    );
+    let mut c = lossy_core(&t, &tool);
+    std::fs::create_dir_all(t.file("failed")).unwrap();
+    std::fs::write(t.file("failed").join("notes.txt"), b"mine").unwrap();
+    c.start_audio_export(
+        ExportScope::Stems,
+        t.file("failed"),
+        lossy(ExportFile::Opus),
+    )
+    .unwrap();
+    c.wait_background();
+    let message = c.last_rejection().unwrap();
+    assert!(
+        message.contains("failed") && message.contains("libopus"),
+        "{message}"
+    );
+    assert_eq!(names_in(&t.file("failed")), ["notes.txt"]);
+}
+
+#[test]
+fn without_ffmpeg_compressed_stems_are_refused_with_the_setup_line() {
+    let t = Tmp::new();
+    let mut c = core();
+    let err = c
+        .start_audio_export(ExportScope::Stems, t.file("s"), lossy(ExportFile::Mp3))
+        .unwrap_err();
+    assert!(err.contains("FFmpeg"), "{err}");
+    assert!(!c.audio_export_busy());
+    assert!(!t.file("s").exists());
+}
+
+#[test]
+fn compressed_stems_report_a_progress_that_never_goes_back() {
+    use atomik_render::plugin_pass::RenderControl;
+    use std::sync::Mutex;
+    let t = Tmp::new();
+    let tool = encoder();
+    let c = lossy_core(&t, &tool);
+    let work = c.export_work(ExportScope::Stems, t.file("p"), &lossy(ExportFile::Opus));
+    let seen = Mutex::new(Vec::new());
+    let report = |p: f32| seen.lock().unwrap().push(p);
+    let done = crate::export_worker::run(
+        work,
+        RenderControl {
+            cancel: None,
+            progress: Some(&report),
+        },
+    )
+    .unwrap()
+    .unwrap();
+    assert!(matches!(done, crate::export_worker::Done::Stems(_)));
+    let seen = seen.into_inner().unwrap();
+    assert!(seen.len() > 2, "{seen:?}");
+    assert!(
+        seen.windows(2).all(|w| w[0] <= w[1] + 1e-6),
+        "never goes back: {seen:?}"
+    );
+    assert!(
+        seen.iter().all(|f| (0.0..=1.0 + 1e-6).contains(f)),
+        "{seen:?}"
+    );
+    assert!(
+        seen.last().is_some_and(|f| *f > 0.9),
+        "nearly done at the end: {seen:?}"
+    );
 }
 
 #[test]
@@ -1051,12 +1254,11 @@ fn a_guide_changes_nothing_and_a_mono_export_has_one_channel() {
 }
 
 #[test]
-fn stems_ignore_the_loudness_and_the_mix_down() {
+fn stems_ignore_the_mix_down_and_the_extra_file() {
     let t = Tmp::new();
     let mut c = core();
     let stems = ExportValues {
         mono: true,
-        loudness: ExportLoudness::Target(-14),
         also_mp3: true,
         ..values(ExportDepth::Pcm24)
     };
@@ -1146,8 +1348,8 @@ fn the_extra_file_and_the_finish_follow_the_values() {
     );
     assert!(extra_file(ExportScope::Stems, Path::new("d/stems"), &v).is_none());
     assert!(!wants_extra_mp3(ExportScope::Song, &lossy(ExportFile::Mp3)));
-    assert!(finish_for(false, ExportLoudness::Off).is_noop());
-    let f = finish_for(true, ExportLoudness::Target(-16));
+    assert!(finish_for(false, ExportLoudness::Off, -10).is_noop());
+    let f = finish_for(true, ExportLoudness::Target(-16), -10);
     assert!(f.mono);
     assert_eq!(
         f.loudness,
@@ -1155,6 +1357,18 @@ fn the_extra_file_and_the_finish_follow_the_values() {
             lufs: -16.0,
             ceiling_dbtp: -1.0
         }
+    );
+    // A target of the user's and a ceiling of the user's are tenths.
+    assert_eq!(
+        finish_for(false, ExportLoudness::Custom(-125), -25).loudness,
+        atomik_render::normalise::Loudness::Target {
+            lufs: -12.5,
+            ceiling_dbtp: -2.5
+        }
+    );
+    assert_eq!(
+        finish_for(false, ExportLoudness::Guide(-9), -25).loudness,
+        atomik_render::normalise::Loudness::Guide { lufs: -9.0 }
     );
 }
 
@@ -1287,4 +1501,238 @@ fn an_export_that_may_not_fit_asks_once_and_a_dialog_closed_leaves_no_file() {
             .is_none()
     );
     assert!(!path.exists(), "nothing was written");
+}
+
+// ---------------------------------------------------------------------------------------------
+// A loudness for stems, and more loudness targets and ceilings.
+
+/// 32-bit float stems (no quantisation, so a gain can be checked sample by sample).
+fn float_stems() -> ExportValues {
+    ExportValues {
+        tail: false,
+        ..values(ExportDepth::Float32)
+    }
+}
+
+/// The stem files of `folder`, in the order of their names.
+fn stem_files(folder: &Path) -> Vec<PathBuf> {
+    names_in(folder)
+        .into_iter()
+        .map(|n| folder.join(n))
+        .collect()
+}
+
+/// Exports the stems of `c` with `values` to `folder` and waits for the end.
+fn export_stems_to(c: &mut AppCore<RecordingSink>, folder: &Path, values: ExportValues) -> String {
+    c.start_audio_export(ExportScope::Stems, folder.to_path_buf(), values)
+        .unwrap();
+    c.wait_background();
+    c.last_rejection().unwrap().to_owned()
+}
+
+/// A custom target `db` LU away from the loudness `base`, in tenths (as the panel keeps it).
+fn target_from(base: f32, db: f32) -> ExportLoudness {
+    let tenths = ((base + db) * 10.0).round() as i16;
+    assert!(
+        atomik_ui::CUSTOM_LUFS_TENTHS.contains(&tenths),
+        "the test song is too loud or too quiet for this target: {tenths}"
+    );
+    ExportLoudness::Custom(tenths)
+}
+
+/// Every sample of `a` is the sample of `b` times the gain `db`, within float rounding.
+fn is_gain_of(a: &atomik_audio_file::AudioData, b: &atomik_audio_file::AudioData, db: f32) -> bool {
+    let g = 10f32.powf(db / 20.0);
+    a.channels.len() == b.channels.len()
+        && a.channels.iter().zip(&b.channels).all(|(x, y)| {
+            x.len() == y.len() && x.iter().zip(y).all(|(p, q)| (p - q * g).abs() <= 3e-5)
+        })
+}
+
+#[test]
+fn one_gain_for_all_stems_comes_from_the_master_and_keeps_them_adding_up() {
+    let t = Tmp::new();
+    let mut c = core();
+    export_stems_to(&mut c, &t.file("plain"), float_stems());
+    let plain = stem_files(&t.file("plain"));
+    assert_eq!(plain.len(), 2);
+    let base = measured(&plain[1]).1.integrated_lufs.expect("audible");
+    // Six LU under the master: a plain gain of -6 dB for everything, no limiter involved.
+    let levelled = ExportValues {
+        loudness: target_from(base, -6.0),
+        ..float_stems()
+    };
+    let message = export_stems_to(&mut c, &t.file("level"), levelled);
+    assert!(
+        message.contains("; mix was ") && message.contains("every stem turned down"),
+        "{message}"
+    );
+    let level = stem_files(&t.file("level"));
+    assert_eq!(level.len(), 2);
+    let master = measured(&level[1]).1;
+    assert!(
+        (master.integrated_lufs.unwrap() - (base - 6.0)).abs() <= 0.06,
+        "the master is at the target: {master:?} from {base}"
+    );
+    let gain = master.integrated_lufs.unwrap() - base;
+    for (a, b) in level.iter().zip(&plain) {
+        assert!(
+            is_gain_of(&measured(a).0, &measured(b).0, gain),
+            "{a:?} is its unlevelled self times the one gain"
+        );
+    }
+    // The stems still add up: the channel and the master were equal and still are.
+    let (ch, ma) = (measured(&level[0]).0, measured(&level[1]).0);
+    assert!(
+        ch.channels
+            .iter()
+            .zip(&ma.channels)
+            .all(|(x, y)| x.iter().zip(y).all(|(p, q)| (p - q).abs() <= 1e-5))
+    );
+    assert!(c.sink_mut().take().is_empty(), "the engine was not touched");
+}
+
+#[test]
+fn each_stem_can_be_brought_to_the_target_on_its_own() {
+    let t = Tmp::new();
+    let mut c = core();
+    export_stems_to(&mut c, &t.file("plain"), float_stems());
+    let plain = stem_files(&t.file("plain"));
+    let base = measured(&plain[1]).1.integrated_lufs.expect("audible");
+    let each = ExportValues {
+        loudness: target_from(base, -6.0),
+        stems_together: false,
+        ..float_stems()
+    };
+    let message = export_stems_to(&mut c, &t.file("each"), each);
+    assert!(
+        message.contains("; each stem brought to ") && !message.contains("every stem"),
+        "{message}"
+    );
+    for f in stem_files(&t.file("each")) {
+        let lufs = measured(&f).1.integrated_lufs.unwrap();
+        assert!((lufs - (base - 6.0)).abs() <= 0.15, "{f:?}: {lufs}");
+    }
+}
+
+#[test]
+fn a_target_the_peaks_cannot_reach_holds_the_gain_at_the_ceiling_and_says_so() {
+    let t = Tmp::new();
+    let mut c = core();
+    export_stems_to(&mut c, &t.file("plain"), float_stems());
+    let plain = stem_files(&t.file("plain"));
+    let (_, before) = measured(&plain[1]);
+    let base = before.integrated_lufs.unwrap();
+    // A target much louder than the peaks allow: the master ends on the ceiling, not on the
+    // target, and no limiter shapes the stems (they are the same audio times one gain).
+    let loud = ExportValues {
+        loudness: target_from(base, 10.0),
+        ceiling: -90,
+        ..float_stems()
+    };
+    let message = export_stems_to(&mut c, &t.file("loud"), loud);
+    let level = stem_files(&t.file("loud"));
+    let (audio, after) = measured(&level[1]);
+    let peak = after.true_peak_dbtp.unwrap();
+    assert!(
+        (peak + 9.0).abs() <= 0.06,
+        "the master peaks at the ceiling: {peak}"
+    );
+    assert!(
+        message.contains("short of") && message.contains("under -9.0 dBTP"),
+        "{message}"
+    );
+    let gain = peak - before.true_peak_dbtp.unwrap();
+    assert!(is_gain_of(&audio, &measured(&plain[1]).0, gain));
+}
+
+#[test]
+fn a_guide_changes_no_stem_in_either_mode() {
+    let t = Tmp::new();
+    let mut c = core();
+    export_stems_to(&mut c, &t.file("plain"), float_stems());
+    for (name, together) in [("together", true), ("each", false)] {
+        let guide = ExportValues {
+            loudness: ExportLoudness::Guide(-9),
+            stems_together: together,
+            ..float_stems()
+        };
+        let message = export_stems_to(&mut c, &t.file(name), guide);
+        assert!(message.contains("guide"), "{name}: {message}");
+        for (a, b) in stem_files(&t.file(name))
+            .iter()
+            .zip(stem_files(&t.file("plain")))
+        {
+            assert_eq!(
+                std::fs::read(a).unwrap(),
+                std::fs::read(b).unwrap(),
+                "{name}: nothing changed"
+            );
+        }
+    }
+}
+
+#[test]
+fn dry_stems_take_their_one_gain_from_the_sum_of_the_stems() {
+    let t = Tmp::new();
+    let mut c = core();
+    let dry = ExportValues {
+        dry: true,
+        ..float_stems()
+    };
+    export_stems_to(&mut c, &t.file("plain"), dry);
+    let plain = stem_files(&t.file("plain"));
+    assert_eq!(plain.len(), 1, "a dry export has no master");
+    let (plain_audio, before) = measured(&plain[0]);
+    let levelled = ExportValues {
+        loudness: target_from(before.integrated_lufs.unwrap(), -6.0),
+        ..dry
+    };
+    let message = export_stems_to(&mut c, &t.file("level"), levelled);
+    assert!(message.contains("every stem turned down"), "{message}");
+    let level = stem_files(&t.file("level"));
+    assert_eq!(level.len(), 1);
+    let (audio, after) = measured(&level[0]);
+    let gain = after.integrated_lufs.unwrap() - before.integrated_lufs.unwrap();
+    assert!((gain + 6.0).abs() <= 0.06, "{gain}");
+    assert!(is_gain_of(&audio, &plain_audio, gain));
+}
+
+#[test]
+fn a_custom_target_and_ceiling_bring_a_song_export_where_they_say() {
+    let t = Tmp::new();
+    let mut c = core();
+    c.start_audio_export(ExportScope::Song, t.file("plain.wav"), float_stems())
+        .unwrap();
+    c.wait_background();
+    let (_, before) = measured(&t.file("plain.wav"));
+    let base = before.integrated_lufs.unwrap();
+    let custom = ExportValues {
+        loudness: target_from(base, -3.0),
+        ..float_stems()
+    };
+    c.start_audio_export(ExportScope::Song, t.file("custom.wav"), custom)
+        .unwrap();
+    c.wait_background();
+    let (_, after) = measured(&t.file("custom.wav"));
+    assert!(
+        (after.integrated_lufs.unwrap() - (base - 3.0)).abs() <= 0.15,
+        "{after:?} from {before:?}"
+    );
+    // A ceiling of the user's: a loud target is held under -3 dBTP, where -1 would let it pass.
+    let tight = ExportValues {
+        loudness: target_from(base, 8.0),
+        ceiling: -30,
+        ..float_stems()
+    };
+    c.start_audio_export(ExportScope::Song, t.file("tight.wav"), tight)
+        .unwrap();
+    c.wait_background();
+    let (_, after) = measured(&t.file("tight.wav"));
+    assert!(after.true_peak_dbtp.unwrap() <= -3.0 + 0.01, "{after:?}");
+    let message = c.last_rejection().unwrap();
+    assert!(
+        message.contains("under -3.0 dBTP") || message.contains("turned"),
+        "{message}"
+    );
 }

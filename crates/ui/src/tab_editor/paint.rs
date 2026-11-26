@@ -257,6 +257,13 @@ impl TabEditorView {
         if let Some(p) = self.playhead_content() {
             let x = self.axis.tick_to_x(p);
             if x >= x0 && x <= b.x1 {
+                self.st.base.glow.vline(
+                    c,
+                    x.round() + 0.5,
+                    ruler.y0,
+                    bottom + lh,
+                    self.st.playhead,
+                );
                 sp::playhead(c, x, ruler.y0, bottom + lh, self.st.playhead);
             }
         }

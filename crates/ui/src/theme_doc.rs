@@ -11,6 +11,7 @@
 //! [`TOKENS`] is the one list of the colour tokens: their names in the file, their labels in the
 //! theme editor, their group, and how to read and write them in a [`Theme`].
 
+use crate::glow::{Glow, MAX_RADIUS};
 use crate::theme::Theme;
 use std::collections::BTreeMap;
 use std::sync::OnceLock;
@@ -276,6 +277,9 @@ pub struct ThemeDoc {
     pub accent_lightness: Option<f32>,
     /// Panel corner radius (`None`: as the base).
     pub corner: Option<f64>,
+    /// The glow on meters and the playhead (`None`: as the base, which has none unless it is
+    /// Synthwave).
+    pub glow: Option<Glow>,
     /// The tokens it sets, by file name, as red, green, blue, alpha.
     pub colors: BTreeMap<String, [u8; 4]>,
 }
@@ -290,6 +294,7 @@ impl ThemeDoc {
             accent_saturation: None,
             accent_lightness: None,
             corner: None,
+            glow: None,
             colors: BTreeMap::new(),
         }
     }
@@ -301,6 +306,7 @@ impl ThemeDoc {
         doc.accent_saturation = Some(theme.accent_saturation);
         doc.accent_lightness = Some(theme.accent_lightness);
         doc.corner = Some(theme.corner);
+        doc.glow = Some(theme.glow);
         for t in TOKENS {
             doc.colors
                 .insert(t.key.to_string(), rgba_of((t.get)(theme)));
@@ -354,6 +360,10 @@ impl ThemeDoc {
                     .ok_or_else(|| ThemeError::Invalid("dark is true or false".into()))?,
             ),
         };
+        let glow = match obj.get("glow") {
+            None => None,
+            Some(v) => Some(parse_glow(v)?),
+        };
         let mut colors = BTreeMap::new();
         if let Some(map) = obj.get("colors") {
             let map = map
@@ -378,6 +388,7 @@ impl ThemeDoc {
             accent_saturation: number("accent_saturation")?.map(|n| (n as f32).clamp(0.0, 1.0)),
             accent_lightness: number("accent_lightness")?.map(|n| (n as f32).clamp(0.05, 0.95)),
             corner: number("corner")?.map(|n| n.clamp(0.0, 16.0)),
+            glow,
             colors,
         })
     }
@@ -401,6 +412,9 @@ impl ThemeDoc {
         }
         if let Some(n) = self.corner {
             lines.push(format!("  \"corner\": {n}"));
+        }
+        if let Some(g) = &self.glow {
+            lines.push(glow_json(g));
         }
         let set: Vec<String> = TOKENS
             .iter()
@@ -428,6 +442,9 @@ impl ThemeDoc {
         }
         if let Some(n) = self.corner {
             theme.corner = n;
+        }
+        if let Some(g) = self.glow {
+            theme.glow = g;
         }
         for t in TOKENS {
             if let Some(c) = self.colors.get(t.key) {
@@ -477,6 +494,7 @@ impl ThemeDoc {
         theme.accent_saturation = self.accent_saturation.unwrap_or(theme.accent_saturation);
         theme.accent_lightness = self.accent_lightness.unwrap_or(theme.accent_lightness);
         theme.corner = self.corner.unwrap_or(theme.corner);
+        theme.glow = self.glow.unwrap_or(theme.glow);
         for t in TOKENS {
             if let Some(c) = self.colors.get(t.key) {
                 (t.set)(&mut theme, colour_of(*c));
@@ -484,6 +502,67 @@ impl ThemeDoc {
         }
         Ok(theme)
     }
+}
+
+/// The `glow` section of a theme file: `enabled` (default true when the section is there),
+/// `color` (`"accent"`, the default, or `#rrggbb`), `intensity` (0 to 1, default 0.5) and
+/// `radius` (0 to 16 pixels, default 6). A field of the wrong kind is an error; unknown fields
+/// are ignored.
+fn parse_glow(v: &serde_json::Value) -> Result<Glow, ThemeError> {
+    let bad = |what: &str| ThemeError::Invalid(format!("glow: {what}"));
+    let map = v.as_object().ok_or_else(|| bad("not an object"))?;
+    let mut glow = Glow {
+        enabled: true,
+        ..Glow::OFF
+    };
+    if let Some(e) = map.get("enabled") {
+        glow.enabled = e.as_bool().ok_or_else(|| bad("enabled is true or false"))?;
+    }
+    if let Some(c) = map.get("color") {
+        let text = c
+            .as_str()
+            .ok_or_else(|| bad("color is accent or #rrggbb"))?;
+        glow.colour = if text.trim().eq_ignore_ascii_case("accent") {
+            None
+        } else {
+            Some(colour_of(parse_colour(text).ok_or_else(|| {
+                ThemeError::Colour {
+                    key: "glow".into(),
+                    text: c.to_string(),
+                }
+            })?))
+        };
+    }
+    let number = |key: &str| -> Result<Option<f32>, ThemeError> {
+        match map.get(key) {
+            None => Ok(None),
+            Some(n) => n
+                .as_f64()
+                .filter(|n| n.is_finite())
+                .map(|n| Some(n as f32))
+                .ok_or_else(|| bad(&format!("{key} is not a number"))),
+        }
+    };
+    if let Some(n) = number("intensity")? {
+        glow.intensity = n;
+    }
+    if let Some(n) = number("radius")? {
+        glow.radius = n;
+    }
+    Ok(glow.clamped())
+}
+
+/// The `glow` section as the file keeps it.
+fn glow_json(g: &Glow) -> String {
+    let color = g
+        .colour
+        .map_or_else(|| "accent".to_string(), |c| hex_text(rgba_of(c)));
+    format!(
+        "  \"glow\": {{ \"enabled\": {}, \"color\": \"{color}\", \"intensity\": {}, \"radius\": {} }}",
+        g.enabled,
+        g.intensity,
+        g.radius.min(MAX_RADIUS)
+    )
 }
 
 /// A name as it is kept: trimmed, one line, at most [`MAX_NAME_CHARS`] characters.
@@ -574,6 +653,7 @@ fn blank() -> Theme {
         meter_low: z,
         meter_mid: z,
         meter_high: z,
+        glow: Glow::OFF,
     };
     theme.dark = true;
     theme
@@ -692,6 +772,42 @@ mod tests {
         assert_eq!(back.to_json(), text);
         assert_eq!(back.colour("selection"), Some([1, 2, 3, 4]));
         same(&back.resolve(), &doc.resolve());
+    }
+
+    /// Glow is Synthwave's alone: Light and Dark leave it off, and a theme written with or
+    /// without the section reads back the same.
+    #[test]
+    fn the_glow_section_round_trips_and_only_synthwave_turns_it_on() {
+        assert!(!Theme::dark().glow.active() && !Theme::light().glow.active());
+        let s = Theme::synthwave().glow;
+        assert!(s.active() && s.colour.is_none());
+        // With the section (an own colour, odd numbers clamped).
+        let text = r##"{ "version": 1, "name": "G", "based_on": "dark",
+            "glow": { "color": "#ff00aa", "intensity": 3, "radius": 99 } }"##;
+        let doc = ThemeDoc::parse(text).unwrap();
+        let g = doc.glow.unwrap();
+        assert!(
+            g.enabled,
+            "a section that is there is on unless it says off"
+        );
+        assert_eq!(g.colour.map(rgba_of), Some([0xff, 0x00, 0xaa, 255]));
+        assert!((g.intensity - 1.0).abs() < 1e-6 && (g.radius - MAX_RADIUS).abs() < 1e-6);
+        assert_eq!(ThemeDoc::parse(&doc.to_json()).unwrap(), doc);
+        assert_eq!(doc.resolve().glow, g);
+        // Without it: no glow, nothing written.
+        let plain = ThemeDoc::parse(r#"{ "version": 1, "name": "P" }"#).unwrap();
+        assert_eq!(plain.glow, None);
+        assert!(!plain.to_json().contains("glow"));
+        assert!(!plain.resolve().glow.active());
+        // A copy of Synthwave keeps its glow.
+        let copy = ThemeDoc::from_theme("Copy", Base::Dark, &Theme::synthwave());
+        let back = ThemeDoc::parse(&copy.to_json()).unwrap();
+        assert_eq!(back.resolve().glow, Theme::synthwave().glow);
+        // A glow of the wrong kind is refused.
+        for bad in [r#""on""#, r#"{ "enabled": 1 }"#, r#"{ "color": "red" }"#] {
+            let text = format!(r#"{{ "version": 1, "name": "B", "glow": {bad} }}"#);
+            assert!(ThemeDoc::parse(&text).is_err(), "{bad}");
+        }
     }
 
     /// A token a file leaves out comes from the theme it is based on.

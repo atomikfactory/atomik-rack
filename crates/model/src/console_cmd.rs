@@ -793,6 +793,9 @@ pub(crate) fn plan(
             old: console.align_returns,
             new: on,
         }),
+        ConsoleCommand::SetLocked { strips, locked } => {
+            p.push(crate::console_lock::plan_set(doc, &strips, locked)?);
+        }
         ConsoleCommand::SetCompensation(on) => p.push(Edit::Compensation {
             old: console.compensation,
             new: on,

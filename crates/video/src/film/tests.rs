@@ -479,6 +479,7 @@ fn the_tags_are_separate_arguments_and_names_are_plain_files() {
     let tags = Tags {
         title: "Say \"hi\"; rm -rf $HOME".to_owned(),
         author: "-f lavfi\nsecond".to_owned(),
+        ..Tags::default()
     };
     let a = args_of(
         &spec(FilmPicture::Copy, FilmSound::Aac(192)),

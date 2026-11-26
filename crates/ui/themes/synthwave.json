@@ -6,6 +6,7 @@
   "accent_saturation": 0.85,
   "accent_lightness": 0.62,
   "corner": 3.0,
+  "glow": { "enabled": true, "color": "accent", "intensity": 0.6, "radius": 6 },
   "colors": {
     "background": "#140c28",
     "rail": "#2a1a4d",

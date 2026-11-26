@@ -308,6 +308,10 @@ enum Hit {
     Meter(usize),
     /// The master's meter button.
     MasterMeter,
+    /// A strip's lock icon (top right of its name plate, left of the meter button).
+    Lock(usize),
+    /// The master's lock icon.
+    MasterLock,
     /// A strip's output selector.
     OutputSel(usize),
     /// A part of VCA strip `i`.
@@ -363,6 +367,12 @@ fn jump_rects(name: Rect) -> [(Jump, Rect); 2] {
 fn meter_rect(name: Rect) -> Rect {
     let r = plate_rect(name);
     Rect::new(r.x1 - 21.0, r.y0 + 6.0, r.x1 - 4.0, r.y0 + 16.0)
+}
+
+/// The lock icon of a name plate: left of the meter button, in the top right corner.
+fn lock_rect(name: Rect) -> Rect {
+    let r = plate_rect(name);
+    Rect::new(r.x1 - 35.0, r.y0 + 5.0, r.x1 - 24.0, r.y0 + 17.0)
 }
 
 /// The colour plate hotspot: the top band of a name plate (a little deeper than it is drawn).
@@ -585,6 +595,8 @@ struct StripView {
     insert_scroll: usize,
     /// A meter panel of this strip is open (its meter button is lit).
     meter_open: bool,
+    /// The strip is locked (see `atomik_model::console_lock`): its controls are dimmed and idle.
+    locked: bool,
     /// The name plate caption ("CH 1", "BUS 1").
     caption: String,
     /// Where the output goes, as the selector reads it.
@@ -638,6 +650,7 @@ impl StripView {
             source: None,
             has_track: false,
             meter_open: false,
+            locked: false,
             caption: String::new(),
             output: String::new(),
             selected: false,
@@ -1414,6 +1427,19 @@ impl ConsoleView {
         matches!(self.hit(p), Hit::MasterMeter).then_some(p)
     }
 
+    /// Centre of the lock icon of a strip or of the master, when it is on screen.
+    pub fn lock_button_center(&self, key: &DeviceKey) -> Option<Point> {
+        if let Some(i) = self.strips.iter().position(|s| &s.key == key) {
+            let l = self.layout_of(self.strips[i].desc)?;
+            let p = (lock_rect(l.name) + Vec2::new(self.strip_x(i), self.area_top())).center();
+            return matches!(self.hit(p), Hit::Lock(_)).then_some(p);
+        }
+        self.master.as_ref().filter(|m| &m.key == key)?;
+        let l = self.master_layout.as_ref()?;
+        let p = (lock_rect(l.name) + Vec2::new(self.master_x()?, self.area_top())).center();
+        matches!(self.hit(p), Hit::MasterLock).then_some(p)
+    }
+
     /// Switches link faders on or off (see the module documentation).
     pub fn set_link_faders(&mut self, on: bool) {
         if on != self.link_faders {
@@ -2168,6 +2194,9 @@ impl ConsoleView {
                     return Hit::Ctrl(Target::Master, i);
                 }
                 if l.name.contains(lp) {
+                    if lock_rect(l.name).contains(lp) {
+                        return Hit::MasterLock;
+                    }
                     if meter_rect(l.name).contains(lp) {
                         return Hit::MasterMeter;
                     }
@@ -2227,6 +2256,9 @@ impl ConsoleView {
                 lp + Vec2::new(0.0, self.scroll.y)
             };
             if pinned && l.name.contains(lp) {
+                if lock_rect(l.name).contains(lp) {
+                    return Hit::Lock(i);
+                }
                 if meter_rect(l.name).contains(lp) {
                     return Hit::Meter(i);
                 }
@@ -2479,6 +2511,7 @@ impl ConsoleView {
             s.driven = doc.driven_params(&key);
             s.automated = automated_of(automated, &key);
             s.desc = desc_of(&key);
+            s.locked = console.is_locked(&key);
             if let Some(c) = console.channels.get(i) {
                 let source = c.source.as_ref().and_then(|k| doc.device(k));
                 // A second channel of one source (a drum pad's own channel) shows its own name.
@@ -2537,6 +2570,7 @@ impl ConsoleView {
                 format!("{}", s.insert_scroll),
                 format!("{:?} {}", s.source, s.has_track),
                 format!("{:?}", s.output_color),
+                format!("{}", s.locked),
             ];
             extra.extend(chain_sig(&s.inserts));
             let sig = Sig {
@@ -2579,6 +2613,7 @@ impl ConsoleView {
                     m.device = doc.device_with_driven_values(registry, k);
                     m.driven = doc.driven_params(k);
                     m.automated = automated_of(automated, k);
+                    m.locked = console.is_locked(k);
                     m.desc = desc;
                     m.name = "MASTER".into();
                     m.accent = accent;
@@ -2592,6 +2627,7 @@ impl ConsoleView {
                     extra.push(format!("{}", m.insert_scroll));
                     extra.push(format!("{:?}", m.driven));
                     extra.push(format!("{:?}", m.automated));
+                    extra.push(format!("{}", m.locked));
                     extra.extend(flags);
                     extra.extend(chain_sig(&m.inserts));
                     let sig = Sig {
@@ -2910,7 +2946,28 @@ impl ConsoleView {
             self.drag = Drag::Pan { last: pos };
             return;
         }
+        // A locked strip takes no edit: its controls, inserts and pickers do not react.
+        if button == PointerButton::Primary
+            && let Hit::Ctrl(t, _)
+            | Hit::Insert(t, _)
+            | Hit::InsertRemove(t, _)
+            | Hit::InsertBypass(t, _) = &hit
+            && let Some(v) = self.view_of(*t).filter(|v| v.locked)
+        {
+            self.notice = Some(format!("Channel {} is locked", v.name));
+            return;
+        }
         match (hit, button) {
+            (Hit::Lock(i), PointerButton::Primary) => {
+                if let Some(key) = self.strips.get(i).map(|s| s.key.clone()) {
+                    self.toggle_lock(key, out);
+                }
+            }
+            (Hit::MasterLock, PointerButton::Primary) => {
+                if let Some(key) = self.master.as_ref().map(|m| m.key.clone()) {
+                    self.toggle_lock(key, out);
+                }
+            }
             (Hit::Button(b), PointerButton::Primary) => {
                 self.press_button(b, pos, doc, registry, out)
             }
@@ -2929,9 +2986,10 @@ impl ConsoleView {
                     x: pos.x,
                 };
             }
-            (Hit::Name(i) | Hit::Plate(i) | Hit::Jump(i, _), PointerButton::Secondary) => {
-                self.open_strip_menu(i, pos, doc)
-            }
+            (
+                Hit::Name(i) | Hit::Plate(i) | Hit::Jump(i, _) | Hit::Lock(i),
+                PointerButton::Secondary,
+            ) => self.open_strip_menu(i, pos, doc),
             (Hit::Plate(i), PointerButton::Primary) => {
                 if i >= self.n_channels {
                     if let Some(bus) = self.strips.get(i).map(|s| s.key.clone()) {
@@ -3062,6 +3120,25 @@ impl ConsoleView {
             (Hit::Ctrl(t, c), _) => self.ctrl_down(t, c, button, clicks, modifiers, out),
             _ => {}
         }
+    }
+
+    /// Locks the strip `key`, or unlocks it when it is locked, with the other selected strips when
+    /// it is one of them (one undo step).
+    fn toggle_lock(&mut self, key: DeviceKey, out: &mut Vec<UiAction>) {
+        let on = !self
+            .strips
+            .iter()
+            .chain(self.master.as_ref())
+            .find(|s| s.key == key)
+            .is_some_and(|s| s.locked);
+        let strips = if self.selection.contains(&key) {
+            self.selected_strips()
+        } else {
+            vec![key]
+        };
+        out.push(UiAction::Command(Command::Console(
+            ConsoleCommand::SetLocked { strips, locked: on },
+        )));
     }
 
     /// Whether control `c` of `t` is the bypass-all switch of the inserts.
@@ -3777,6 +3854,7 @@ impl ConsoleView {
             ("Copy sends", "mixer.copy_settings_sends"),
             ("Copy inserts", "mixer.copy_settings_inserts"),
             ("Paste settings", "mixer.paste_settings"),
+            ("Lock / unlock channel", "mixer.lock_channel"),
             ("Reset channel", "mixer.reset_strip"),
             ("Clear inserts", "mixer.clear_inserts"),
             ("Create parallel channel", "mixer.create_parallel"),
@@ -4600,6 +4678,7 @@ impl ConsoleView {
         if matches!(self.drag, Drag::None)
             && let Hit::Ctrl(t, c) = hit
             && !modifiers.command()
+            && !self.view_of(t).is_some_and(|v| v.locked)
             && scrollbar.is_none()
             && !self.on_knob_label(t, c, pos)
         {
@@ -6057,6 +6136,16 @@ fn stereo_meter(
         let alpha = if silenced { 0.35 } else { 1.0 };
         let peak = m.peak[ch].level_db;
         let rms = m.rms[ch].level_db;
+        if st.base.glow.active() && !silenced && meter_norm(peak) > 0.0 {
+            // The lit part of the bar glows in the colour of the zone it reaches.
+            let lit = Rect::new(
+                inner.x0,
+                inner.y1 - h * meter_norm(peak),
+                inner.x1,
+                inner.y1,
+            );
+            st.base.glow.halo(c, lit, meter_color(st, peak));
+        }
         zone_fill(c, st, inner, peak, 0.38 * alpha);
         zone_fill(c, st, inner, rms, alpha);
         let hold = m.peak[ch].hold_db;
@@ -6171,6 +6260,12 @@ fn record_strip(
     if let Some(r) = l.gr_meter {
         gr_trough(upper, st, r);
     }
+    if s.locked {
+        // A locked strip is drawn dimmed: still readable, and it does not react.
+        let veil = t.dim.with_alpha(0.3);
+        upper.fill_with(Rect::new(0.0, 0.0, STRIP_W, l.upper_height), veil);
+        pinned.fill_with(Rect::new(0.0, l.pinned_top, STRIP_W, l.name.y0), veil);
+    }
     if let Some(r) = l.meter {
         meter_trough(pinned, st, r);
     }
@@ -6188,6 +6283,7 @@ fn record_strip(
         s.selected,
         s.source.is_some(),
         Some(s.meter_open),
+        s.locked,
     );
     if let Some((color, _)) = s.vca {
         cv::chip(pinned, l.name, color);
@@ -6345,6 +6441,7 @@ fn name_plate(
     selected: bool,
     jumps: bool,
     meter: Option<bool>,
+    locked: bool,
 ) {
     let t = &st.base;
     let name_rect = r;
@@ -6359,7 +6456,7 @@ fn name_plate(
         &TextRun::new(
             crate::paint::fit_label_raw(
                 name,
-                r.width() - 8.0 - if meter.is_some() { 20.0 } else { 0.0 },
+                r.width() - 8.0 - if meter.is_some() { 34.0 } else { 0.0 },
                 10.0,
             ),
             pt(r.x0 + 5.0, r.y0 + 15.0),
@@ -6375,6 +6472,7 @@ fn name_plate(
     );
     let led = pt(r.x1 - 7.0, r.y1 - 6.0);
     c.fill_with(Circle::new(led, 2.2), if dim { t.led_off } else { accent });
+    paint::padlock(c, &st.base, lock_rect(name_rect), locked);
     if let Some(lit) = meter {
         small_button(
             c,
@@ -6531,6 +6629,14 @@ fn record_master(
         7.0,
     );
     lcd_text(pinned, st, l.output_row, "MAIN 1+2", t.text_muted, 7.0);
+    if m.locked {
+        let veil = t.dim.with_alpha(0.3);
+        upper.fill_with(Rect::new(0.0, 0.0, l.fader_x, l.upper_height), veil);
+        pinned.fill_with(
+            Rect::new(l.fader_x, l.pinned_top, MASTER_W, l.name.y0),
+            veil,
+        );
+    }
     name_plate(
         pinned,
         st,
@@ -6542,6 +6648,7 @@ fn record_master(
         m.selected,
         false,
         Some(m.meter_open),
+        m.locked,
     );
 }
 

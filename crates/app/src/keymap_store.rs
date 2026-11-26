@@ -11,6 +11,7 @@
 //! - `workflow.json` keeps fields this build does not know (a newer build or a later step of the
 //!   phase, such as the rack layout flags), so saving never drops them.
 
+use crate::focus_follows::FocusFollows;
 use crate::import_warp::WarpImports;
 use crate::master_keyboard::MasterKeyboard;
 use crate::midi_file::MidiResolution;
@@ -91,6 +92,9 @@ pub struct WorkflowPrefs {
     pub warp_imports: WarpImports,
     /// How the master keyboard picks its track (default Standard: it follows the selection).
     pub master_keyboard: MasterKeyboard,
+    /// Which of the two foci of the open songs (Play and Input) go to the song you work in
+    /// (default Both).
+    pub focus_follows: FocusFollows,
     /// The colour theme: dark, light, or whichever the operating system uses (default dark).
     pub theme: ThemeChoice,
     /// The theme in use when it is not one of the three choices above: `synthwave`, or
@@ -533,6 +537,7 @@ impl Default for WorkflowPrefs {
             keep_events: KeepEvents::default(),
             warp_imports: WarpImports::default(),
             master_keyboard: MasterKeyboard::default(),
+            focus_follows: FocusFollows::default(),
             theme: ThemeChoice::default(),
             theme_id: String::new(),
             app_zoom: 100,
@@ -626,6 +631,11 @@ impl WorkflowPrefs {
                 .and_then(Value::as_str)
                 .and_then(MasterKeyboard::from_id)
                 .unwrap_or(defaults.master_keyboard),
+            focus_follows: obj
+                .get("focus_follows")
+                .and_then(Value::as_str)
+                .and_then(FocusFollows::from_id)
+                .unwrap_or(defaults.focus_follows),
             theme: obj
                 .get("theme")
                 .and_then(Value::as_str)
@@ -720,6 +730,7 @@ impl WorkflowPrefs {
                             | "keep_events"
                             | "warp_imports"
                             | "master_keyboard"
+                            | "focus_follows"
                             | "theme"
                             | "theme_id"
                             | "app_zoom"
@@ -799,6 +810,10 @@ impl WorkflowPrefs {
         map.insert(
             "master_keyboard".into(),
             Value::String(self.master_keyboard.id().into()),
+        );
+        map.insert(
+            "focus_follows".into(),
+            Value::String(self.focus_follows.id().into()),
         );
         map.insert("theme".into(), Value::String(self.theme.id().into()));
         if !self.theme_id.is_empty() {
@@ -1857,5 +1872,28 @@ mod camera_tests {
         assert!(HandChoice::Either.allows('L') && HandChoice::Either.allows('R'));
         assert!(HandChoice::Left.allows('L') && !HandChoice::Left.allows('R'));
         assert!(HandChoice::Right.allows('R') && !HandChoice::Right.allows('L'));
+    }
+}
+
+#[cfg(test)]
+mod focus_follows_tests {
+    use super::*;
+
+    #[test]
+    fn the_focus_choice_is_saved_and_defaults_to_both() {
+        assert_eq!(WorkflowPrefs::default().focus_follows, FocusFollows::Both);
+        let old = WorkflowPrefs::from_json("{}").unwrap();
+        assert_eq!(old.focus_follows, FocusFollows::Both);
+        let bad = WorkflowPrefs::from_json(r#"{"focus_follows": 3}"#).unwrap();
+        assert_eq!(bad.focus_follows, FocusFollows::Both);
+        let set = WorkflowPrefs {
+            focus_follows: FocusFollows::PlayOnly,
+            ..WorkflowPrefs::default()
+        };
+        let text = set.to_json();
+        assert!(text.contains("\"focus_follows\": \"play\""), "{text}");
+        let back = WorkflowPrefs::from_json(&text).unwrap();
+        assert_eq!(back, set);
+        assert!(!back.extra.contains_key("focus_follows"));
     }
 }

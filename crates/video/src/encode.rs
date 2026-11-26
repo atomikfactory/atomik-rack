@@ -112,6 +112,9 @@ pub struct Tags {
     pub title: String,
     /// Who made it.
     pub author: String,
+    /// The album: the song's title for a stem, whose own title is the stem's name. Empty for a
+    /// file that is not part of a set.
+    pub album: String,
 }
 
 /// A tag value as FFmpeg is given it: control characters (line breaks, tabs) become spaces, the
@@ -204,7 +207,11 @@ pub fn encode_args(source: &Path, out: &Path, spec: &EncodeSpec, tags: &Tags) ->
             );
         }
     }
-    for (key, value) in [("title", &tags.title), ("artist", &tags.author)] {
+    for (key, value) in [
+        ("title", &tags.title),
+        ("artist", &tags.author),
+        ("album", &tags.album),
+    ] {
         if let Some(value) = clean_tag(value) {
             args.push(os("-metadata"));
             args.push(OsString::from(format!("{key}={value}")));
@@ -498,6 +505,7 @@ mod tests {
         let tags = Tags {
             title: "Say \"hi\"; rm -rf $HOME `x` & a=b".to_owned(),
             author: "-f lavfi\nsecond line\ttab".to_owned(),
+            ..Tags::default()
         };
         let a = args_of(LossyCodec::Mp3, LossyQuality::Cbr(192), &tags);
         // Each tag is the value of its own -metadata argument.
@@ -531,6 +539,7 @@ mod tests {
         let blank = Tags {
             title: "  \n\t ".to_owned(),
             author: "Zoë Ünïcode 音楽".to_owned(),
+            ..Tags::default()
         };
         let a = args_of(LossyCodec::Aac, LossyQuality::Cbr(128), &blank);
         assert_eq!(a.iter().filter(|x| *x == "-metadata").count(), 1);
@@ -541,6 +550,32 @@ mod tests {
         );
         assert_eq!(clean_tag("\u{7}bell\u{0}").as_deref(), Some("bell"));
         assert_eq!(clean_tag("   "), None);
+    }
+
+    #[test]
+    fn an_album_is_its_own_tag_and_is_left_out_when_it_is_empty() {
+        let tags = Tags {
+            title: "Kick".to_owned(),
+            author: "Zoe".to_owned(),
+            album: "Night \"Drive\"; x=1".to_owned(),
+        };
+        let a = args_of(LossyCodec::Opus, LossyQuality::Cbr(128), &tags);
+        let written: Vec<&String> = a
+            .iter()
+            .enumerate()
+            .filter(|(_, x)| *x == "-metadata")
+            .map(|(i, _)| &a[i + 1])
+            .collect();
+        assert_eq!(
+            written,
+            ["title=Kick", "artist=Zoe", "album=Night \"Drive\"; x=1"]
+        );
+        let blank = Tags {
+            album: "  ".to_owned(),
+            ..Tags::default()
+        };
+        let a = args_of(LossyCodec::Mp3, LossyQuality::Cbr(192), &blank);
+        assert!(!a.contains(&"-metadata".to_owned()));
     }
 
     #[test]

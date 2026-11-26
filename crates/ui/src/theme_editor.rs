@@ -22,6 +22,7 @@
 use crate::action::UiAction;
 use crate::canvas::{Align, Canvas, CanvasExt, TextRun};
 use crate::event::{Key, PointerButton, UiEvent};
+use crate::glow::{Glow, MAX_RADIUS};
 use crate::paint::{fit_label, fit_label_raw};
 use crate::seq_paint::{self as sp, SeqTheme};
 use crate::text_field::{FieldColors, TextField};
@@ -61,11 +62,59 @@ pub enum ThemeEditorAction {
     PickColor(usize),
 }
 
+/// The place in [`ThemeEditorView::color`], [`ThemeEditorView::set_color`] and
+/// [`ThemeEditorAction::PickColor`] of the glow's own colour, after the last token.
+pub fn glow_colour_index() -> usize {
+    TOKENS.len()
+}
+
+/// The controls of the glow section.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GlowRow {
+    /// The glow is on or off.
+    On,
+    /// The glow takes the colour of what glows (accent) or one of its own.
+    Colour,
+    /// How strong it is.
+    Strength,
+    /// How far it reaches.
+    Reach,
+}
+
+impl GlowRow {
+    const ALL: [GlowRow; 4] = [
+        GlowRow::On,
+        GlowRow::Colour,
+        GlowRow::Strength,
+        GlowRow::Reach,
+    ];
+
+    fn label(self) -> &'static str {
+        match self {
+            GlowRow::On => "Glow on meters and playhead",
+            GlowRow::Colour => "Glow colour",
+            GlowRow::Strength => "Glow strength",
+            GlowRow::Reach => "Glow reach",
+        }
+    }
+}
+
 /// One line of the list.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Line {
     Heading(Group),
     Token(usize),
+    GlowHeading,
+    Glow(GlowRow),
+}
+
+/// What one step of history takes back.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Step {
+    /// A token (`None`: the file did not set it).
+    Token(usize, Option<[u8; 4]>),
+    /// The glow section (`None`: the file did not have one).
+    Glow(Option<Glow>),
 }
 
 fn lines() -> Vec<Line> {
@@ -78,6 +127,8 @@ fn lines() -> Vec<Line> {
             }
         }
     }
+    out.push(Line::GlowHeading);
+    out.extend(GlowRow::ALL.map(Line::Glow));
     out
 }
 
@@ -99,7 +150,9 @@ pub struct ThemeEditorView {
     /// The edit of the selected row already has its step of history.
     stepped: bool,
     /// What each step of history set the token to before (`None`: not set by the file).
-    history: Vec<(usize, Option<[u8; 4]>)>,
+    history: Vec<Step>,
+    /// The glow slider being dragged.
+    drag: Option<GlowRow>,
     saved: ThemeDoc,
     changed: bool,
     hover: Option<Point>,
@@ -123,6 +176,7 @@ impl ThemeEditorView {
             valid: true,
             stepped: false,
             history: Vec::new(),
+            drag: None,
             changed: false,
             hover: None,
             repaint: true,
@@ -198,6 +252,14 @@ impl ThemeEditorView {
 
     /// The colour of the token at `index`, as the theme has it now.
     pub fn color(&self, index: usize) -> [u8; 4] {
+        if index == glow_colour_index() {
+            // An accent glow has no colour of its own: show the middle meter zone.
+            return rgba_of(
+                self.glow()
+                    .colour
+                    .unwrap_or_else(|| self.doc.resolve().meter_mid),
+            );
+        }
         TOKENS
             .get(index)
             .and_then(|t| self.doc.colour(t.key))
@@ -221,13 +283,63 @@ impl ThemeEditorView {
         self.hex.text()
     }
 
-    fn push_step(&mut self, index: usize) {
-        let key = TOKENS[index].key;
-        let before = self.doc.colors.get(key).copied();
-        self.history.push((index, before));
+    fn push(&mut self, step: Step) {
+        self.history.push(step);
         if self.history.len() > HISTORY {
             self.history.remove(0);
         }
+    }
+
+    fn push_step(&mut self, index: usize) {
+        let key = TOKENS[index].key;
+        let before = self.doc.colors.get(key).copied();
+        self.push(Step::Token(index, before));
+    }
+
+    /// The glow as the theme has it now (the file's, else the base's).
+    pub fn glow(&self) -> Glow {
+        self.doc
+            .glow
+            .unwrap_or_else(|| builtin(self.doc.based_on).glow)
+    }
+
+    /// Changes the glow; `step` makes it a new step of history (a drag has one for its press).
+    fn edit_glow(&mut self, step: bool, f: impl FnOnce(&mut Glow)) {
+        let before = self.glow();
+        let mut g = before;
+        f(&mut g);
+        let g = g.clamped();
+        if g == before {
+            return;
+        }
+        if step {
+            self.push(Step::Glow(self.doc.glow));
+        }
+        self.doc.glow = Some(g);
+        self.changed = true;
+        self.repaint = true;
+    }
+
+    /// Turns the glow on or off.
+    pub fn set_glow_enabled(&mut self, on: bool) {
+        self.edit_glow(true, |g| g.enabled = on);
+    }
+
+    /// Gives the glow its own colour (`None`: the accent).
+    pub fn set_glow_colour(&mut self, rgb: Option<[u8; 3]>) {
+        self.edit_glow(true, |g| {
+            g.colour = rgb.map(|c| colour_of([c[0], c[1], c[2], 255]));
+        });
+    }
+
+    /// Sets how strong the glow is, 0 to 1.
+    pub fn set_glow_intensity(&mut self, v: f32) {
+        self.edit_glow(true, |g| g.intensity = v);
+    }
+
+    /// Sets how far the glow reaches, in logical pixels.
+    pub fn set_glow_radius(&mut self, v: f32) {
+        self.edit_glow(true, |g| g.radius = v);
     }
 
     fn put(&mut self, index: usize, rgba: [u8; 4]) {
@@ -242,6 +354,10 @@ impl ThemeEditorView {
 
     /// Gives the token at `index` the colour `rgb` (its transparency stays).
     pub fn set_color(&mut self, index: usize, rgb: [u8; 3]) {
+        if index == glow_colour_index() {
+            self.set_glow_colour(Some(rgb));
+            return;
+        }
         if index >= TOKENS.len() {
             return;
         }
@@ -269,12 +385,13 @@ impl ThemeEditorView {
 
     /// Takes back the last change; false when there is none.
     pub fn undo(&mut self) -> bool {
-        let Some((index, before)) = self.history.pop() else {
+        let Some(step) = self.history.pop() else {
             return false;
         };
-        match before {
-            Some(c) => self.doc.set_colour(TOKENS[index].key, c),
-            None => self.doc.reset_colour(TOKENS[index].key),
+        match step {
+            Step::Token(index, Some(c)) => self.doc.set_colour(TOKENS[index].key, c),
+            Step::Token(index, None) => self.doc.reset_colour(TOKENS[index].key),
+            Step::Glow(before) => self.doc.glow = before,
         }
         self.stepped = false;
         self.changed = true;
@@ -363,8 +480,8 @@ impl ThemeEditorView {
 
     fn line_height(line: Line) -> f64 {
         match line {
-            Line::Heading(_) => HEAD_ROW_H,
-            Line::Token(_) => ROW_H,
+            Line::Heading(_) | Line::GlowHeading => HEAD_ROW_H,
+            Line::Token(_) | Line::Glow(_) => ROW_H,
         }
     }
 
@@ -439,6 +556,60 @@ impl ThemeEditorView {
         ))
     }
 
+    /// The row of a glow control on screen (the whole line).
+    pub fn glow_row_rect(&self, row: GlowRow) -> Option<Rect> {
+        let at = self.lines.iter().position(|l| *l == Line::Glow(row))?;
+        let list = self.list_rect();
+        let y = list.y0 + self.line_top(at) - self.scroll;
+        let r = Rect::new(list.x0, y, list.x1, y + ROW_H);
+        (r.y1 > list.y0 && r.y0 < list.y1).then_some(r)
+    }
+
+    /// The control of a glow row: the ON / OFF and ACCENT buttons, or the slider track.
+    pub fn glow_control_rect(&self, row: GlowRow) -> Option<Rect> {
+        let r = self.glow_row_rect(row)?;
+        Some(match row {
+            GlowRow::On | GlowRow::Colour => {
+                Rect::new(r.x1 - PAD - HEX_W, r.y0 + 2.0, r.x1 - PAD, r.y1 - 2.0)
+            }
+            GlowRow::Strength | GlowRow::Reach => {
+                Rect::new(r.x0 + 236.0, r.y0 + 2.0, r.x1 - PAD - 54.0, r.y1 - 2.0)
+            }
+        })
+    }
+
+    /// The swatch of the glow colour row.
+    pub fn glow_swatch_rect(&self) -> Option<Rect> {
+        let r = self.glow_row_rect(GlowRow::Colour)?;
+        Some(Rect::new(
+            r.x0 + PAD,
+            r.y0 + 4.0,
+            r.x0 + PAD + SWATCH_W,
+            r.y1 - 4.0,
+        ))
+    }
+
+    fn glow_row_at(&self, pos: Point) -> Option<GlowRow> {
+        if !self.list_rect().contains(pos) {
+            return None;
+        }
+        GlowRow::ALL
+            .into_iter()
+            .find(|g| self.glow_row_rect(*g).is_some_and(|r| r.contains(pos)))
+    }
+
+    fn drag_glow(&mut self, row: GlowRow, x: f64, step: bool) {
+        let Some(track) = self.glow_control_rect(row) else {
+            return;
+        };
+        let n = ((x - track.x0) / track.width()).clamp(0.0, 1.0) as f32;
+        match row {
+            GlowRow::Strength => self.edit_glow(step, |g| g.intensity = n),
+            GlowRow::Reach => self.edit_glow(step, |g| g.radius = n * MAX_RADIUS),
+            _ => {}
+        }
+    }
+
     fn token_at(&self, pos: Point) -> Option<usize> {
         if !self.list_rect().contains(pos) {
             return None;
@@ -457,6 +628,12 @@ impl ThemeEditorView {
             UiEvent::PointerMove { pos, .. } => {
                 self.hover = Some(*pos);
                 self.repaint = true;
+                if let Some(row) = self.drag {
+                    self.drag_glow(row, pos.x, false);
+                    if self.take_changed() {
+                        out.push(act(ThemeEditorAction::Changed));
+                    }
+                }
             }
             UiEvent::PointerLeave => {
                 self.hover = None;
@@ -483,6 +660,8 @@ impl ThemeEditorView {
                     if self.take_changed() {
                         out.push(act(ThemeEditorAction::Changed));
                     }
+                } else if let Some(row) = self.glow_row_at(*pos) {
+                    self.press_glow(row, *pos, &mut out);
                 } else if let Some(i) = self.token_at(*pos) {
                     if self.swatch_rect(i).is_some_and(|r| r.contains(*pos)) {
                         self.select(Some(i));
@@ -504,7 +683,7 @@ impl ThemeEditorView {
                     }
                 }
             }
-            UiEvent::PointerUp { .. } => {}
+            UiEvent::PointerUp { .. } => self.drag = None,
             UiEvent::Ime(ime) => {
                 if self.selected.is_some() && self.hex.handle_ime(ime) {
                     self.read_hex();
@@ -558,6 +737,36 @@ impl ThemeEditorView {
             _ => {}
         }
         out
+    }
+
+    /// A press on a glow row: the buttons act, a slider starts a drag.
+    fn press_glow(&mut self, row: GlowRow, pos: Point, out: &mut Vec<UiAction>) {
+        let in_control = self
+            .glow_control_rect(row)
+            .is_some_and(|r| r.inflate(4.0, 0.0).contains(pos));
+        match row {
+            GlowRow::On if in_control => {
+                let on = !self.glow().enabled;
+                self.set_glow_enabled(on);
+            }
+            GlowRow::Colour => {
+                if self.glow_swatch_rect().is_some_and(|r| r.contains(pos)) {
+                    out.push(UiAction::ThemeEditor(ThemeEditorAction::PickColor(
+                        glow_colour_index(),
+                    )));
+                } else if in_control && self.glow().colour.is_some() {
+                    self.set_glow_colour(None);
+                }
+            }
+            GlowRow::Strength | GlowRow::Reach if in_control => {
+                self.drag = Some(row);
+                self.drag_glow(row, pos.x, true);
+            }
+            _ => {}
+        }
+        if self.take_changed() {
+            out.push(UiAction::ThemeEditor(ThemeEditorAction::Changed));
+        }
     }
 
     // ------------------------------------------------------------------ painting
@@ -654,6 +863,23 @@ impl ThemeEditorView {
                         );
                     }
                     Line::Token(i) => self.paint_row(c, *i, y),
+                    Line::GlowHeading => {
+                        c.text(&TextRun::verbatim(
+                            crate::i18n::tr("Glow").to_uppercase(),
+                            Point::new(p.x0 + PAD, y + 18.0),
+                            9.5,
+                            t.text_muted,
+                        ));
+                        sp::line(
+                            c,
+                            p.x0 + PAD,
+                            y + h - 0.5,
+                            p.x1 - PAD,
+                            y + h - 0.5,
+                            st.separator,
+                        );
+                    }
+                    Line::Glow(row) => self.paint_glow_row(c, *row, y),
                 }
             }
             y += h;
@@ -743,6 +969,109 @@ impl ThemeEditorView {
                 FONT,
                 t.text_muted,
             ));
+        }
+    }
+
+    fn paint_glow_row(&self, c: &mut dyn Canvas, row: GlowRow, y: f64) {
+        let st = &self.st;
+        let t = &st.base;
+        let list = self.list_rect();
+        let line = Rect::new(list.x0, y, list.x1, y + ROW_H);
+        let g = self.glow();
+        if self.hover.is_some_and(|h| line.contains(h)) {
+            sp::rect(c, line, mix(st.background, t.text, 0.05));
+        }
+        let hovered = |r: Rect| self.hover.is_some_and(|h| r.contains(h));
+        let control = Rect::new(
+            line.x1 - PAD - HEX_W,
+            y + 2.0,
+            line.x1 - PAD,
+            y + ROW_H - 2.0,
+        );
+        let label_x = match row {
+            GlowRow::Colour => line.x0 + PAD + SWATCH_W + 10.0,
+            _ => line.x0 + PAD,
+        };
+        c.text(&TextRun::new(
+            fit_label(row.label(), 236.0 - (label_x - line.x0) - 8.0, FONT),
+            Point::new(label_x, y + 16.0),
+            FONT,
+            t.text,
+        ));
+        match row {
+            GlowRow::On => sp::button(
+                c,
+                st,
+                control,
+                if g.enabled { "ON" } else { "OFF" },
+                g.enabled.then_some(st.loop_on),
+                hovered(control),
+            ),
+            GlowRow::Colour => {
+                let sw = Rect::new(
+                    line.x0 + PAD,
+                    y + 4.0,
+                    line.x0 + PAD + SWATCH_W,
+                    y + ROW_H - 4.0,
+                );
+                c.fill_with(RoundedRect::from_rect(sw, 3.0), t.plate);
+                c.fill_with(
+                    RoundedRect::from_rect(sw, 3.0),
+                    colour_of(self.color(glow_colour_index())),
+                );
+                c.stroke_with(
+                    RoundedRect::from_rect(sw.inset(-0.5), 3.5),
+                    1.0,
+                    st.separator,
+                );
+                sp::button(
+                    c,
+                    st,
+                    control,
+                    "ACCENT",
+                    g.colour.is_none().then_some(st.loop_on),
+                    hovered(control),
+                );
+            }
+            GlowRow::Strength | GlowRow::Reach => {
+                let Some(track) = self.glow_control_rect(row) else {
+                    return;
+                };
+                let (n, text) = if row == GlowRow::Strength {
+                    (
+                        f64::from(g.intensity),
+                        format!("{:.0}%", g.intensity * 100.0),
+                    )
+                } else {
+                    (
+                        f64::from(g.radius / MAX_RADIUS),
+                        format!("{:.0} px", g.radius),
+                    )
+                };
+                let mid = track.center().y;
+                c.fill_with(
+                    RoundedRect::from_rect(
+                        Rect::new(track.x0, mid - 2.0, track.x1, mid + 2.0),
+                        2.0,
+                    ),
+                    t.lcd,
+                );
+                let x = track.x0 + track.width() * n.clamp(0.0, 1.0);
+                c.fill_with(
+                    RoundedRect::from_rect(Rect::new(track.x0, mid - 2.0, x, mid + 2.0), 2.0),
+                    if g.enabled { st.loop_on } else { t.text_muted },
+                );
+                c.fill_with(
+                    RoundedRect::from_rect(Rect::new(x - 3.0, mid - 6.0, x + 3.0, mid + 6.0), 2.0),
+                    t.text,
+                );
+                c.text(&TextRun::verbatim(
+                    text,
+                    Point::new(track.x1 + 12.0, y + 16.0),
+                    FONT,
+                    t.text_muted,
+                ));
+            }
         }
     }
 }

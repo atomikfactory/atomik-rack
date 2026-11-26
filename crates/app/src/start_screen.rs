@@ -11,11 +11,17 @@
 //! guided first song (the same command as Help > Guided Tour). A second check box at the foot
 //! hides the guide card; the strip is then all examples.
 //!
+//! Each example card and the template card also show a small picture of the song: its tracks as
+//! rows of clip blocks ([`crate::card_picture`]). The shell has them made on a worker thread
+//! ([`StartScreen::pictures_wanted`], [`StartScreen::set_picture`]); a placeholder shows until
+//! the picture is there, and a card whose file has none is drawn without a picture.
+//!
 //! The box only draws and picks: what a pick does is an [`AppCommand`] the shell runs, the same
 //! command the File menu runs for that row, so the question about unsaved changes, a template
 //! that is gone and a recent song that is gone behave exactly as they do there.
 
 use crate::app_core::TemplatePreview;
+use crate::card_picture::{self, CardPicture, Slot};
 use crate::commands::AppCommand;
 use atomik_ui::kurbo::{Point, Rect, RoundedRect, Size};
 use atomik_ui::paint::{fit_label_in, fit_label_weight, measure, snap_hairline};
@@ -49,7 +55,10 @@ const CARD_WIDTH: f64 = 232.0;
 const CARD_TRACKS: usize = 8;
 const CARD_LINE: f64 = 16.0;
 /// The height of a card of the strip, and the space the strip takes (the card and a gap).
-const STRIP_CARD: f64 = 88.0;
+const STRIP_CARD: f64 = 124.0;
+/// The height of the picture at the foot of an example card, and of the one in the template card.
+const PICTURE_H: f64 = 26.0;
+const CARD_PICTURE_H: f64 = 40.0;
 const STRIP: f64 = STRIP_CARD + 14.0;
 const STRIP_GAP: f64 = 12.0;
 /// The widest a card of the strip gets (one card alone does not stretch over the box).
@@ -57,7 +66,7 @@ const STRIP_CARD_WIDTH: f64 = 240.0;
 /// The most example cards the strip shows.
 pub const VISIBLE_EXAMPLES: usize = 3;
 /// A box shorter than this has no room for the strip: the lists come first.
-const STRIP_MIN_HEIGHT: f64 = 540.0;
+const STRIP_MIN_HEIGHT: f64 = 576.0;
 /// The width of the "show at start-up" check box when a second one sits beside it.
 const CHECK_SPLIT: f64 = 332.0;
 
@@ -116,6 +125,15 @@ impl ExampleCard {
             line: line.into(),
         }
     }
+}
+
+/// A card that shows a picture.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PictureOf {
+    /// The card of the template at this place of the templates list.
+    Template(usize),
+    /// The card of the example at this place of the examples list.
+    Example(usize),
 }
 
 /// What a row of the box does.
@@ -184,6 +202,9 @@ pub struct StartScreen {
     /// What each template holds: `None` until the shell has looked (see
     /// [`StartScreen::preview_wanted`]), then the answer.
     previews: Vec<Option<Option<TemplatePreview>>>,
+    /// The picture of each template and of each example.
+    template_pictures: Vec<Slot>,
+    example_pictures: Vec<Slot>,
     recent: Vec<RecentRow>,
     default_song: bool,
     show_at_start: bool,
@@ -212,6 +233,8 @@ impl StartScreen {
         recent.truncate(VISIBLE_RECENT);
         Self {
             previews: vec![None; templates.len()],
+            template_pictures: vec![Slot::Idle; templates.len()],
+            example_pictures: Vec::new(),
             templates,
             recent,
             default_song,
@@ -229,6 +252,7 @@ impl StartScreen {
     pub fn with_cards(mut self, examples: Vec<ExampleCard>, show_guide: bool) -> Self {
         self.examples = examples;
         self.examples.truncate(VISIBLE_EXAMPLES);
+        self.example_pictures = vec![Slot::Idle; self.examples.len()];
         self.guide_offered = true;
         self.show_guide = show_guide;
         self
@@ -319,6 +343,59 @@ impl StartScreen {
     /// The preview of template `i`, when it was read and could be.
     pub fn preview(&self, i: usize) -> Option<&TemplatePreview> {
         self.previews.get(i)?.as_ref()?.as_ref()
+    }
+
+    /// The cards whose picture is to be asked for: every example card, and the template card
+    /// that shows, each once.
+    pub fn pictures_wanted(&self) -> Vec<PictureOf> {
+        let mut wanted: Vec<PictureOf> = (0..self.example_pictures.len())
+            .filter(|i| self.example_pictures[*i] == Slot::Idle)
+            .map(PictureOf::Example)
+            .collect();
+        if let Some(i) = self.shown_template()
+            && self.template_pictures.get(i) == Some(&Slot::Idle)
+        {
+            wanted.push(PictureOf::Template(i));
+        }
+        wanted
+    }
+
+    fn slot_mut(&mut self, of: PictureOf) -> Option<&mut Slot> {
+        match of {
+            PictureOf::Template(i) => self.template_pictures.get_mut(i),
+            PictureOf::Example(i) => self.example_pictures.get_mut(i),
+        }
+    }
+
+    /// The picture of a card was asked for: the placeholder shows until [`Self::set_picture`].
+    pub fn mark_picture_asked(&mut self, of: PictureOf) {
+        if let Some(slot) = self.slot_mut(of) {
+            *slot = Slot::Making;
+        }
+    }
+
+    /// Gives a card its picture (`None`: the file has none, so the card has no picture).
+    pub fn set_picture(&mut self, of: PictureOf, picture: Option<CardPicture>) {
+        if let Some(slot) = self.slot_mut(of) {
+            *slot = picture.map_or(Slot::Missing, Slot::Ready);
+        }
+    }
+
+    /// How the picture of a card stands.
+    pub fn picture(&self, of: PictureOf) -> &Slot {
+        const NONE: &Slot = &Slot::Missing;
+        match of {
+            PictureOf::Template(i) => self.template_pictures.get(i).unwrap_or(NONE),
+            PictureOf::Example(i) => self.example_pictures.get(i).unwrap_or(NONE),
+        }
+    }
+
+    /// Whether a picture is being made (the window keeps drawing frames until it is there).
+    pub fn pictures_pending(&self) -> bool {
+        self.template_pictures
+            .iter()
+            .chain(&self.example_pictures)
+            .any(|s| *s == Slot::Making)
     }
 
     /// The box in a window of `view` (logical units).
@@ -937,7 +1014,13 @@ impl StartScreen {
         let (rx, rx1) = self.right_x(view);
         let width = CARD_WIDTH.min(rx1 - rx);
         let lines = self.card_lines(i);
-        let height = 16.0 + CARD_LINE * (lines.len() as f64 + 1.0) + 6.0;
+        let slot = self.picture(PictureOf::Template(i));
+        let picture_room = if slot.has_room() {
+            CARD_PICTURE_H + 8.0
+        } else {
+            0.0
+        };
+        let height = 16.0 + CARD_LINE * (lines.len() as f64 + 1.0) + 6.0 + picture_room;
         let top = self.top(view);
         let bottom = self.list_bottom(view);
         let y0 = (row.y0 - 8.0).clamp(top, (bottom - height).max(top));
@@ -952,13 +1035,22 @@ impl StartScreen {
             13.0,
             theme.text,
         ));
+        if slot.has_room() {
+            let area = Rect::new(
+                card.x0 + 12.0,
+                card.y0 + 30.0,
+                card.x1 - 12.0,
+                card.y0 + 30.0 + CARD_PICTURE_H,
+            );
+            card_picture::paint(canvas, theme, area, slot);
+        }
         for (n, line) in lines.iter().enumerate() {
             let text = fit_label_in(canvas, line, width - 24.0, 11.5);
             canvas.text(&TextRun::new(
                 text,
                 Point::new(
                     card.x0 + 12.0,
-                    card.y0 + 20.0 + CARD_LINE * (n as f64 + 1.0),
+                    card.y0 + 20.0 + picture_room + CARD_LINE * (n as f64 + 1.0),
                 ),
                 11.5,
                 theme.text_muted,
@@ -1065,6 +1157,18 @@ impl StartScreen {
                     11.0,
                     theme.text_muted,
                 ));
+            }
+            if let Target::Example(i) = target {
+                let slot = self.picture(PictureOf::Example(i));
+                if slot.has_room() {
+                    let area = Rect::new(
+                        rect.x0 + 12.0,
+                        rect.y1 - 10.0 - PICTURE_H,
+                        rect.x1 - 12.0,
+                        rect.y1 - 10.0,
+                    );
+                    card_picture::paint(canvas, theme, area, slot);
+                }
             }
         }
     }

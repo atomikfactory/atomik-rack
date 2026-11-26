@@ -531,6 +531,14 @@ impl FileBrowserView {
         .then_some(row)
     }
 
+    /// The path and kind of the one selected row (the cursor row, when it is the only row
+    /// selected), whatever the kind: what the app follows to preview a patch with the keyboard.
+    pub fn selected_row(&self) -> Option<(&Path, FileKind)> {
+        let row = self.rows.get(self.cursor? as usize)?;
+        (self.selection.len() == 1 && self.selection.contains(&row.path))
+            .then_some((row.path.as_path(), row.kind))
+    }
+
     /// Answers [`BrowseAction::RequestDetail`]: the tempo and the loudness picture of `path`,
     /// shown in the info pane while that file stays selected.
     pub fn set_detail(&mut self, path: PathBuf, detail: DetailData) {

@@ -595,7 +595,7 @@ fn a_track_whose_channel_is_in_a_group_gets_the_groups_colour_bar() {
 }
 
 /// What every strip menu ends with: the channel settings commands.
-const SETTINGS_ITEMS: [&str; 13] = [
+const SETTINGS_ITEMS: [&str; 14] = [
     "Cut strip",
     "Copy strip",
     "Paste strip",
@@ -605,6 +605,7 @@ const SETTINGS_ITEMS: [&str; 13] = [
     "Copy sends",
     "Copy inserts",
     "Paste settings",
+    "Lock / unlock channel",
     "Reset channel",
     "Clear inserts",
     "Create parallel channel",

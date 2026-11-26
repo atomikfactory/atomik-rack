@@ -836,6 +836,9 @@ pub enum UiAction {
     Wavetable(crate::wavetable_editor::WavetableAction),
     /// Open the wavetable editor on this Wavetable Synth (a click on a table display).
     EditWavetable(DeviceKey),
+    /// A click on the Play or Input button of the Audio I/O panel: the song of the panel asks
+    /// for that focus (the host moves it from the song that has it).
+    TakeFocus(crate::io_panel::SongFocus),
     /// The strip silence panel ([`crate::SilenceView`]) asks for something: strip the silence of
     /// the selected audio clips with its settings, or close.
     StripSilence(crate::silence_panel::SilenceAction),

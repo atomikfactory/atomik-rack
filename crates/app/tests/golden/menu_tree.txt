@@ -377,6 +377,7 @@ Mixer
     Copy Channel Settings
     Paste Channel Settings
     Reset Channel
+    Lock / Unlock Channel
   Snapshots >
     Store Snapshot
     Update Snapshot

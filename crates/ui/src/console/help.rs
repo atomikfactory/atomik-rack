@@ -2,7 +2,7 @@
 
 use super::{
     ConsoleButton, ConsoleView, Drag, Hit, Jump, STRIP_W, Target, colour_rect, insert_b_rect,
-    insert_e_rect, insert_x_rect, jump_rects, meter_rect,
+    insert_e_rect, insert_x_rect, jump_rects, lock_rect, meter_rect,
 };
 use crate::console_layout::CtrlKind;
 use crate::console_vca::{VcaPart, vca_layout};
@@ -235,6 +235,30 @@ impl ConsoleView {
                 help(
                     meter_rect(l.name) + Vec2::new(self.master_x()?, top),
                     "Show the spectrum of the master (right-click: phase meter)",
+                )
+            }
+            Hit::Lock(i) => {
+                let l = self.layout_of(self.strips.get(i)?.desc)?;
+                let locked = self.strips.get(i)?.locked;
+                help(
+                    lock_rect(l.name) + Vec2::new(self.strip_x(i), top),
+                    if locked {
+                        "Unlock channel"
+                    } else {
+                        "Lock channel (blocks every edit; automation still plays)"
+                    },
+                )
+            }
+            Hit::MasterLock => {
+                let l = self.master_layout.as_ref()?;
+                let locked = self.master.as_ref()?.locked;
+                help(
+                    lock_rect(l.name) + Vec2::new(self.master_x()?, top),
+                    if locked {
+                        "Unlock channel"
+                    } else {
+                        "Lock channel (blocks every edit; automation still plays)"
+                    },
                 )
             }
             Hit::Name(_) | Hit::Menu(_) | Hit::MenuArea | Hit::Empty => None,

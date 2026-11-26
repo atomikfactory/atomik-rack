@@ -517,6 +517,70 @@ fn effect_scene(
     Ok(())
 }
 
+/// The scratch project that plays the plugin `pd` by hand (see `app_core_plugin_preview.rs`): an
+/// instrument is played through its own channel, an effect through the insert chain of a
+/// built-in synth. The plugin sits under the key [`PLUGIN_KEY`]; its device is the caller's.
+///
+/// # Errors
+/// The plugin is not listed, or it is neither an instrument nor an effect, or the model refuses
+/// a step.
+pub(super) fn plugin_doc(
+    pd: &atomik_model::PluginDoc,
+    registry: &Registry,
+) -> Result<RackDoc, String> {
+    let desc = registry
+        .descriptor(&pd.type_id())
+        .ok_or_else(|| "the plugin is not listed".to_string())?;
+    let key = DeviceKey(super::plugin_follow_ops::PLUGIN_KEY.to_string());
+    let mut doc = Document::new(new_project_doc());
+    let add = Command::Plugin(atomik_model::PluginCommand::Add {
+        index: usize::MAX,
+        container: None,
+        plugin: pd.plugin_ref(),
+        layout: pd.layout.clone(),
+        path_hint: None,
+        key: Some(key.clone()),
+        auto_split: false,
+    });
+    match desc.kind {
+        DeviceKind::Instrument => {
+            applied(&mut doc, registry, add)?;
+            play_track(&mut doc, registry, &key, INSTRUMENT_PHRASE)?;
+        }
+        DeviceKind::Effect => {
+            let source = DeviceKey(SOURCE_KEY.to_string());
+            applied(
+                &mut doc,
+                registry,
+                Command::AddDevice {
+                    index: usize::MAX,
+                    type_id: SOURCE_TYPE.to_string(),
+                    key: Some(source.clone()),
+                },
+            )?;
+            play_track(&mut doc, registry, &source, EFFECT_PHRASE)?;
+            let channel = doc
+                .doc()
+                .console
+                .channel_of(&source)
+                .map(|c| c.channel.clone())
+                .ok_or_else(|| "the built-in synth has no channel".to_string())?;
+            applied(&mut doc, registry, add)?;
+            applied(
+                &mut doc,
+                registry,
+                Command::Console(ConsoleCommand::SetInsert {
+                    channel,
+                    slot: 0,
+                    effect: Some(InsertEffect::Existing(key)),
+                }),
+            )?;
+        }
+        _ => return Err("it is neither an instrument nor an effect".into()),
+    }
+    Ok(doc.doc().clone())
+}
+
 /// Renders the scratch project `doc` and prepares what the preview voice plays: two planes at
 /// the render's rate, the silence at the end cut and a short fade there, scaled down when the
 /// peak is above [`CEILING`]. Returns the planes and the rate.

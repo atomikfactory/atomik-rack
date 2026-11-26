@@ -164,7 +164,9 @@ fn an_activation_that_the_plugin_holds_is_polled_and_gives_the_processor() {
 #[test]
 fn an_activation_that_goes_unanswered_for_the_load_timeout_stops_a_child_without_a_sign_of_life() {
     let mut t = timeouts();
-    t.load = Duration::from_millis(300);
+    // Three alive windows: a sign of life from before the fake went silent is too old to spare
+    // it when the timeout ends, also on a loaded runner.
+    t.load = crate::link::ALIVE_WINDOW * 3;
     let mut r = started(
         FakeOptions::default()
             .script(|req, _| matches!(req, ToChild::Activate { .. }).then_some(Action::Silent)),
@@ -180,8 +182,10 @@ fn an_activation_that_goes_unanswered_for_the_load_timeout_stops_a_child_without
         .err()
         .expect("an error");
     assert!(
-        err.to_string()
-            .contains("did not answer Activate within 300 ms"),
+        err.to_string().contains(&format!(
+            "did not answer Activate within {} ms",
+            t.load.as_millis()
+        )),
         "{err}"
     );
     assert!(r.fake.ctl.was_killed());

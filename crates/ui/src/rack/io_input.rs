@@ -73,6 +73,34 @@ impl RackView {
         }
     }
 
+    /// Tells the panel which of the two foci (Play and Input) the song has: the buttons on its
+    /// plate light up for them. Cheap when nothing changed.
+    pub fn set_io_focus(&mut self, play: bool, input: bool) {
+        let focus = io_panel::IoFocus { play, input };
+        if self.io.focus != focus {
+            self.io.focus = focus;
+            self.io_changed();
+        }
+    }
+
+    /// The foci the panel shows.
+    pub fn io_focus(&self) -> io_panel::IoFocus {
+        self.io.focus
+    }
+
+    /// Centre of the focus button `which` (logical view coordinates), front side only.
+    pub fn io_focus_center(&self, which: io_panel::SongFocus) -> Option<Point> {
+        let i = self.io_index()?;
+        if self.flip != Flip::Front {
+            return None;
+        }
+        let d = &self.devices[i];
+        let (_, r) = io_panel::focus_rects(d.height)
+            .into_iter()
+            .find(|(w, _)| *w == which)?;
+        Some(self.rack_to_view(r.center() + d.offset()))
+    }
+
     /// How many sockets the Audio I/O panel has (inputs, then outputs).
     pub fn io_socket_count(&self) -> usize {
         self.io.states.len()
@@ -141,6 +169,9 @@ impl RackView {
     pub(super) fn io_tooltip(&self, hit: Hit) -> Option<String> {
         match hit {
             Hit::IoHeader(_) => Some("Click to reset every clip lamp".to_string()),
+            Hit::IoFocus(_, which) => {
+                Some(io_panel::focus_tip(which, self.io.focus.has(which)).to_string())
+            }
             Hit::IoCell(i, socket) | Hit::IoClip(i, socket) => {
                 let desc = self.devices.get(i)?.desc?;
                 let name = desc.sockets.get(socket)?.name;

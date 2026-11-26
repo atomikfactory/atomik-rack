@@ -377,6 +377,7 @@ Table de mixage
     Copier les réglages du canal
     Coller les réglages du canal
     Réinitialiser le canal
+    Verrouiller / déverrouiller le canal
   Instantanés >
     Mémoriser l'instantané
     Mettre à jour l'instantané

@@ -483,6 +483,11 @@ impl<S: EngineSink> AppCore<S> {
         }
     }
 
+    /// Whether a file browser preview (an audio file, a phrase of an item) owns the voice.
+    pub(super) fn file_preview_playing(&self) -> bool {
+        self.browser.preview.is_some()
+    }
+
     /// Whether the panel shows.
     pub fn file_browser_visible(&self) -> bool {
         self.browser.visible
@@ -1309,6 +1314,7 @@ impl<S: EngineSink> AppCore<S> {
     pub(super) fn stop_preview(&mut self) {
         self.stop_clip_preview();
         self.forget_patch_preview();
+        self.drop_live_follow();
         if self.browser.preview.take().is_some() || self.sink.preview_active() {
             let _ = self.sink.preview_stop();
         }

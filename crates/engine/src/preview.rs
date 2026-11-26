@@ -175,6 +175,17 @@ pub struct PreviewStream {
 }
 
 impl PreviewStream {
+    /// Drops every frame waiting in the ring and returns how many there were: what the voice
+    /// would have played meanwhile. For tests that stand in for the engine (the app's recording
+    /// sink holds the stream and nothing reads it).
+    pub fn discard_buffered(&mut self) -> usize {
+        let slots = self.rx.slots();
+        if let Ok(chunk) = self.rx.read_chunk(slots) {
+            chunk.commit_all();
+        }
+        slots / 2
+    }
+
     /// A read-only view of the progress flags; take it before handing the stream to the engine.
     pub fn monitor(&self) -> PreviewMonitor {
         PreviewMonitor {

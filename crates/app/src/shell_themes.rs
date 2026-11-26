@@ -46,7 +46,18 @@ impl<B: AudioBackend> Shell<B> {
 
     /// The colours the theme in use paints with: a theme being edited first, then the theme of
     /// the preferences.
+    ///
+    /// At Low power the glow of the theme is left out: the interface is drawn without it, so a
+    /// Low power frame has none of its extra shapes.
     pub(super) fn current_theme(&self) -> atomik_ui::Theme {
+        let mut theme = self.chosen_theme();
+        if self.performance_level().is_low() {
+            theme.glow = theme.glow.disabled();
+        }
+        theme
+    }
+
+    fn chosen_theme(&self) -> atomik_ui::Theme {
         if let Some(t) = &self.theme_preview {
             return t.clone();
         }

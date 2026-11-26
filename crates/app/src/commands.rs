@@ -569,6 +569,8 @@ pub enum AppCommand {
     PasteSettings,
     /// Mixer > Reset Channel: the selected strips back to fresh ones, their routing kept.
     ResetStrip,
+    /// Mixer > Lock / Unlock Channel: the selected strips locked (or unlocked when all are).
+    LockChannel,
     /// Mixer > Clear Inserts: the insert chains of the selected strips emptied.
     ClearInserts,
     /// Create ▸ Create Instrument (Ctrl+I): the device browser in create mode, instruments only.
@@ -1258,6 +1260,7 @@ impl AppCommand {
             AppCommand::BypassAllInserts => ("mixer.bypass_all_inserts", None),
             AppCommand::CopySettings(s) => (s.command_id(), None),
             AppCommand::PasteSettings => ("mixer.paste_settings", None),
+            AppCommand::LockChannel => ("mixer.lock_channel", None),
             AppCommand::ResetStrip => ("mixer.reset_strip", None),
             AppCommand::ClearInserts => ("mixer.clear_inserts", None),
             AppCommand::ToggleCompensation => ("mixer.toggle_compensation", None),
@@ -1757,6 +1760,7 @@ impl AppCommand {
                 return SettingsSection::from_command_id(id).map(AppCommand::CopySettings);
             }
             ("mixer.paste_settings", None) => AppCommand::PasteSettings,
+            ("mixer.lock_channel", None) => AppCommand::LockChannel,
             ("mixer.reset_strip", None) => AppCommand::ResetStrip,
             ("mixer.clear_inserts", None) => AppCommand::ClearInserts,
             ("mixer.delete_vca", None) => AppCommand::DeleteVca(None),
@@ -4008,6 +4012,11 @@ fn menus_in_english(
                             AppCommand::ResetStrip,
                             state.strip.can_reset,
                         ),
+                        enabled(
+                            "Lock / Unlock Channel",
+                            AppCommand::LockChannel,
+                            state.strip.can_reset,
+                        ),
                     ],
                 }),
                 MenuEntry::Submenu(Submenu {
@@ -5355,6 +5364,7 @@ mod tests {
             AppCommand::CopySettings(SettingsSection::Sends),
             AppCommand::CopySettings(SettingsSection::Inserts),
             AppCommand::PasteSettings,
+            AppCommand::LockChannel,
             AppCommand::ResetStrip,
             AppCommand::ClearInserts,
             AppCommand::StoreSnapshot,

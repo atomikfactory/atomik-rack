@@ -11,8 +11,8 @@ use std::path::PathBuf;
 const ROW: f64 = 40.0;
 const GAP: f64 = 2.0;
 const BUTTON_W: f64 = 84.0;
-/// Rows of the tab: eight switches, two folders, autosave and four steppers.
-const ROWS: f64 = 15.0;
+/// Rows of the tab: eight switches, two folders, autosave and five steppers.
+const ROWS: f64 = 16.0;
 /// Height of everything the tab shows, under its title: the rows and the note.
 pub(crate) const CONTENT_HEIGHT: f64 = ROWS * (ROW + GAP) + 60.0;
 /// Pixels one wheel notch moves the content.
@@ -99,6 +99,8 @@ pub enum Cycle {
     WarpImports,
     /// How the master keyboard picks its track.
     MasterKeyboard,
+    /// Which foci of the open songs go to the song you work in.
+    FocusFollows,
 }
 
 /// A row with a button that steps through the choices of a setting.
@@ -350,6 +352,12 @@ impl WorkflowTab {
                 "Standard plays the selected track; Separated plays the track picked with the arrow of its header.",
                 self.prefs.master_keyboard.label(),
             ),
+            (
+                Cycle::FocusFollows,
+                "Focus follows the active song",
+                "Which of the Play Focus (audio) and the Input Focus (MIDI keyboard) go to the song you work in.",
+                self.prefs.focus_follows.label(),
+            ),
         ] {
             cycles.push(CycleRow {
                 rect: Rect::new(x0, y, x0 + inner, y + ROW),
@@ -422,6 +430,9 @@ impl WorkflowTab {
                             }
                             Cycle::MasterKeyboard => {
                                 self.prefs.master_keyboard = self.prefs.master_keyboard.next();
+                            }
+                            Cycle::FocusFollows => {
+                                self.prefs.focus_follows = self.prefs.focus_follows.next();
                             }
                             Cycle::WarpImports => {
                                 self.prefs.warp_imports = self.prefs.warp_imports.next();

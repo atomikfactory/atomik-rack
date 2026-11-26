@@ -24,7 +24,7 @@
 //! with a name, that any CV Quantizer can pick by name instead of a scale of its own. Editing a scale
 //! is one more [`SetHarmony`](crate::song::SongCommand::SetHarmony), so every quantizer that uses it
 //! follows at once and one undo takes the edit back; a quantizer saves the scale's id, and a scale that
-//! is gone leaves it on its own scale. The field is `"scales"`, written only when set (format 45,
+//! is gone leaves it on its own scale. The field is `"scales"`, written only when set (format 46,
 //! ignorable: a reader that drops it opens the song with every quantizer on its own scale).
 
 use crate::chord_symbol::format_chord;

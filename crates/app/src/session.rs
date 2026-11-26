@@ -703,6 +703,9 @@ pub struct LiveSession<B: AudioBackend> {
     /// [`crate::performance::workers_for`]). Read when an engine starts, so a change applies
     /// from the next start; a count the user fixed is never touched.
     low_power: bool,
+    /// Whether the song of this session has the Input Focus: the enabled MIDI inputs are open
+    /// only while it does (the settings keep the list either way).
+    midi_held: bool,
 }
 
 impl<B: AudioBackend> std::fmt::Debug for LiveSession<B> {
@@ -761,6 +764,7 @@ impl<B: AudioBackend> LiveSession<B> {
             switch_back: false,
             switching_back: false,
             low_power: false,
+            midi_held: true,
         }
     }
 
@@ -773,6 +777,21 @@ impl<B: AudioBackend> LiveSession<B> {
     /// applies to the next engine this session starts; nothing restarts.
     pub fn set_low_power(&mut self, on: bool) {
         self.low_power = on;
+    }
+
+    /// Whether the enabled MIDI inputs are open (the song has the Input Focus).
+    pub fn midi_held(&self) -> bool {
+        self.midi_held
+    }
+
+    /// Holds the enabled MIDI inputs open (`true`, the default) or lets them go: a running
+    /// stream opens or closes the ports at once and keeps the engine; one that is not running
+    /// opens them when it starts. The list in the settings is not touched.
+    pub fn set_midi_held(&mut self, held: bool) {
+        if self.midi_held != held {
+            self.midi_held = held;
+            self.sync_midi();
+        }
     }
 
     /// The backend.
@@ -1441,6 +1460,7 @@ impl<B: AudioBackend> LiveSession<B> {
         let wanted: Vec<(String, MidiInputRole, MpeSetting)> = self
             .settings
             .enabled_midi_inputs()
+            .filter(|_| self.midi_held)
             .map(|i| (i.name.clone(), i.role, i.mpe))
             .collect();
         let mut keep = Vec::with_capacity(r.midi.len());
