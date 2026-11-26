@@ -5891,7 +5891,8 @@ creation chain in the **Creation chain** bullet.
   [app/src/shell_manual.rs](../crates/app/src/shell_manual.rs), [ui/src/manual/](../crates/ui/src/manual)). The app
   compiles `docs/README.md` and `docs/KEYBOARD.md` (and the translations in `docs/fr/`, shown when the interface is
   French) in with `include_str!`, so the manual and the documentation are one text. `atomik_ui::manual::markdown`
-  reads the subset the documents use (decision V: written in the project, no crate); `Manual::new` cuts each document into pages at its headings of level one and two, builds the table of
+  reads the subset the documents use (decision V: written in the project, no crate);
+  `Manual::new` cuts each document into pages at its headings of level one and two, builds the table of
   contents and the GitHub-style anchors (`Manual::resolve` reads `#anchor`, `FILE.md#anchor` and addresses), and
   `Manual::search` ranks one hit per section (a heading match above a body match) with a snippet and the matched
   ranges. `ManualView` lays a page out once per width on the canvas it paints on (`layout.rs`, measured text), keeps
