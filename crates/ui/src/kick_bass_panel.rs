@@ -323,11 +323,13 @@ impl KickBassView {
 
     /// What the button under `pos` does, for its tooltip.
     pub fn help_at(&self, pos: Point) -> Option<Help> {
-        let help = |rect: Rect, text: &'static str| Some(Help::new(rect, text));
+        let help =
+            |rect: Rect, text: &'static str, id: &'static str| Some(Help::new(rect, text).id(id));
         if self.close_rect().contains(pos) {
             return help(
                 self.close_rect(),
                 "Close the panel; the song is not changed",
+                "modal.close",
             );
         }
         for bass in [false, true] {
@@ -343,6 +345,7 @@ impl KickBassView {
                     } else {
                         "Pick the kick track: the track that plays the kick drum"
                     },
+                    "modal.kick_bass.pick",
                 );
             }
         }
@@ -354,6 +357,7 @@ impl KickBassView {
                 } else {
                     "Render the two tracks and check how their low ends add up, kick hit by hit"
                 },
+                "modal.kick_bass.run",
             );
         }
         for n in 0..self.info.fixes.len().min(MAX_FIXES) {
@@ -361,6 +365,7 @@ impl KickBassView {
                 return help(
                     self.apply_rect(n),
                     "Make this change to the song (one undo step)",
+                    "modal.kick_bass.apply",
                 );
             }
         }

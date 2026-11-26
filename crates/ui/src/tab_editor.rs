@@ -735,23 +735,31 @@ impl TabEditorView {
             .top_buttons()
             .into_iter()
             .find(|(r, _)| r.contains(pos))?;
-        let text: &'static str = match b {
-            TopButton::Value(_) => "Note value of the next typed note",
-            TopButton::Dotted => "Dotted note value",
-            TopButton::Triplet => "Triplet note value",
+        let (text, id): (&'static str, &'static str) = match b {
+            TopButton::Value(_) => ("Note value of the next typed note", "editor.tab.value"),
+            TopButton::Dotted => ("Dotted note value", "editor.tab.dotted"),
+            TopButton::Triplet => ("Triplet note value", "editor.tab.triplet"),
             TopButton::Tool(i) => {
                 let item = tech::TOOLBAR[i];
-                return Some(Help::new(rect, item.tip).with_arg("editor.tab_technique", item.arg));
+                return Some(
+                    Help::new(rect, item.tip)
+                        .with_arg("editor.tab_technique", item.arg)
+                        .id("editor.tab.technique"),
+                );
             }
-            TopButton::BendAmount => "Bend amount in tones (click to change)",
+            TopButton::BendAmount => (
+                "Bend amount in tones (click to change)",
+                "editor.tab.bend_amount",
+            ),
             TopButton::Instrument => {
                 return Some(
                     Help::new(rect, "Instrument, tuning and capo")
-                        .with_command("editor.tab_tuning"),
+                        .with_command("editor.tab_tuning")
+                        .id("editor.tab.instrument"),
                 );
             }
         };
-        Some(Help::new(rect, text))
+        Some(Help::new(rect, text).id(id))
     }
 
     /// The cursor: content tick and string (tab order, 0 = top line).

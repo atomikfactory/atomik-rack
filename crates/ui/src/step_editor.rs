@@ -900,6 +900,24 @@ impl StepEditorView {
     /// What the button or field under `pos` does, for its tooltip (`None` during a gesture and
     /// away from a button).
     pub fn help_at(&self, pos: Point) -> Option<Help> {
+        let help = self.help_text_at(pos)?;
+        let id = match self.hit(pos) {
+            Hit::Close => Some("editor.close"),
+            Hit::NewPattern => Some("editor.step.new_pattern"),
+            Hit::Resolution(_) => Some("editor.step.resolution"),
+            Hit::Steps(_) => Some("editor.step.steps"),
+            Hit::Swing => Some("editor.step.swing"),
+            Hit::Tool(_) => Some("editor.step.tool"),
+            Hit::Level(_) => Some("editor.step.level"),
+            _ => None,
+        };
+        Some(match id {
+            Some(id) => help.id(id),
+            None => help,
+        })
+    }
+
+    fn help_text_at(&self, pos: Point) -> Option<Help> {
         if !matches!(self.drag, Drag::None) {
             return None;
         }

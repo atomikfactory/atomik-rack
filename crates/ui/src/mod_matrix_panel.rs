@@ -422,12 +422,13 @@ impl ModMatrixView {
 
     /// What the control under `pos` does, for its tooltip.
     pub fn help_at(&self, pos: Point) -> Option<Help> {
-        let help = |rect: Rect, text: &'static str| Some(Help::new(rect, text));
+        let help =
+            |rect: Rect, text: &'static str, id: &'static str| Some(Help::new(rect, text).id(id));
         if self.picker.is_some() {
             return None;
         }
         if self.close_rect().contains(pos) {
-            return help(self.close_rect(), "Close the matrix");
+            return help(self.close_rect(), "Close the matrix", "modal.close");
         }
         for slot in 0..MOD_SLOTS {
             for (tag, text) in [
@@ -440,7 +441,7 @@ impl ModMatrixView {
             ] {
                 let r = self.picker_rect(slot, tag);
                 if r.contains(pos) {
-                    return help(r, text);
+                    return help(r, text, "modal.mod_matrix.picker");
                 }
             }
             let bar = self.bar_rect(slot);
@@ -448,11 +449,12 @@ impl ModMatrixView {
                 return help(
                     bar,
                     "How far the source moves the target, -100 to +100 %; right click: 0",
+                    "modal.mod_matrix.amount",
                 );
             }
             let x = self.clear_rect(slot);
             if x.contains(pos) {
-                return help(x, "Clear this slot");
+                return help(x, "Clear this slot", "modal.mod_matrix.clear");
             }
         }
         None

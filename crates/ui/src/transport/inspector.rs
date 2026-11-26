@@ -878,10 +878,13 @@ impl TransportBar {
     pub(super) fn inspector_help(&self, pos: Point) -> Option<Help> {
         let layout = self.inspector_layout();
         if let Some(r) = layout.name.filter(|r| r.contains(pos)) {
-            return Some(Help::new(
-                r,
-                "The selected audio clips, or the audio track when no clip is selected",
-            ));
+            return Some(
+                Help::new(
+                    r,
+                    "The selected audio clips, or the audio track when no clip is selected",
+                )
+                .id("transport.insp_name"),
+            );
         }
         let (slot, r) = layout.slots.into_iter().find(|(_, r)| r.contains(pos))?;
         if let Some(why) = self.insp.disabled(slot) {
@@ -894,7 +897,7 @@ impl TransportBar {
                 Slot::Warp => "Warp",
                 Slot::Tempo => "Tempo",
             };
-            return Some(Help::new(r, format!("{what}: {why}")));
+            return Some(Help::new(r, format!("{what}: {why}")).id(slot_id(slot)));
         }
         let text = match slot {
             Slot::FadeIn | Slot::FadeOut => {
@@ -909,7 +912,7 @@ impl TransportBar {
                     format!(
                         "Fade {what} time in {unit}: drag or scroll to change (Shift: fine), double-click to type; click the unit tag to switch between ms and ticks"
                     ),
-                ));
+                ).id(slot_id(slot)));
             }
             Slot::Transpose => {
                 "Transpose in semitones: drag or scroll the whole part, or the cents after the point; double-click to type. A clip in the Repitch mode is left alone"
@@ -927,7 +930,7 @@ impl TransportBar {
                 "The tempo the audio was recorded at, in BPM: drag or scroll to change (Shift: fine), double-click to type. The clip plays faster or slower to follow the song"
             }
         };
-        Some(Help::new(r, text))
+        Some(Help::new(r, text).id(slot_id(slot)))
     }
 
     /// Paints the inspector.
@@ -1015,5 +1018,17 @@ impl TransportBar {
                     .align(Align::End),
             );
         }
+    }
+}
+
+/// The id of an inspector box in Help Mode.
+fn slot_id(slot: Slot) -> &'static str {
+    match slot {
+        Slot::FadeIn | Slot::FadeOut => "transport.insp_fade",
+        Slot::Transpose => "transport.insp_transpose",
+        Slot::Gain => "transport.insp_gain",
+        Slot::Reverse => "transport.insp_reverse",
+        Slot::Warp => "transport.insp_warp",
+        Slot::Tempo => "transport.insp_tempo",
     }
 }

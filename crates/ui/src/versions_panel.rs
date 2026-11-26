@@ -619,22 +619,35 @@ impl VersionsView {
 
     /// What the button under `pos` does, for its tooltip.
     pub fn help_at(&self, pos: Point) -> Option<Help> {
-        let help = |rect: Rect, text: &'static str| Some(Help::new(rect, text));
+        let help =
+            |rect: Rect, text: &'static str, id: &'static str| Some(Help::new(rect, text).id(id));
         if self.close_rect().contains(pos) {
-            return help(self.close_rect(), "Close the panel");
+            return help(self.close_rect(), "Close the panel", "modal.close");
         }
         if self.report.is_some() {
             if self.back_rect().contains(pos) {
-                return help(self.back_rect(), "Back to the list of versions");
+                return help(
+                    self.back_rect(),
+                    "Back to the list of versions",
+                    "modal.versions.back",
+                );
             }
             return None;
         }
         if self.confirm.is_some() {
             if self.restore_rect().contains(pos) {
-                return help(self.restore_rect(), "Delete the version for good");
+                return help(
+                    self.restore_rect(),
+                    "Delete the version for good",
+                    "modal.versions.restore",
+                );
             }
             if self.protect_rect().contains(pos) {
-                return help(self.protect_rect(), "Keep the version");
+                return help(
+                    self.protect_rect(),
+                    "Keep the version",
+                    "modal.versions.protect",
+                );
             }
             return None;
         }
@@ -643,11 +656,13 @@ impl VersionsView {
                 help(
                     self.save_rect(),
                     "Give the version this name; an empty name clears it",
+                    "modal.versions.save",
                 )
             } else {
                 help(
                     self.save_rect(),
                     "Keep the song as it is now under this name; it is never pruned",
+                    "modal.versions.save",
                 )
             };
         }
@@ -655,6 +670,7 @@ impl VersionsView {
             return help(
                 self.rename_rect(),
                 "Change the name of the chosen version (F2); an empty name clears it",
+                "modal.versions.rename",
             );
         }
         if self.delete_rect().contains(pos) {
@@ -663,24 +679,27 @@ impl VersionsView {
             } else {
                 "Delete the chosen version for good (Delete)"
             };
-            return help(self.delete_rect(), text);
+            return help(self.delete_rect(), text, "modal.versions.delete");
         }
         if self.restore_rect().contains(pos) {
             return help(
                 self.restore_rect(),
                 "Open the chosen version as the song; the song now is kept as a version first",
+                "modal.versions.restore",
             );
         }
         if self.protect_rect().contains(pos) {
             return help(
                 self.protect_rect(),
                 "Protect an automatic version so that pruning never removes it",
+                "modal.versions.protect",
             );
         }
         if self.compare_rect().contains(pos) {
             return help(
                 self.compare_rect(),
                 "What differs from the song now (Shift-click marks a second version to compare with)",
+                "modal.versions.compare",
             );
         }
         None

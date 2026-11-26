@@ -367,9 +367,10 @@ impl DeliveryView {
 
     /// What the control under `pos` does, for its tooltip.
     pub fn help_at(&self, pos: Point) -> Option<Help> {
-        let help = |rect: Rect, text: &'static str| Some(Help::new(rect, text));
+        let help =
+            |rect: Rect, text: &'static str, id: &'static str| Some(Help::new(rect, text).id(id));
         if self.close_rect().contains(pos) {
-            return help(self.close_rect(), "Close the panel");
+            return help(self.close_rect(), "Close the panel", "modal.close");
         }
         for (page, text) in [
             (
@@ -382,18 +383,23 @@ impl DeliveryView {
             ),
         ] {
             if self.tab_rect(page).contains(pos) {
-                return help(self.tab_rect(page), text);
+                return help(self.tab_rect(page), text, "modal.delivery.tab");
             }
         }
         match self.page() {
             DeliveryPage::Targets => {
                 if self.main_rect().contains(pos) {
                     return if self.running() {
-                        help(self.main_rect(), "Stop the measurement")
+                        help(
+                            self.main_rect(),
+                            "Stop the measurement",
+                            "modal.delivery.main",
+                        )
                     } else {
                         help(
                             self.main_rect(),
                             "Render the master and measure its loudness and true peak",
+                            "modal.delivery.main",
                         )
                     };
                 }
@@ -401,53 +407,77 @@ impl DeliveryView {
                     return help(
                         self.action_rect(),
                         "Set the master limiter's ceiling and the export report's target",
+                        "modal.delivery.action",
                     );
                 }
                 // A row says its whole verdict, whatever the row had room to draw.
                 for (i, row) in self.data.targets.rows.iter().take(ROWS).enumerate() {
                     let r = self.row_rect(i);
                     if r.contains(pos) {
-                        return Some(Help::new(r, format!("{}: {}", row.name, row.effect)));
+                        return Some(
+                            Help::new(r, format!("{}: {}", row.name, row.effect))
+                                .id("modal.delivery.row"),
+                        );
                     }
                 }
                 if self.list_rect().contains(pos) {
                     return help(
                         self.list_rect(),
                         "Choose a target: the gain it would apply to the measured master",
+                        "modal.delivery.list",
                     );
                 }
             }
             DeliveryPage::Peaks => {
                 if self.main_rect().contains(pos) {
-                    return help(self.main_rect(), "Dip the chosen peak by one step");
+                    return help(
+                        self.main_rect(),
+                        "Dip the chosen peak by one step",
+                        "modal.delivery.main",
+                    );
                 }
                 if self.action_rect().contains(pos) {
-                    return help(self.action_rect(), "Dip every peak above the threshold");
+                    return help(
+                        self.action_rect(),
+                        "Dip every peak above the threshold",
+                        "modal.delivery.action",
+                    );
                 }
                 if self.threshold_down_rect().contains(pos)
                     || self.threshold_up_rect().contains(pos)
                 {
-                    return help(self.threshold_down_rect(), "Move the threshold by 0.1 dB");
+                    return help(
+                        self.threshold_down_rect(),
+                        "Move the threshold by 0.1 dB",
+                        "modal.delivery.threshold_down",
+                    );
                 }
                 if self.step_rect().contains(pos) {
                     return help(
                         self.step_rect(),
                         "How much one dip takes: 0.2, 0.3 or 0.4 dB",
+                        "modal.delivery.step",
                     );
                 }
                 if self.width_rect().contains(pos) {
                     return help(
                         self.width_rect(),
                         "Frames each side of a dip: a few samples",
+                        "modal.delivery.width",
                     );
                 }
                 if self.rescan_rect().contains(pos) {
-                    return help(self.rescan_rect(), "Read the selected clip again");
+                    return help(
+                        self.rescan_rect(),
+                        "Read the selected clip again",
+                        "modal.delivery.rescan",
+                    );
                 }
                 if self.list_rect().contains(pos) {
                     return help(
                         self.list_rect(),
                         "The highest peaks of the clip; headroom if trimmed down to each",
+                        "modal.delivery.list",
                     );
                 }
             }

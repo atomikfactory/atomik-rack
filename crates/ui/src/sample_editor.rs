@@ -805,6 +805,23 @@ impl SampleEditorView {
     /// What the button or field under `pos` does, for its tooltip (`None` during a gesture and
     /// away from a button).
     pub fn help_at(&self, pos: Point) -> Option<Help> {
+        let help = self.help_text_at(pos)?;
+        let id = match self.hit(pos) {
+            Hit::Close => Some("editor.close"),
+            Hit::Load => Some("editor.sample.load"),
+            Hit::Loop(_) => Some("editor.sample.loop_mode"),
+            Hit::Trigger(_) => Some("editor.sample.trigger"),
+            Hit::Page => Some("editor.sample.page"),
+            Hit::Field(_) => Some("editor.sample.field"),
+            _ => None,
+        };
+        Some(match id {
+            Some(id) => help.id(id),
+            None => help,
+        })
+    }
+
+    fn help_text_at(&self, pos: Point) -> Option<Help> {
         if !matches!(self.drag, Drag::None) {
             return None;
         }

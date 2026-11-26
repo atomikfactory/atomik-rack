@@ -541,7 +541,24 @@ impl PracticeBar {
             PracticeItem::Value(v) => Help::new(rect, v.tip()),
             PracticeItem::Arrow(v, _) => Help::new(rect, v.tip()),
         };
-        Some(help)
+        Some(help.id(match item {
+            PracticeItem::Loop => "editor.practice.loop",
+            PracticeItem::Click => "editor.practice.click",
+            PracticeItem::CountIn => "editor.practice.count_in",
+            PracticeItem::Chip(_) => "editor.practice.speed_chip",
+            PracticeItem::Slower | PracticeItem::Faster => "editor.practice.speed_step",
+            PracticeItem::Slider | PracticeItem::Readout => "editor.practice.speed",
+            PracticeItem::Trainer | PracticeItem::Value(_) | PracticeItem::Arrow(..) => {
+                "editor.practice.trainer"
+            }
+            PracticeItem::Listen => "editor.practice.listen",
+            PracticeItem::Input => "editor.practice.input",
+            PracticeItem::Latency => "editor.practice.latency",
+            PracticeItem::Accuracy | PracticeItem::History | PracticeItem::Passes => {
+                "editor.practice.results"
+            }
+            PracticeItem::ClearResults => "editor.practice.clear_results",
+        }))
     }
 
     fn value_text(&self, v: TrainerValue) -> String {

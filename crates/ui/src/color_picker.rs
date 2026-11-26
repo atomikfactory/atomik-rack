@@ -344,21 +344,31 @@ impl ColorPickerView {
 
     /// What the control under `pos` does, for its tooltip.
     pub fn help_at(&self, pos: Point) -> Option<Help> {
-        let help = |rect: Rect, text: &'static str| Some(Help::new(rect, text));
+        let help =
+            |rect: Rect, text: &'static str, id: &'static str| Some(Help::new(rect, text).id(id));
         if self.close_rect().contains(pos) {
             return help(
                 self.close_rect(),
                 "Close the panel without changing anything",
+                "modal.close",
             );
         }
         if self.apply_rect().contains(pos) {
-            return help(self.apply_rect(), "Use this colour (one undo step)");
+            return help(
+                self.apply_rect(),
+                "Use this colour (one undo step)",
+                "modal.color_picker.apply",
+            );
         }
         if self.square_rect().contains(pos) {
-            return help(self.square_rect(), "Saturation across, brightness down");
+            return help(
+                self.square_rect(),
+                "Saturation across, brightness down",
+                "modal.color_picker.square",
+            );
         }
         if self.strip_rect().contains(pos) {
-            return help(self.strip_rect(), "Hue");
+            return help(self.strip_rect(), "Hue", "modal.color_picker.strip");
         }
         if (0..PALETTE.len()).any(|i| self.swatch_rect(i).contains(pos)) {
             return help(
@@ -369,6 +379,7 @@ impl ColorPickerView {
                     self.swatch_rect(0).y1,
                 ),
                 "The colours of the colour menu",
+                "modal.color_picker.swatches",
             );
         }
         None

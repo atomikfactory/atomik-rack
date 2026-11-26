@@ -256,22 +256,25 @@ impl RelinkView {
 
     /// What the button under `pos` does, for its tooltip.
     pub fn help_at(&self, pos: Point) -> Option<Help> {
-        let help = |r: Rect, text: &'static str| Some(Help::new(r, text));
+        let help = |r: Rect, text: &'static str, id: &'static str| Some(Help::new(r, text).id(id));
         match self.hit(pos)? {
-            RelinkAction::Close => help(self.close_rect(), "Close the list"),
+            RelinkAction::Close => help(self.close_rect(), "Close the list", "modal.close"),
             RelinkAction::SearchFolder => help(
                 self.search_rect(),
                 "Search a folder for the missing files and relink what it finds",
+                "modal.relink.search",
             ),
             RelinkAction::ProjectFolder => help(
                 self.project_rect(),
                 "Choose the project's folder (the one with its Audio folder) to get its files back",
+                "modal.relink.project",
             ),
             RelinkAction::Locate { hash } => {
                 let i = self.entries.iter().position(|e| e.hash == hash)?;
                 help(
                     self.locate_rect(i)?,
                     "Choose the file that replaces this audio",
+                    "modal.relink.locate",
                 )
             }
         }

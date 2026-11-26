@@ -1156,6 +1156,39 @@ impl AudioEditorView {
     /// What the button under `pos` does, for its tooltip (`None` during a gesture and away from
     /// a button).
     pub fn help_at(&self, pos: Point) -> Option<Help> {
+        let help = self.help_text_at(pos)?;
+        let id = match self.hit(pos) {
+            Hit::Close => Some("editor.close"),
+            Hit::Title => Some("editor.audio.title"),
+            Hit::Mode(_) => Some("editor.audio.mode"),
+            Hit::Stretch => Some("editor.audio.stretch"),
+            Hit::Slide => Some("editor.audio.slide"),
+            Hit::Revert => Some("editor.audio.revert"),
+            Hit::Split => Some("editor.audio.split"),
+            Hit::ToSlicer => Some("editor.audio.to_slicer"),
+            Hit::SensDown | Hit::SensUp => Some("editor.audio.sensitivity"),
+            Hit::AddAll => Some("editor.audio.add_all"),
+            Hit::Speaker => Some("editor.audio.speaker"),
+            Hit::Correct => Some("editor.audio.correct"),
+            Hit::Flatten => Some("editor.audio.flatten"),
+            Hit::FlattenValue => Some("editor.audio.flatten_value"),
+            Hit::Reset => Some("editor.audio.reset"),
+            Hit::ScaleToggle => Some("editor.audio.scale"),
+            Hit::Cancel => Some("editor.audio.cancel"),
+            Hit::XfadeDown | Hit::XfadeUp => Some("editor.audio.crossfade"),
+            Hit::FlattenComp => Some("editor.audio.flatten_comp"),
+            Hit::KeepFormants => Some("editor.audio.keep_formants"),
+            Hit::FormantDown | Hit::FormantUp => Some("editor.audio.formant"),
+            Hit::LinkStereo => Some("editor.audio.link_stereo"),
+            _ => None,
+        };
+        Some(match id {
+            Some(id) => help.id(id),
+            None => help,
+        })
+    }
+
+    fn help_text_at(&self, pos: Point) -> Option<Help> {
         if !matches!(self.drag, Drag::None) || !self.present {
             return None;
         }

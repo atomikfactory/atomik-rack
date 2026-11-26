@@ -1068,59 +1068,71 @@ impl PluginManagerView {
 
     /// What the control under `pos` does, for its tooltip.
     pub fn help_at(&self, pos: Point) -> Option<Help> {
-        let tip = |rect: Rect, text: &'static str| Some(Help::new(rect, text));
+        let tip =
+            |rect: Rect, text: &'static str, id: &'static str| Some(Help::new(rect, text).id(id));
         let controls = [
-            (self.close_rect(), "Close the plugin manager"),
+            (self.close_rect(), "Close the plugin manager", "modal.close"),
             (
                 self.search_rect(),
                 "Find plugins by name, vendor, path or tag",
+                "modal.plugin_manager.search",
             ),
             (
                 self.format_rect(),
                 "Show only VST3 or only CLAP plugins; click to step",
+                "modal.plugin_manager.format",
             ),
             (
                 self.status_rect(),
                 "Show plugins by status; click to step through them",
+                "modal.plugin_manager.status",
             ),
             (
                 self.category_rect(),
                 "Show plugins of one category; click to step",
+                "modal.plugin_manager.category",
             ),
             (
                 self.tag_filter_rect(),
                 "Show plugins with one tag; click to step",
+                "modal.plugin_manager.tag_filter",
             ),
             (
                 self.add_tag_rect(),
                 "Tag the chosen plugins with the text in the field",
+                "modal.plugin_manager.add_tag",
             ),
             (
                 self.disable_rect(),
                 "Hide the chosen plugins from the browser; projects that use them still load",
+                "modal.plugin_manager.disable",
             ),
             (
                 self.try_again_rect(),
                 "Take quarantined plugins out of quarantine and scan failed files again",
+                "modal.plugin_manager.try_again",
             ),
             (
                 self.folder_rect(),
                 "Open the file manager at the chosen plugin's file",
+                "modal.plugin_manager.folder",
             ),
             (
                 self.rescan_selected_rect(),
                 "Scan the files of the chosen plugins again",
+                "modal.plugin_manager.rescan_selected",
             ),
         ];
-        for (rect, text) in controls {
+        for (rect, text, id) in controls {
             if rect.contains(pos) {
-                return tip(rect, text);
+                return tip(rect, text, id);
             }
         }
         if let Some(r) = self.no_limit_rect().filter(|r| r.contains(pos)) {
             return tip(
                 r,
                 "Scan again with no time limit: a slow plugin gets as long as it needs; CANCEL stops it",
+                "modal.plugin_manager.no_limit",
             );
         }
         if self.rescan_all_rect().contains(pos) {
@@ -1132,10 +1144,15 @@ impl PluginManagerView {
                 } else {
                     "Scan every plugin folder again"
                 },
+                "modal.plugin_manager.rescan_all",
             );
         }
         if let Some((_, rect)) = self.tag_chips().into_iter().find(|(_, r)| r.contains(pos)) {
-            return tip(rect, "Click to take this tag off the plugin");
+            return tip(
+                rect,
+                "Click to take this tag off the plugin",
+                "modal.plugin_manager.tag_chip",
+            );
         }
         for (column, x0, x1) in self.columns() {
             let head = Rect::new(x0, self.head_y(), x1, self.head_y() + HEAD_H);
@@ -1147,6 +1164,7 @@ impl PluginManagerView {
                     } else {
                         "Sort by this column; click again to reverse"
                     },
+                    "modal.plugin_manager.column",
                 );
             }
         }
@@ -1155,17 +1173,24 @@ impl PluginManagerView {
         let rect = self.row_rect(at)?;
         let status_x = self.columns()[5];
         if pos.x >= status_x.1 && pos.x < status_x.2 && row.status.reason().is_some() {
-            return Some(Help::new(rect, status_text(&row.status)));
+            return Some(
+                Help::new(rect, status_text(&row.status)).id("modal.plugin_manager.status_cell"),
+            );
         }
         let process_x = self.columns()[6];
         if pos.x >= process_x.1 && pos.x < process_x.2 && row.type_id.is_some() {
             return tip(
                 rect,
                 "Click to step: default (the Settings choice), own process, shared process",
+                "modal.plugin_manager.process_cell",
             );
         }
         if pos.x < self.columns()[0].2 && row.type_id.is_some() {
-            return tip(rect, "Favourites are listed first in the browser");
+            return tip(
+                rect,
+                "Favourites are listed first in the browser",
+                "modal.plugin_manager.star_cell",
+            );
         }
         None
     }

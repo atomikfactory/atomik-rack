@@ -828,6 +828,27 @@ impl ContainerEditorView {
     /// What the button or field under `p` does, for its tooltip (`None` during a gesture and
     /// away from a button).
     pub fn help_at(&self, p: Point) -> Option<Help> {
+        let help = self.help_text_at(p)?;
+        let id = match self.hit(p) {
+            Hit::Close => Some("editor.close"),
+            Hit::Tab(_) => Some("editor.container.tab"),
+            Hit::Add => Some("editor.container.add"),
+            Hit::Target(_) => Some("editor.container.target"),
+            Hit::TransposeDec(_) | Hit::TransposeInc(_) => Some("editor.container.transpose"),
+            Hit::Delete(_) => Some("editor.container.delete"),
+            Hit::Pass(..) => Some("editor.container.pass"),
+            Hit::Kind => Some("editor.container.kind"),
+            Hit::TargetDelete(_) => Some("editor.container.target_delete"),
+            Hit::Field(..) => Some("editor.container.field"),
+            _ => None,
+        };
+        Some(match id {
+            Some(id) => help.id(id),
+            None => help,
+        })
+    }
+
+    fn help_text_at(&self, p: Point) -> Option<Help> {
         if !matches!(self.drag, Drag::None) {
             return None;
         }

@@ -571,7 +571,11 @@ impl ArrangementView {
                 "Parameter value in its unit: drag or scroll (Shift: finer), double-click to type; +n and -n add or subtract; with several points the change applies to each"
             }
         };
-        Some(crate::tooltip::Help::new(r, text))
+        let id = match field {
+            PointField::Position => "arrangement.point_position",
+            PointField::Value => "arrangement.point_value",
+        };
+        Some(crate::tooltip::Help::new(r, text).id(id))
     }
 }
 

@@ -882,6 +882,24 @@ impl SeqEditorView {
     /// What the button or field under `pos` does, for its tooltip (`None` during a gesture and
     /// away from a button).
     pub fn help_at(&self, pos: Point) -> Option<Help> {
+        let help = self.help_text_at(pos)?;
+        let id = match self.hit(pos) {
+            Hit::Close => Some("editor.close"),
+            Hit::Slot(_) => Some("editor.seq.slot"),
+            Hit::Button(_) => Some("editor.seq.pattern_button"),
+            Hit::LengthDec | Hit::LengthInc => Some("editor.seq.length_step"),
+            Hit::LengthField => Some("editor.seq.length"),
+            Hit::Resolution(_) => Some("editor.seq.resolution"),
+            Hit::Swing => Some("editor.seq.swing"),
+            _ => None,
+        };
+        Some(match id {
+            Some(id) => help.id(id),
+            None => help,
+        })
+    }
+
+    fn help_text_at(&self, pos: Point) -> Option<Help> {
         if !matches!(self.drag, Drag::None) {
             return None;
         }

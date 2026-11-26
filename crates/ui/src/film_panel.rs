@@ -156,6 +156,22 @@ enum Hit {
     Cancel,
 }
 
+impl Hit {
+    /// The id of the control in Help Mode.
+    fn help_id(self) -> &'static str {
+        match self {
+            Hit::Cover(_) => "modal.film.cover",
+            Hit::Picture(_) => "modal.film.picture",
+            Hit::Quality(_) => "modal.film.quality",
+            Hit::Sound(_) => "modal.film.sound",
+            Hit::Bitrate(_) => "modal.film.bitrate",
+            Hit::OwnAudio => "modal.film.own_audio",
+            Hit::Start => "modal.film.start",
+            Hit::Cancel => "modal.film.cancel",
+        }
+    }
+}
+
 /// The panel mode.
 #[derive(Debug, Clone, PartialEq)]
 enum Mode {
@@ -536,7 +552,7 @@ impl FilmView {
             .find(|b| b.1.contains(pos))
             .map(|b| (b.0, b.1))?;
         if let (Hit::Start, EncoderState::Missing(why)) = (hit, &self.encoder) {
-            return Some(Help::new(rect, why.clone()));
+            return Some(Help::new(rect, why.clone()).id(hit.help_id()));
         }
         let text = match hit {
             Hit::Cover(FilmCover::Span) => {
@@ -578,7 +594,7 @@ impl FilmView {
             Hit::Cancel if self.in_progress() => "Stop the job and write nothing",
             Hit::Cancel => "Close without exporting",
         };
-        Some(Help::new(rect, text))
+        Some(Help::new(rect, text).id(hit.help_id()))
     }
 
     // ------------------------------------------------------------------ painting

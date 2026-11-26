@@ -317,14 +317,20 @@ impl SilenceView {
         if self.drag.is_some() {
             return None;
         }
-        let help = |rect: Rect, text: &'static str| Some(Help::new(rect, text));
+        let help =
+            |rect: Rect, text: &'static str, id: &'static str| Some(Help::new(rect, text).id(id));
         if self.close_rect().contains(pos) {
-            return help(self.close_rect(), "Close the panel; the settings are kept");
+            return help(
+                self.close_rect(),
+                "Close the panel; the settings are kept",
+                "modal.close",
+            );
         }
         if self.apply_rect().contains(pos) {
             return help(
                 self.apply_rect(),
                 "Cut the silences out of the selected clips (one undo step)",
+                "modal.silence.apply",
             );
         }
         SilenceRow::ALL.into_iter().find_map(|row| {

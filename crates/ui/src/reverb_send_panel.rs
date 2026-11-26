@@ -384,14 +384,20 @@ impl ReverbSendView {
         if self.drag.is_some() {
             return None;
         }
-        let help = |rect: Rect, text: &'static str| Some(Help::new(rect, text));
+        let help =
+            |rect: Rect, text: &'static str, id: &'static str| Some(Help::new(rect, text).id(id));
         if self.close_rect().contains(pos) {
-            return help(self.close_rect(), "Close the wizard; the choices are kept");
+            return help(
+                self.close_rect(),
+                "Close the wizard; the choices are kept",
+                "modal.close",
+            );
         }
         if self.add_rect().contains(pos) {
             return help(
                 self.add_rect(),
                 "Add the send, the return, the EQ and the reverb (one undo step)",
+                "modal.reverb_send.add",
             );
         }
         ReverbSendRow::ALL.into_iter().find_map(|row| {

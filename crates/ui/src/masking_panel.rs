@@ -329,9 +329,10 @@ impl MaskingView {
 
     /// What the control under `pos` does, for its tooltip.
     pub fn help_at(&self, pos: Point) -> Option<Help> {
-        let help = |rect: Rect, text: &'static str| Some(Help::new(rect, text));
+        let help =
+            |rect: Rect, text: &'static str, id: &'static str| Some(Help::new(rect, text).id(id));
         if self.close_rect().contains(pos) {
-            return help(self.close_rect(), "Close the panel");
+            return help(self.close_rect(), "Close the panel", "modal.close");
         }
         if self.analyse_rect().contains(pos) {
             return help(
@@ -341,18 +342,21 @@ impl MaskingView {
                 } else {
                     "Render the channels and rank the pairs that mask each other"
                 },
+                "modal.masking.analyse",
             );
         }
         if self.demask_rect().contains(pos) && self.current().is_some() {
             return help(
                 self.demask_rect(),
                 "Key a Dynamic EQ band on the covered track from the other (one undo step)",
+                "modal.masking.demask",
             );
         }
         if self.chart_rect().contains(pos) && self.current().is_some() {
             return help(
                 self.chart_rect(),
                 "Click a band to de-mask it; shaded bands are where the tracks clash",
+                "modal.masking.chart",
             );
         }
         let ranges = self
@@ -362,6 +366,7 @@ impl MaskingView {
             return help(
                 self.chart_rect(),
                 "Move the playhead to the start of this clash",
+                "modal.masking.chart",
             );
         }
         None

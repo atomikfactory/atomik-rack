@@ -311,9 +311,10 @@ impl MixCheckView {
 
     /// What the control under `pos` does, for its tooltip.
     pub fn help_at(&self, pos: Point) -> Option<Help> {
-        let help = |rect: Rect, text: &'static str| Some(Help::new(rect, text));
+        let help =
+            |rect: Rect, text: &'static str, id: &'static str| Some(Help::new(rect, text).id(id));
         if self.close_rect().contains(pos) {
-            return help(self.close_rect(), "Close the panel");
+            return help(self.close_rect(), "Close the panel", "modal.close");
         }
         if self.run_rect().contains(pos) {
             return help(
@@ -323,6 +324,7 @@ impl MixCheckView {
                 } else {
                     "Render the song and list what the mix needs"
                 },
+                "modal.mixcheck.run",
             );
         }
         for i in 0..self.slots() {
@@ -330,12 +332,17 @@ impl MixCheckView {
                 continue;
             };
             if row.fix.is_some() && !row.done && self.fix_rect(i).contains(pos) {
-                return help(self.fix_rect(i), "Apply this fix (one undo step)");
+                return help(
+                    self.fix_rect(i),
+                    "Apply this fix (one undo step)",
+                    "modal.mixcheck.fix",
+                );
             }
             if row.tool.is_some() && self.tool_rect(i).contains(pos) {
                 return help(
                     self.tool_rect(i),
                     "Open the tool that works on this finding",
+                    "modal.mixcheck.tool",
                 );
             }
         }
@@ -343,6 +350,7 @@ impl MixCheckView {
             return help(
                 self.list_rect(),
                 "Click a finding to choose it; a finding with a time moves the playhead there",
+                "modal.mixcheck.list",
             );
         }
         None

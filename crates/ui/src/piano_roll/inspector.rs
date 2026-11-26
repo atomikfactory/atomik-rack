@@ -649,6 +649,12 @@ impl PianoRollView {
                 "Velocity 1 to 127: drag or scroll (Shift: ten), double-click to type; with several notes the change applies to each"
             }
         };
-        Some(crate::tooltip::Help::new(r, text))
+        let id = match field {
+            NoteField::Pitch => "roll.note_pitch",
+            NoteField::Position => "roll.note_position",
+            NoteField::Length => "roll.note_length",
+            NoteField::Velocity => "roll.note_velocity",
+        };
+        Some(crate::tooltip::Help::new(r, text).id(id))
     }
 }

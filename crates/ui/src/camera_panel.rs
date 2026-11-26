@@ -260,6 +260,7 @@ impl CameraPreviewView {
         if self.close_rect().contains(pos) {
             return Some(
                 Help::new(self.close_rect(), "Hide the camera preview")
+                    .id("modal.close")
                     .with_command("camera.preview"),
             );
         }
@@ -271,7 +272,7 @@ impl CameraPreviewView {
                     ("ms", &format!("{:.0}", self.state.infer_ms)),
                 ],
             );
-            return Some(Help::new(self.bounds(), text));
+            return Some(Help::new(self.bounds(), text).id("modal.camera.bounds"));
         }
         None
     }
@@ -824,15 +825,19 @@ impl CameraDialogView {
     /// The tooltip of a button.
     pub fn help_at(&self, pos: Point) -> Option<Help> {
         let (choice, r) = self.choices().into_iter().find(|(_, r)| r.contains(pos))?;
-        let text = match choice {
-            CameraDialogChoice::Download => {
-                "Download the two model files once and turn the camera on"
-            }
-            CameraDialogChoice::Cancel => "Close this without downloading anything",
-            CameraDialogChoice::Retry => "Try the download again",
-            CameraDialogChoice::Close => "Close this message",
+        let (text, id) = match choice {
+            CameraDialogChoice::Download => (
+                "Download the two model files once and turn the camera on",
+                "modal.camera.download",
+            ),
+            CameraDialogChoice::Cancel => (
+                "Close this without downloading anything",
+                "modal.camera.cancel",
+            ),
+            CameraDialogChoice::Retry => ("Try the download again", "modal.camera.retry"),
+            CameraDialogChoice::Close => ("Close this message", "modal.camera.close"),
         };
-        Some(Help::new(r, text))
+        Some(Help::new(r, text).id(id))
     }
 }
 
