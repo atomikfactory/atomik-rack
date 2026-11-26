@@ -2366,7 +2366,7 @@ as long as a hung open).
 
 **Status.** Decided by the owner on 2026-11-25.
 
-## BX. Following a MIDI clock: a switch for the tempo alone and a lock strength, not an automatic guess
+## CA. Following a MIDI clock: a switch for the tempo alone and a lock strength, not an automatic guess
 
 **Decision.** A sender that streams clocks with no Start and no Song Position Pointer is handled by an explicit
 setting, Options > Sync > Follow Tempo Only: the song plays from its own position and takes the measured tempo. How
