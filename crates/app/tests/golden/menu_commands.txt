@@ -234,6 +234,7 @@ LensHeadphones | Headphones
 LensMono | Mono
 LensSmallSpeaker | Small Speaker
 LinkFaders | Link Faders
+LockChannel | Lock / Unlock Channel
 LockSurfaces | Lock Surfaces to Selection
 MacroPanel | Macros…
 Manual | Manual
