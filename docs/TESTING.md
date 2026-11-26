@@ -74,6 +74,26 @@ sh scripts/check-public.sh                 # repository hygiene (no local paths,
   documentation checks always run. To see what a branch would run:
   `git diff --name-only origin/main... | python3 scripts/ci/affected.py`.
 - The pull request caches are saved by `main` only; a pull request restores them.
+- **Compiled crates are cached with sccache.** The clippy job, the test legs (debug and release), the plugin
+  sandbox job and the coverage shards turn it on through the `sccache: "true"` input of
+  `.github/actions/setup-rust`. The action installs sccache (`mozilla-actions/sccache-action`, pinned by commit),
+  sets `RUSTC_WRAPPER=sccache` and `SCCACHE_GHA_ENABLED=true` for the rest of the job, and refuses to run when
+  `CARGO_INCREMENTAL` is not `0` (sccache cannot cache incremental builds). The store is the GitHub Actions cache
+  of the job: no secret, and a pull request reads what `main` and its own earlier runs stored. A crate is
+  recompiled only when its source, its flags or one of its dependencies changed, so the workspace's own crates
+  are cached too, not only the dependencies. With sccache on, the cache step keeps the registry, the git
+  checkouts and the installed binaries but no longer stores the `target` folder (`cache-targets: false`), so
+  nothing is stored twice. Linking, build scripts and the test programs' runs are not cached, only the compiles.
+- **Reading the numbers.** Every such job ends with a step `sccache statistics` (it runs even when the job
+  fails). `Cache hits` against `Cache misses` is the hit rate; a first run of a key, or a change to a widely
+  used crate, shows mostly misses and fills the store, the next run should show most compiles as hits.
+  `Non-cacheable calls` (linking, build scripts and the like) and `Cache write errors` are expected to be
+  small; zero requests means the wrapper was not picked up.
+- **Turning it off for a job.** Remove `sccache: "true"` from that job's `setup-rust` step (the cache step then
+  stores `target` again) and drop its statistics step. The default is off.
+- **Release builds stay without it.** `build.yml`, `release.yml` and `nightly.yml` (and the hygiene, deps, fuzz and
+  performance jobs) never turn it on: the binaries that are published are compiled without a cache shared with
+  other runs, so no stored object can reach a release.
 
 Optional coverage report (needs `cargo install cargo-llvm-cov`):
 
