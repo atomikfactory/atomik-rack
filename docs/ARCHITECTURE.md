@@ -3963,8 +3963,9 @@ before (the golden hashes and `crates/devices/src/channel/tests.rs` prove it).
 [crates/model/src/console_snapshot.rs](../crates/model/src/console_snapshot.rs), the snapshot bar of
 [crates/ui/src/console_snapshots.rs](../crates/ui/src/console_snapshots.rs),
 [crates/app/src/app_core_snapshots.rs](../crates/app/src/app_core_snapshots.rs). A snapshot is
-console state, like a VCA group: no device, no cable, no audio, so the routing, the plan and the
-bounce of a project that has none are untouched.
+console state, like a VCA group: it plays no audio and owns no device or cable (it keeps the state of the effects of
+the insert chains to bring them back), so the routing, the plan and the bounce of a project that has no snapshot,
+or no snapshot lane, are untouched.
 
 - **Scope.** `MixerState` holds, per captured device, the params that are not at their default: for
   a console strip (channel, bus, master) every descriptor param but `internal.*` (read generically,
@@ -3975,9 +3976,10 @@ bounce of a project that has none are untouched.
   a snapshot is its default, as in a device's params. It also holds the **wiring**
   ([crates/model/src/console_snapshot_wiring.rs](../crates/model/src/console_snapshot_wiring.rs),
   `MixerState::wiring`): for each strip the output (`Master`, a bus or an Audio I/O pair; a strip cabled by hand
-  elsewhere holds none) and the effects of its insert chain in order. It does **not** hold the song (clips,
-  automation, tempo, markers), the other cables or the rack structure (devices added or removed, the order and
-  names of the strips). A snapshot also has a `note` and a `color` for its chip (`SetSnapshotNote`,
+  elsewhere holds none) and the effects of its insert chain in order, each with its state (the whole `RackDevice`:
+  type, name, sparse params, a container's inside, a plugin's layout and saved state; `SnapshotWiring::effects`).
+  It does **not** hold the song (clips, automation, tempo, markers), the other cables or the rest of the rack
+  structure (other devices, the order and names of the strips). A snapshot also has a `note` and a `color` for its chip (`SetSnapshotNote`,
   `SetSnapshotColor`), and a console holds `MAX_SNAPSHOTS` (64).
 - **Recall** (`RackDoc::recall_changes`, pure) lists the params whose effective value differs and
   pushes ordinary `Edit::Param` steps, plus one `Edit::ConsoleVcas` when the groups differ, in one
@@ -3987,15 +3989,25 @@ bounce of a project that has none are untouched.
   levels, mutes and solos, sends, insert bypass, processing and group membership) restricts it by
   param key (`category`; a `Routing` scope covers the wiring); recalling what already is there is refused by
   the model (the UI and the core do nothing instead).
-- **Wiring recall.** `RackDoc::wiring_changes` (pure) lists the strips whose output differs and those whose
-  chain differs, and `console_snapshot_wiring::apply` re-cables them inside the recall's compound step: the old
-  chains come off their loops, each chain is cabled from the snapshot's members, then the outputs are routed
-  (`set_output`). Each piece runs under `Planner::attempt`, so one that does not fit is skipped and the rest
-  recalls: a member that is gone, on a return, feeding a channel, on the chain of a strip the snapshot does not
-  hold or cabled elsewhere; a bus that is gone; a route that would loop; an Audio I/O pair another cable has
-  taken. A snapshot with no wiring (`None`: an older file) leaves routing and chains alone. Cables change, so the
-  engine gets a routing rebuild, not param messages. A morph flips the wiring at the half way point, as it does a
-  switch.
+- **Wiring recall.** `RackDoc::wiring_changes` (pure) lists the strips whose output differs, those whose chain
+  differs, the effects to add and the effects to delete, and `console_snapshot_wiring::apply` does them inside the
+  recall's compound step: the old chains come off their loops, the effects no chain of the snapshot names are
+  deleted (`console_cmd::remove_device`, so their track, cables and console bookkeeping go as for a Delete Device),
+  the ones the rack lacks are inserted again under their own key from the state the snapshot kept (an
+  `Edit::Insert`, so the engine gets the device with its params and a plugin comes back as a stand-in that the
+  plugin manager loads off the interface thread, as for any added plugin), each chain is cabled from the
+  snapshot's members, a strip that gained an effect stacks its chain under it again, then the outputs are routed
+  (`set_output`). An effect in both the rack and the snapshot is the same instance (moved into place, and its
+  params recalled by the ordinary param path when the snapshot holds the effect params). Each piece runs under
+  `Planner::attempt`, so one that does not fit is skipped and the rest recalls: a member on a return, feeding a
+  channel, on the chain of a strip the snapshot does not hold or cabled elsewhere; a key another device (of another
+  type) took; a type that is not registered (a plugin that is not installed); an effect that cannot be deleted; a
+  bus that is gone; a route that would loop; an Audio I/O pair another cable has taken. A snapshot with no wiring
+  (`None`: an older file) leaves routing and chains alone, and one whose strips hold only the keys of their chain
+  (`effects: None`: a file of format 44 before the effect states) only moves cables between the devices the rack
+  has. Cables and devices change, so the engine gets a routing rebuild and inserts and removals, not only param
+  messages. A morph flips the wiring at the half way point, as it does a switch; a compare flip adds and deletes
+  effects like a recall.
 - **Structural drift.** A device or group that no longer exists is skipped
   (`RackDoc::snapshot_notes` lists them, shown in the bar and in `session_status`); a strip, effect
   or group the snapshot never knew is left alone. A VCA group is matched by id and is not brought
@@ -4024,17 +4036,37 @@ bounce of a project that has none are untouched.
   line alone). The loader checks the shape, ids, names and numbers but not the references, since a
   snapshot may name what was deleted. `"effects": true`, `"note"` and `"color"` are optional and ignorable
   additions under format 43, written only when set; `"wiring": {strip: {"output"?, "inserts": [...]}}`
-  (`output` is `master`, `bus:<key>` or `io:<pair>`) is one under format 44.
+  (`output` is `master`, `bus:<key>` or `io:<pair>`) is one under format 44. Each strip's wiring entry may also hold
+  `"effects": [device, ...]`, the inserts as project devices (the same object as in `"devices"`, one for each
+  insert and in order, every layout row of a plugin kept); it is one more key of that entry, which a reader of
+  format 44 skips as it skips any key there, so no format version or `"ignorable"` row is involved. Entries that
+  cannot be read (no match with the keys, an unreadable device) are dropped on load, and the strip then recalls as
+  one of an older file; the plugin types they name get stand-ins like those of the rack, so a project opened
+  without the plugin keeps the state on the next save.
 - **Snapshot lane** ([crates/model/src/console_snapshot_lane.rs](../crates/model/src/console_snapshot_lane.rs)):
   an automation lane of the master with the key `snapshot` (`SNAPSHOT_LANE_KEY`; `lane_param` gives the master
-  its descriptor, a whole number 1 to 64), made by `AddAutomationLane`, so it is drawn in the arrangement and
+  its descriptor, a whole number 1 to `MAX_LANE_SNAPSHOT_ID`: ids are not reused while another is higher, so they go
+  past the 64 of `MAX_SNAPSHOTS`), made by `AddAutomationLane`, so it is drawn in the arrangement and
   moves, copies and splits with its clips like any lane. Its stepped points name snapshots by id;
   `RackDoc::snapshot_lane_events` flattens them to `(tick, id)`, one per change of snapshot, and
   `AppCore::snapshot_marker_frame` recalls the one the playhead crossed (the later of a marker and a point wins).
   A build without the lane refuses a file that has one. The engine never sees the lane (the master has no such
-  param) and a bounce does not recall. The arrangement
-  draws it like a pattern lane, as blocks named after the snapshots (`ArrangementView::set_snapshot_names`) with
-  a picker of the snapshots; Add or Remove Snapshot Lane is in the snapshot chip menu.
+  param). The arrangement draws it like a pattern lane, as blocks named after the snapshots and in their colour
+  (`ArrangementView::set_snapshot_names`) with a picker of the snapshots; Add or Remove Snapshot Lane is in the
+  snapshot chip menu.
+- **Snapshot lane in a bounce** ([crates/render/src/recall.rs](../crates/render/src/recall.rs)). `render_core`
+  plans the recalls of the lane before the render starts (`recall_frames`: the song frame of each point, the laps
+  of a looped bounce counted; `plan`): each is the same `RecallSnapshot` with every category, applied to a working
+  copy of the document, and the `SyncOp`s it reports become the engine's hot edits in the order the app handles
+  them: devices inserted and params set, then the routing (a `Topology` built from the expanded rack under the
+  engine's ids, compiled with the latencies the engine publishes at that point), then the devices removed
+  (`TimedRecall`). The loops of `plugin_pass` schedule them with the transport edits in frame order and hand the
+  recalled `Topology` to the latency follow-up, so a later latency change recompiles the routing the recall made.
+  The feeds the app drives from the console (`internal.solo_silence` and the VCA feeds) follow the recall too. A
+  recall that adds or removes a plugin or a container, or sets a container's param, is left out with a warning;
+  markers are not followed; a render that taps the rack or sets its own length (freeze, stems) keeps the mix as
+  it is. The recalls are a function of the document, so the bounce stays the same for any host block, worker count
+  and sandbox setting, and a document without the lane plans none (its bounce is unchanged, bit for bit).
 - **Console view and app.** The bar sits under the toolbar and moves the strips down by
   `SNAPSHOT_BAR_H`; chips that do not fit scroll (`console_snapshots::layout` takes the first visible
   chip; the wheel and two arrows move it, `reveal` brings the current snapshot's chip into view when it

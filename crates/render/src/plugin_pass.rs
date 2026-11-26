@@ -30,8 +30,8 @@ use crate::Warning;
 use crate::plugins::PluginHost;
 use atomik_core::BATCH;
 use atomik_engine::{
-    Engine, EngineHandle, OfflineError, OfflineJob, SongSnapshot, TimedEdit, Topology,
-    TransportCommand,
+    DeviceInstanceId, Engine, EngineError, EngineHandle, HotEdit, OfflineError, OfflineJob,
+    SongSnapshot, TimedEdit, Topology, TransportCommand,
 };
 use atomik_plugin_host::ManagerEvent;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -103,6 +103,62 @@ impl RenderControl<'_> {
 /// Batches between two progress reports (about a quarter of a second of audio at 48 kHz).
 pub const PROGRESS_BATCHES: usize = 192;
 
+/// A snapshot recall of the bounce (see [`crate::recall`]): the engine edits of one recall of the
+/// snapshot lane, scheduled together at one frame. The devices it adds and the param values come
+/// first, then the routing, then the devices it removes, the order the engine accepts them in.
+#[derive(Debug)]
+pub struct TimedRecall {
+    /// Applied at the first batch boundary at or after this timeline frame.
+    pub frame: u64,
+    /// The devices inserted and the params set, in order.
+    pub edits: Vec<HotEdit>,
+    /// The routing after the recall, when the cables or the devices changed: compiled with the
+    /// latencies the engine publishes when the step is scheduled, and the model the latency
+    /// follow-up recompiles from afterwards.
+    pub routing: Option<Topology>,
+    /// The devices removed, after the routing.
+    pub removals: Vec<DeviceInstanceId>,
+}
+
+/// What a song bounce schedules while it renders: the transport commands (loop release, stop)
+/// and the snapshot recalls, each in its own order.
+#[derive(Debug, Default)]
+pub struct Script {
+    /// Transport commands and other hot edits at frames.
+    pub edits: Vec<TimedEdit>,
+    /// Snapshot recalls.
+    pub recalls: Vec<TimedRecall>,
+}
+
+/// Schedules `recall` and returns the routing model it made current (see [`TimedRecall::routing`]).
+fn schedule_recall(
+    handle: &mut EngineHandle,
+    recall: TimedRecall,
+) -> Result<Option<Topology>, OfflineError> {
+    let frame = recall.frame;
+    let rejected = |source: EngineError| OfflineError::Edit { frame, source };
+    for edit in recall.edits {
+        handle.schedule(frame, edit).map_err(rejected)?;
+    }
+    let mut current = None;
+    if let Some(mut topology) = recall.routing {
+        handle.fill_latencies(&mut topology);
+        let plan = topology
+            .compile()
+            .map_err(|_| rejected(EngineError::TypeMismatch))?;
+        handle
+            .schedule(frame, HotEdit::Routing(plan))
+            .map_err(rejected)?;
+        current = Some(topology);
+    }
+    for id in recall.removals {
+        handle
+            .schedule(frame, HotEdit::Remove(id))
+            .map_err(rejected)?;
+    }
+    Ok(current)
+}
+
 /// What the loop needs besides the engine: the plugin host to poll and the routing model to
 /// recompile.
 pub struct PluginPass<'a> {
@@ -128,9 +184,13 @@ impl<'a> PluginPass<'a> {
     }
 
     /// One main-thread step after a batch: polls the manager, and when the engine published a
-    /// new device latency recompiles the routing with it. Returns whether anything restarted or
-    /// moved (the pre-roll is quiet only while this is false).
-    fn after_batch(&mut self, handle: &mut EngineHandle) -> bool {
+    /// new device latency recompiles the routing with it (from `recalled`, the routing model a
+    /// snapshot recall scheduled during the batch, when there is one). Returns whether anything
+    /// restarted or moved (the pre-roll is quiet only while this is false).
+    fn after_batch(&mut self, handle: &mut EngineHandle, recalled: Option<Topology>) -> bool {
+        if let Some(topology) = recalled {
+            self.topology = topology;
+        }
         let events = self.host.poll();
         let mut moved = digest(events, &mut self.warnings);
         if follow_latency(
@@ -222,7 +282,7 @@ pub fn render_song_with_plugins(
     handle: &mut EngineHandle,
     job: &OfflineJob<'_>,
     song: SongSnapshot,
-    edits: Vec<TimedEdit>,
+    script: Script,
     pass: &mut PluginPass<'_>,
     control: &RenderControl<'_>,
 ) -> Result<Option<Vec<Vec<f32>>>, OfflineError> {
@@ -247,7 +307,7 @@ pub fn render_song_with_plugins(
         if let Some(device) = engine.fault() {
             return Err(OfflineError::DeviceFaulted(device));
         }
-        if pass.after_batch(handle) {
+        if pass.after_batch(handle, None) {
             quiet = 0;
         } else {
             quiet += 1;
@@ -258,9 +318,17 @@ pub fn render_song_with_plugins(
     }
 
     // 2. The song, one batch at a time.
-    song_in_batches(engine, handle, job, song, edits, control, |handle| {
-        pass.after_batch(handle);
-    })
+    song_in_batches(
+        engine,
+        handle,
+        job,
+        song,
+        script,
+        control,
+        |handle, recalled| {
+            pass.after_batch(handle, recalled);
+        },
+    )
 }
 
 /// Renders `job` like [`atomik_engine::render_offline_song`], for a project **without plugins**,
@@ -291,7 +359,7 @@ pub fn render_song_following_latency(
     handle: &mut EngineHandle,
     job: &OfflineJob<'_>,
     song: SongSnapshot,
-    edits: Vec<TimedEdit>,
+    script: Script,
     mut topology: Topology,
     warnings: &mut Vec<Warning>,
     control: &RenderControl<'_>,
@@ -302,9 +370,20 @@ pub fn render_song_following_latency(
         "render_song_following_latency: the engine must be fresh"
     );
     let mut epoch = handle.latency_epoch();
-    song_in_batches(engine, handle, job, song, edits, control, |handle| {
-        follow_latency(handle, &mut topology, &mut epoch, warnings);
-    })
+    song_in_batches(
+        engine,
+        handle,
+        job,
+        song,
+        script,
+        control,
+        |handle, recalled| {
+            if let Some(recalled) = recalled {
+                topology = recalled;
+            }
+            follow_latency(handle, &mut topology, &mut epoch, warnings);
+        },
+    )
 }
 
 /// The song loop of the two bounces above: queues the song and `Play`, then renders in
@@ -315,9 +394,9 @@ fn song_in_batches(
     handle: &mut EngineHandle,
     job: &OfflineJob<'_>,
     song: SongSnapshot,
-    mut edits: Vec<TimedEdit>,
+    script: Script,
     control: &RenderControl<'_>,
-    mut after_batch: impl FnMut(&mut EngineHandle),
+    mut after_batch: impl FnMut(&mut EngineHandle, Option<Topology>),
 ) -> Result<Option<Vec<Vec<f32>>>, OfflineError> {
     let channels = engine.output_channels();
     let inputs = engine.input_channels();
@@ -329,8 +408,14 @@ fn song_in_batches(
         .map_err(|_| OfflineError::QueueFull { queue: "transport" })?;
     let mut notes = job.notes.to_vec();
     notes.sort_by_key(|n| n.frame);
+    let Script {
+        mut edits,
+        mut recalls,
+    } = script;
     edits.sort_by_key(|e| e.frame);
+    recalls.sort_by_key(|r| r.frame);
     let mut edits = edits.into_iter().peekable();
+    let mut recalls = recalls.into_iter().peekable();
     let latency = engine.latency_frames() as usize;
     let total = job.frames + latency;
     let mut out = vec![vec![0.0f32; total]; channels];
@@ -350,11 +435,31 @@ fn song_in_batches(
         batches += 1;
         let n = BATCH.min(total - pos);
         let end = (pos + n) as u64;
-        while let Some(edit) = edits.next_if(|e| e.frame < end) {
-            let frame = edit.frame;
-            handle
-                .schedule(frame, edit.edit)
-                .map_err(|source| OfflineError::Edit { frame, source })?;
+        // The transport edits and the recalls due in this batch go to the engine in frame order:
+        // it applies control messages in queue order, so one queued late would hold back the ones
+        // after it.
+        let mut recalled = None;
+        loop {
+            let edit_at = edits.peek().map(|e| e.frame).filter(|f| *f < end);
+            let recall_at = recalls.peek().map(|r| r.frame).filter(|f| *f < end);
+            match (edit_at, recall_at) {
+                (None, None) => break,
+                (Some(a), b) if b.is_none_or(|b| a <= b) => {
+                    if let Some(edit) = edits.next() {
+                        let frame = edit.frame;
+                        handle
+                            .schedule(frame, edit.edit)
+                            .map_err(|source| OfflineError::Edit { frame, source })?;
+                    }
+                }
+                _ => {
+                    if let Some(recall) = recalls.next()
+                        && let Some(topology) = schedule_recall(handle, recall)?
+                    {
+                        recalled = Some(topology);
+                    }
+                }
+            }
         }
         while let Some(note) = notes.get(next_note).filter(|note| note.frame < end) {
             handle
@@ -375,7 +480,7 @@ fn song_in_batches(
         if let Some(device) = engine.fault() {
             return Err(OfflineError::DeviceFaulted(device));
         }
-        after_batch(handle);
+        after_batch(handle, recalled);
         pos += n;
     }
     if let Some(progress) = control.progress {

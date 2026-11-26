@@ -14,6 +14,7 @@
 //! - [`bundle`]: project folder bundles (layout rules and asset loading for bounces).
 //! - [`plugin_pass`]: the bounce loop for projects with plugins (pre-roll, restarts, latency).
 //! - [`project`]: `.atomik` projects: the song as engine input and the song bounce.
+//! - `recall`: the snapshot lane played in a bounce (the recalls of the lane, as hot edits).
 //! - [`samples`]: sampler sample maps from document zones (shared with the app).
 //! - [`warp`]: the buffers of warped audio clips (time-stretch and pitch-shift) for a bounce.
 //! - [`wav`]: interleaved WAV writing (32-bit float or 24-bit PCM) and reading.
@@ -51,6 +52,7 @@ pub mod players;
 pub mod plugin_pass;
 pub mod plugins;
 pub mod project;
+pub(crate) mod recall;
 pub mod samples;
 pub mod sound_analyst;
 pub mod stems;

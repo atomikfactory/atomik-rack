@@ -4312,7 +4312,7 @@ impl<S: EngineSink> AppCore<S> {
                 .console
                 .snapshots
                 .iter()
-                .map(|s| (s.id, s.name.as_str())),
+                .map(|s| (s.id, s.name.as_str(), s.color)),
         );
         self.piano_roll.set_playhead(self.position);
         self.tab_editor.set_playhead(self.position);
@@ -5034,6 +5034,10 @@ mod vca_lane_tests;
 #[cfg(test)]
 #[path = "app_core_snapshots_tests.rs"]
 mod snapshots_tests;
+
+#[cfg(test)]
+#[path = "app_core_snapshot_bounce_tests.rs"]
+mod snapshot_bounce_tests;
 
 #[cfg(test)]
 #[path = "app_core_samples_tests.rs"]

@@ -38,21 +38,26 @@ fn number(param: &ParamDescriptor, value: f32) -> usize {
 }
 
 impl ArrangementView {
-    /// Tells the view the names of the mixer snapshots, by id, for the snapshot lane to show (the
-    /// app owns them). A change repaints.
-    pub fn set_snapshot_names<'a>(&mut self, names: impl Iterator<Item = (u32, &'a str)>) {
+    /// Tells the view the mixer snapshots, by id with name and colour, for the snapshot lane to show
+    /// (the app owns them): the block of a point is drawn in the colour of its snapshot. A change
+    /// repaints.
+    pub fn set_snapshot_names<'a>(
+        &mut self,
+        names: impl Iterator<Item = (u32, &'a str, Option<[u8; 3]>)>,
+    ) {
         let mut same = true;
         let mut count = 0;
-        for (i, (id, name)) in names.enumerate() {
+        for (i, (id, name, color)) in names.enumerate() {
             count += 1;
             match self.snapshot_names.get_mut(i) {
-                Some((have_id, have)) if *have_id == id && have == name => {}
+                Some((have_id, have, have_color))
+                    if *have_id == id && have == name && *have_color == color => {}
                 Some(slot) => {
-                    *slot = (id, name.to_owned());
+                    *slot = (id, name.to_owned(), color);
                     same = false;
                 }
                 None => {
-                    self.snapshot_names.push((id, name.to_owned()));
+                    self.snapshot_names.push((id, name.to_owned(), color));
                     same = false;
                 }
             }
@@ -71,11 +76,27 @@ impl ArrangementView {
     fn block_label(&self, param: &ParamDescriptor, value: f32) -> String {
         let n = number(param, value);
         if is_snapshot(param)
-            && let Some((_, name)) = self.snapshot_names.iter().find(|(id, _)| *id as usize == n)
+            && let Some((_, name, _)) = self
+                .snapshot_names
+                .iter()
+                .find(|(id, _, _)| *id as usize == n)
         {
             return name.clone();
         }
         n.to_string()
+    }
+
+    /// The colour of the snapshot a point of the snapshot lane names, when it has one.
+    fn snapshot_tint(&self, param: &ParamDescriptor, value: f32) -> Option<Color> {
+        if !is_snapshot(param) {
+            return None;
+        }
+        let n = number(param, value);
+        let (_, _, color) = self
+            .snapshot_names
+            .iter()
+            .find(|(id, _, _)| *id as usize == n)?;
+        color.map(crate::console_vca::color_of)
     }
 
     /// True when lane `lane` of track `track` is a pattern lane.
@@ -122,6 +143,8 @@ impl ArrangementView {
                 if x1 < tl.x0 || x0 > tl.x1 || x1 - x0 < 1.0 {
                     continue;
                 }
+                // A snapshot that has a colour of its own draws its blocks in it.
+                let accent = self.snapshot_tint(param, p.value).unwrap_or(accent);
                 let block = RoundedRect::from_rect(Rect::new(x0 + 0.5, y0, x1 - 0.5, y1), 2.0);
                 c.fill_with(block, accent.with_alpha(0.3));
                 c.stroke_with(block, 1.0, accent.with_alpha(0.8));
@@ -187,7 +210,7 @@ impl ArrangementView {
         let mut items: Vec<(String, String)> = Vec::new();
         let mut commands: Vec<UiAction> = Vec::new();
         if snapshots {
-            for (id, name) in &self.snapshot_names {
+            for (id, name, _) in &self.snapshot_names {
                 items.push((id.to_string(), format!("Recall {name}")));
                 commands.push(super::song_cmd(set(*id as f32)));
             }
@@ -204,7 +227,7 @@ impl ArrangementView {
             if snapshots {
                 self.snapshot_names
                     .iter()
-                    .position(|(id, _)| *id as usize == n)
+                    .position(|(id, _, _)| *id as usize == n)
             } else {
                 Some(n - 1)
             }
@@ -245,7 +268,7 @@ impl ArrangementView {
         let param = self.param_of(track, lane);
         // A snapshot lane starts with the first snapshot, whatever the height of the press.
         let value = match self.snapshot_names.first() {
-            Some((id, _)) if is_snapshot(&param) => *id as f32,
+            Some((id, _, _)) if is_snapshot(&param) => *id as f32,
             _ => seq_edit::value_from_y(&param, press.y, top, bottom - top),
         };
         clip.content = ClipContent::Automation(vec![AutomationPoint {

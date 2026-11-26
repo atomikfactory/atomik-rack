@@ -306,10 +306,8 @@ fn what_is_gone_is_skipped_and_named_and_the_rest_recalls() {
     );
     let notes = d.doc().snapshot_notes(1);
     assert!(
-        notes
-            .iter()
-            .any(|n| n.contains("comp") && n.contains("insert")),
-        "{notes:?}"
+        notes.iter().all(|n| !n.contains("comp")),
+        "an effect whose state the snapshot kept is no loss: {notes:?}"
     );
     run(&mut d, &r, [recall(1)]);
     assert_eq!(
@@ -321,7 +319,11 @@ fn what_is_gone_is_skipped_and_named_and_the_rest_recalls() {
         d.doc().param_value(&key("channel-3"), "fader", &r).unwrap(),
         0.7
     );
-    assert!(chain(&d, &r, "channel").is_empty());
+    assert_eq!(
+        chain(&d, &r, "channel"),
+        ["comp"],
+        "the deleted effect is added back to the chain"
+    );
 }
 
 #[test]
@@ -584,8 +586,8 @@ fn the_snapshot_lane_is_a_lane_of_the_master_with_a_snapshot_number_range() {
     });
     let e = d.apply(fixed, &r).expect_err("no static value");
     assert!(e.to_string().contains("static"), "{e}");
-    // Points clamp to the snapshot numbers.
-    put_points(&mut d, &r, 0, &[(0, 99.0), (PPQ, -3.0)]);
+    // Points clamp to the snapshot numbers a lane can name (ids go past 64).
+    put_points(&mut d, &r, 0, &[(0, 20000.0), (PPQ, -3.0)]);
     let m = master(&d);
     let lane = d.doc().snapshot_lane().unwrap().1;
     let atomik_model::ClipContent::Automation(points) =
@@ -594,7 +596,7 @@ fn the_snapshot_lane_is_a_lane_of_the_master_with_a_snapshot_number_range() {
         panic!("automation")
     };
     let values: Vec<f32> = points.iter().map(|p| p.value).collect();
-    assert_eq!(values, vec![64.0, 1.0]);
+    assert_eq!(values, vec![9999.0, 1.0]);
 }
 
 #[test]

@@ -15,13 +15,16 @@
 //!
 //! It also holds the **wiring** ([`MixerState::wiring`], see [`crate::console_snapshot_wiring`]):
 //! where each strip plays (the master, a bus or an Audio I/O pair) and which effects sit on its
-//! insert chain, in order. A snapshot without it (made by an older build) leaves the routing and
-//! the chains alone on recall.
+//! insert chain, in order, each with its state (the whole device). A snapshot without the wiring
+//! (made by an older build) leaves the routing and the chains alone on recall; one with the keys
+//! of the chain but no states only moves the cables between the devices the rack has. A recall of
+//! a snapshot with states makes the chain of each strip match: an effect the rack lacks is added
+//! back from its kept state, one the snapshot does not name leaves the rack, and one in both is
+//! the same instance (all in the one undo step of the recall).
 //!
 //! **What it does not hold**: the arrangement (clips, automation, tempo, markers) and the rest of
-//! the structure of the rack (devices added or removed, other cables, the order and the names of
-//! the strips). A recall moves the cables between the devices the rack has; it never adds or
-//! removes one.
+//! the structure of the rack (other devices, other cables, the order and the names of the
+//! strips).
 //!
 //! A snapshot may name a **marker** (`SetSnapshotMarker`): the app recalls the snapshot when the
 //! playhead crosses a marker of that name while the song plays (the name is matched ignoring
@@ -61,6 +64,7 @@
 use crate::console::{Console, ConsoleCommand, is_console_type, is_internal_param};
 use crate::console_cmd::{Planner, bad};
 use crate::console_insert::insert_chain;
+use crate::console_snapshot_lane::MAX_LANE_SNAPSHOT_ID;
 use crate::console_snapshot_wiring::{self as wiring, SnapshotWiring, WiringChanges};
 use crate::console_vca::{VcaGroup, canonical};
 use crate::history::Edit;
@@ -258,13 +262,22 @@ impl Console {
             .map(|s| s.id)
     }
 
-    /// The id the next snapshot gets (what `StoreSnapshot` will use).
+    /// The id the next snapshot gets (what `StoreSnapshot` will use): one past the highest id, so
+    /// an id is not reused while a lane may still name it; past [`MAX_LANE_SNAPSHOT_ID`], the
+    /// last id a snapshot lane can name, the lowest id that is free.
     pub fn next_snapshot_id(&self) -> u32 {
-        self.snapshots
+        let next = self
+            .snapshots
             .iter()
             .map(|s| s.id)
             .max()
-            .map_or(1, |m| m + 1)
+            .map_or(1, |m| m.saturating_add(1));
+        if next <= MAX_LANE_SNAPSHOT_ID {
+            return next;
+        }
+        (1..=MAX_LANE_SNAPSHOT_ID)
+            .find(|id| self.snapshot(*id).is_none())
+            .unwrap_or(next)
     }
 
     /// The name the UI proposes for a new snapshot: the next free letter, `A` to `Z`, then
@@ -661,8 +674,16 @@ impl RackDoc {
             return Vec::new();
         };
         let mut notes = Vec::new();
+        let kept = |key: &DeviceKey| {
+            snapshot
+                .state
+                .wiring
+                .iter()
+                .flatten()
+                .any(|(_, w)| w.effects.iter().flatten().any(|d| d.key == *key))
+        };
         for key in snapshot.state.devices.keys() {
-            if self.device(key).is_none() {
+            if self.device(key).is_none() && !kept(key) {
                 notes.push(format!("{key} no longer exists"));
             }
         }

@@ -4,25 +4,36 @@
 //! A snapshot made by this build holds, for the channels, the buses and the master, the
 //! **output** (the master, a bus or an Audio I/O pair; a strip cabled by hand to anything else
 //! holds none, and recall leaves it alone) and the **insert chain** (the effects in signal order;
-//! the chain is derived from cables, see [`crate::console_insert`]). A snapshot that holds no
+//! the chain is derived from cables, see [`crate::console_insert`]). Each effect of the chain is
+//! kept with its **state**: the whole device as it was (its type, name, params, a container's
+//! inside, a plugin's saved state), in [`SnapshotWiring::effects`]. A snapshot that holds no
 //! wiring at all ([`MixerState::wiring`] is `None`: one made by an older build, or the compare
-//! slot of such a snapshot) leaves the routing and the chains as they are.
+//! slot of such a snapshot) leaves the routing and the chains as they are; a strip whose wiring
+//! holds no effect states (`effects` is `None`: a snapshot of an older build) still moves the
+//! cables between the devices the rack has, and nothing more.
 //!
 //! **Recall** re-cables what differs, in the same undo step as the params: the old chains come
-//! off their loops first, then each strip's chain is cabled from the snapshot's members, then the
-//! outputs are routed. It never fails as a whole: a member that no longer exists, is not a free
-//! stereo effect (it is on a return, feeds a channel, sits on the chain of a strip the snapshot
-//! does not hold, or is cabled elsewhere), an output bus that is gone, a route that would make a
-//! loop and an Audio I/O pair that another cable has taken are skipped, and the strip keeps what
-//! it has there ([`RackDoc::snapshot_notes`] names them). The effects themselves are never
-//! added or removed: a snapshot only moves the cables between the devices the rack has.
+//! off their loops first, then the effects the snapshot does not name leave the rack (one that has
+//! automation in the song only leaves the chain and waits in the rack, uncabled), the ones it
+//! names that the rack lacks are added again from their kept state (a plugin comes back as
+//! one added by an undo does, loading off the interface thread), each strip's chain is cabled
+//! from the snapshot's members, then the outputs are routed. An effect the rack has and the
+//! snapshot names is the same instance: it is moved into place and its params are updated by
+//! the params of the recall, never made anew. It never fails as a whole: a member that is not a
+//! free stereo effect (it is on a return, feeds a channel, sits on the chain of a strip the
+//! snapshot does not hold, or is cabled elsewhere), one whose key another device has taken or
+//! whose type is not available (a plugin that is not installed), an effect that cannot be
+//! deleted, an output bus that is gone, a route that would make a loop and an Audio I/O pair
+//! that another cable has taken are skipped, and the strip keeps what it has there
+//! ([`RackDoc::snapshot_notes`] names what it can).
 
 use crate::console::{OutputDest, is_console_type, output_dest};
 use crate::console_bus::set_output;
 use crate::console_cmd::Planner;
 use crate::console_insert::{insert_chain, stereo_effect_type, unwire, wire_chain};
 use crate::console_snapshot::{MixerState, SnapshotScope, bits};
-use crate::{DeviceKey, RackDoc};
+use crate::history::Edit;
+use crate::{DeviceKey, ModelError, RackDevice, RackDoc, rules};
 use atomik_device_sdk::Registry;
 use std::collections::BTreeMap;
 
@@ -34,6 +45,26 @@ pub struct SnapshotWiring {
     pub output: Option<OutputDest>,
     /// The effects on the strip's insert chain, in signal order (empty for no chain).
     pub inserts: Vec<DeviceKey>,
+    /// The effects of `inserts` as they were, one device each in the same order: what recall
+    /// adds back when the rack no longer has one. `None` for a snapshot that holds only the keys
+    /// (an older build), which never adds or removes an effect.
+    pub effects: Option<Vec<RackDevice>>,
+}
+
+/// `device` as a snapshot keeps it: sparse params (one at its default is dropped, as in a snapshot's
+/// other params) and no place in the rack, so the same effect compares equal while only its place
+/// or fold changes.
+fn kept_effect(registry: &Registry, device: &RackDevice) -> RackDevice {
+    let mut kept = device.clone();
+    if let Some(desc) = registry.get(&kept.type_id).map(|f| f.descriptor) {
+        kept.params.retain(|k, v| {
+            desc.param_by_key(k)
+                .is_none_or(|p| p.clamp(*v).to_bits() != p.default.to_bits())
+        });
+    }
+    kept.column = 0;
+    kept.folded = false;
+    kept
 }
 
 /// What recalling the wiring of a state changes, computed without touching the document.
@@ -43,11 +74,18 @@ pub(crate) struct WiringChanges {
     outputs: Vec<(DeviceKey, OutputDest)>,
     /// The strips whose insert chain changes, with the new chain.
     chains: Vec<(DeviceKey, Vec<DeviceKey>)>,
+    /// The effects of the new chains that the rack lacks, as the snapshot kept them.
+    adds: Vec<RackDevice>,
+    /// The effects of the old chains that no chain of the snapshot names: they leave the rack.
+    removes: Vec<DeviceKey>,
 }
 
 impl WiringChanges {
     pub(crate) fn is_empty(&self) -> bool {
-        self.outputs.is_empty() && self.chains.is_empty()
+        self.outputs.is_empty()
+            && self.chains.is_empty()
+            && self.adds.is_empty()
+            && self.removes.is_empty()
     }
 }
 
@@ -102,7 +140,19 @@ impl RackDoc {
             } else {
                 Vec::new()
             };
-            out.insert(strip, SnapshotWiring { output, inserts });
+            let effects = inserts
+                .iter()
+                .filter_map(|k| self.device(k))
+                .map(|d| kept_effect(registry, d))
+                .collect();
+            out.insert(
+                strip,
+                SnapshotWiring {
+                    output,
+                    inserts,
+                    effects: Some(effects),
+                },
+            );
         }
         out
     }
@@ -129,6 +179,18 @@ impl RackDoc {
                 (&c.to.device == effect && IN.contains(&c.to.socket.as_str()))
                     || (&c.from.device == effect && OUT.contains(&c.from.socket.as_str()))
             })
+    }
+
+    /// True when the rack can take `device` back as an insert: no device has its key, and its
+    /// type is a stereo effect the registry has (a plugin only while it is registered).
+    fn can_recreate(&self, registry: &Registry, device: &RackDevice) -> bool {
+        self.device(&device.key).is_none()
+            && !is_console_type(&device.type_id)
+            && rules::check_new_key(self, &device.key.0).is_ok()
+            && registry
+                .get(&device.type_id)
+                .is_some_and(|f| stereo_effect_type(f.descriptor))
+            && device.plugin.is_some() == registry.is_plugin(&device.type_id)
     }
 
     /// What recalling the wiring of `state` with `scope` changes.
@@ -164,13 +226,20 @@ impl RackDoc {
             let now = insert_chain(self, registry, strip);
             let mut wanted: Vec<DeviceKey> = Vec::new();
             for m in &w.inserts {
+                if taken.contains(m) || wanted.contains(m) {
+                    continue;
+                }
                 let on_a_chain = strips
                     .iter()
                     .any(|k| insert_chain(self, registry, k).contains(m));
-                if !taken.contains(m)
-                    && !wanted.contains(m)
-                    && self.recall_member(registry, m, on_a_chain)
-                {
+                let kept = w.effects.iter().flatten().find(|d| d.key == *m);
+                // A device of another type under the same key is not the effect the snapshot kept.
+                let same_type =
+                    kept.is_none_or(|d| self.device(m).is_some_and(|x| x.type_id == d.type_id));
+                if same_type && self.recall_member(registry, m, on_a_chain) {
+                    wanted.push(m.clone());
+                } else if let Some(kept) = kept.filter(|d| self.can_recreate(registry, d)) {
+                    changes.adds.push(kept.clone());
                     wanted.push(m.clone());
                 }
             }
@@ -179,13 +248,53 @@ impl RackDoc {
                 changes.chains.push((strip.clone(), wanted));
             }
         }
+        // A strip whose snapshot kept the states of its effects says exactly which ones play:
+        // the others, that no chain of the snapshot names, leave the rack. One that has a track in
+        // the song (its automation) only leaves the chain: deleting it would delete the track, and
+        // a recall back could not bring it back. It waits in the rack, uncabled, and takes its place
+        // in the chain again when a snapshot names it.
+        for strip in strips
+            .iter()
+            .filter(|k| held(k) && wiring[*k].effects.is_some())
+        {
+            for e in insert_chain(self, registry, strip) {
+                if !taken.contains(&e)
+                    && !changes.removes.contains(&e)
+                    && self.song.track(&e).is_none()
+                {
+                    changes.removes.push(e);
+                }
+            }
+        }
         changes
     }
 }
 
-/// Pushes the cable edits of `changes`: the changed chains come off their loops, each is cabled
-/// anew (a chain that cannot be is put back as it was), then the outputs are routed; a route
-/// that does not fit is skipped.
+/// Inserts `device`, an effect a snapshot kept, into the rack right after `after` under its own
+/// key. Nothing is cabled.
+fn insert_kept(
+    p: &mut Planner<'_>,
+    after: &DeviceKey,
+    device: &RackDevice,
+) -> Result<(), ModelError> {
+    rules::check_new_key(p.doc(), &device.key.0)?;
+    let index = rules::index_of(p.doc(), after)? + 1;
+    let mut device = device.clone();
+    device.name = rules::unique_name(p.doc(), &device.name);
+    p.push(Edit::Insert {
+        index: rules::top_index(p.doc(), index),
+        device,
+        cables: Vec::new(),
+    });
+    Ok(())
+}
+
+/// Pushes the edits of `changes`: the changed chains come off their loops, the effects that
+/// leave are deleted (one that cannot be stays in the rack, uncabled), the effects that come
+/// back are inserted after their predecessor in the chain, each chain is cabled anew from the
+/// devices that exist (a chain that cannot be is put back as it was) and a strip that gained an
+/// effect stacks its chain under it again; then the outputs are routed. A route that does not
+/// fit is skipped.
 pub(crate) fn apply(p: &mut Planner<'_>, changes: WiringChanges) {
     let registry = p.registry;
     let olds: Vec<Vec<DeviceKey>> = changes
@@ -196,9 +305,37 @@ pub(crate) fn apply(p: &mut Planner<'_>, changes: WiringChanges) {
     for ((strip, _), old) in changes.chains.iter().zip(&olds) {
         unwire(p, strip, old);
     }
+    for key in &changes.removes {
+        let _ = p.attempt(|p| crate::console_cmd::remove_device(p, key));
+    }
     for ((strip, new), old) in changes.chains.iter().zip(&olds) {
-        if p.attempt(|p| wire_chain(p, strip, new)).is_err() {
-            let _ = p.attempt(|p| wire_chain(p, strip, old));
+        let mut grew = false;
+        for k in new {
+            let Some(kept) = changes.adds.iter().find(|a| a.key == *k) else {
+                continue;
+            };
+            let after = new
+                .iter()
+                .take_while(|m| *m != k)
+                .filter(|m| p.doc().device(m).is_some())
+                .last()
+                .unwrap_or(strip)
+                .clone();
+            grew |= p.attempt(|p| insert_kept(p, &after, kept)).is_ok();
+        }
+        let present = |p: &Planner<'_>, chain: &[DeviceKey]| -> Vec<DeviceKey> {
+            chain
+                .iter()
+                .filter(|k| p.doc().device(k).is_some())
+                .cloned()
+                .collect()
+        };
+        let (new, old) = (present(p, new), present(p, old));
+        if p.attempt(|p| wire_chain(p, strip, &new)).is_err() {
+            let _ = p.attempt(|p| wire_chain(p, strip, &old));
+        }
+        if grew {
+            crate::console_insert::stack(p, strip);
         }
     }
     for (strip, dest) in &changes.outputs {
@@ -244,7 +381,13 @@ impl RackDoc {
                     "{b} (the output of {strip}) is no longer in the console"
                 ));
             }
-            for m in w.inserts.iter().filter(|m| self.device(m).is_none()) {
+            // An effect whose state the snapshot kept is added back by a recall.
+            let kept = |m: &DeviceKey| w.effects.iter().flatten().any(|d| d.key == *m);
+            for m in w
+                .inserts
+                .iter()
+                .filter(|m| self.device(m).is_none() && !kept(m))
+            {
                 notes.push(format!("{m} (an insert of {strip}) no longer exists"));
             }
         }
