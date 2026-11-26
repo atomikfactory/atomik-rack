@@ -3963,8 +3963,9 @@ before (the golden hashes and `crates/devices/src/channel/tests.rs` prove it).
 [crates/model/src/console_snapshot.rs](../crates/model/src/console_snapshot.rs), the snapshot bar of
 [crates/ui/src/console_snapshots.rs](../crates/ui/src/console_snapshots.rs),
 [crates/app/src/app_core_snapshots.rs](../crates/app/src/app_core_snapshots.rs). A snapshot is
-console state, like a VCA group: no device, no cable, no audio, so the routing, the plan and the
-bounce of a project that has none are untouched.
+console state, like a VCA group: it plays no audio and owns no device or cable (it keeps the state of the effects of
+the insert chains to bring them back), so the routing, the plan and the bounce of a project that has no snapshot,
+or no snapshot lane, are untouched.
 
 - **Scope.** `MixerState` holds, per captured device, the params that are not at their default: for
   a console strip (channel, bus, master) every descriptor param but `internal.*` (read generically,
@@ -4050,9 +4051,22 @@ bounce of a project that has none are untouched.
   `RackDoc::snapshot_lane_events` flattens them to `(tick, id)`, one per change of snapshot, and
   `AppCore::snapshot_marker_frame` recalls the one the playhead crossed (the later of a marker and a point wins).
   A build without the lane refuses a file that has one. The engine never sees the lane (the master has no such
-  param) and a bounce does not recall. The arrangement
-  draws it like a pattern lane, as blocks named after the snapshots (`ArrangementView::set_snapshot_names`) with
-  a picker of the snapshots; Add or Remove Snapshot Lane is in the snapshot chip menu.
+  param). The arrangement draws it like a pattern lane, as blocks named after the snapshots and in their colour
+  (`ArrangementView::set_snapshot_names`) with a picker of the snapshots; Add or Remove Snapshot Lane is in the
+  snapshot chip menu.
+- **Snapshot lane in a bounce** ([crates/render/src/recall.rs](../crates/render/src/recall.rs)). `render_core`
+  plans the recalls of the lane before the render starts (`recall_frames`: the song frame of each point, the laps
+  of a looped bounce counted; `plan`): each is the same `RecallSnapshot` with every category, applied to a working
+  copy of the document, and the `SyncOp`s it reports become the engine's hot edits in the order the app handles
+  them: devices inserted and params set, then the routing (a `Topology` built from the expanded rack under the
+  engine's ids, compiled with the latencies the engine publishes at that point), then the devices removed
+  (`TimedRecall`). The loops of `plugin_pass` schedule them with the transport edits in frame order and hand the
+  recalled `Topology` to the latency follow-up, so a later latency change recompiles the routing the recall made.
+  The feeds the app drives from the console (`internal.solo_silence` and the VCA feeds) follow the recall too. A
+  recall that adds or removes a plugin or a container, or sets a container's param, is left out with a warning;
+  markers are not followed; a render that taps the rack or sets its own length (freeze, stems) keeps the mix as
+  it is. The recalls are a function of the document, so the bounce stays the same for any host block, worker count
+  and sandbox setting, and a document without the lane plans none (its bounce is unchanged, bit for bit).
 - **Console view and app.** The bar sits under the toolbar and moves the strips down by
   `SNAPSHOT_BAR_H`; chips that do not fit scroll (`console_snapshots::layout` takes the first visible
   chip; the wheel and two arrows move it, `reveal` brings the current snapshot's chip into view when it
