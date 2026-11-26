@@ -71,7 +71,8 @@ pub fn commands(
 }
 
 /// Adds a "Manual: <heading>" entry for every heading of the manual a person would look for:
-/// down to level three in the first document, level two in the others.
+/// down to level three in the first document, level two in the others. `manual` is the one in
+/// the language of the interface, and the entry reads in it (`Manuel : <titre>`).
 pub fn manual_entries(
     manual: &atomik_ui::Manual,
     entries: &mut Vec<PaletteEntry>,
@@ -90,15 +91,18 @@ pub fn manual_entries(
             continue;
         }
         let name = if doc == 0 {
-            format!("Manual: {title}")
+            atomik_ui::i18n::tf("Manual: {title}", &[("title", &title)])
         } else {
-            format!("Manual: {}: {title}", manual.docs()[doc].name)
+            atomik_ui::i18n::tf(
+                "Manual: {name}: {title}",
+                &[("name", &manual.docs()[doc].name), ("title", &title)],
+            )
         };
         entries.push(PaletteEntry {
             key,
             id: "help.manual".to_owned(),
             name,
-            path: "Help > Manual".to_owned(),
+            path: atomik_ui::i18n::t("Help > Manual").to_owned(),
             shortcut: None,
             enabled: true,
         });

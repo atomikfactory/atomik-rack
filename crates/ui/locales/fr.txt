@@ -2962,6 +2962,16 @@ Touch a control in the plugin to map it to MIDI => Touchez une commande du plugi
 {param}: move a hardware control => {param} : bougez une commande matérielle
 This control is not automatable => Cette commande n'est pas automatisable
 
+# The manual viewer
+Search the manual => Rechercher dans le manuel
+Nothing in the manual matches. => Rien dans le manuel ne correspond.
+Up and Down scroll, Alt+Left and Alt+Right go back and forward, Esc closes => Haut et Bas font défiler, Alt+Gauche et Alt+Droite reculent et avancent, Échap ferme
+{n} result => {n} résultat
+{n} results => {n} résultats
+Manual: {title} => Manuel : {title}
+Manual: {name}: {title} => Manuel : {name} : {title}
+Help > Manual => Aide > Manuel
+
 # The webcam controller
 Camera => Caméra
 Camera Preview => Aperçu de la caméra

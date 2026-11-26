@@ -3749,7 +3749,7 @@ impl<B: AudioBackend> Shell<B> {
         let menus = self.menu_model();
         let (mut entries, mut runners) =
             crate::palette::commands(&menus, &Registry::bundled(), self.router.keymap());
-        crate::palette::manual_entries(&crate::manual::manual(), &mut entries, &mut runners);
+        crate::palette::manual_entries(&crate::manual::current(), &mut entries, &mut runners);
         if let Some(path) = &self.palette_path {
             self.palette_recent = crate::palette::load(path);
         }

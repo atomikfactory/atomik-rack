@@ -2,7 +2,7 @@
 //! results while a query is typed), a search field and Back and Forward buttons.
 //!
 //! ```text
-//!  [<] [>]  [ Search the manual                                     3 results ]
+//!  [<] [>]  [ Search the manual                       3 results ]  [English] [Français]
 //!  Documentation  | The main window
 //!    The main window | - The transport bar. Play, Stop, Record ...
 //!    Help Mode    |
@@ -18,6 +18,12 @@
 //! moves there and is kept in the history (Back and Forward, or Alt+Left and Alt+Right); a link
 //! to anything else is passed to the app as [`ManualAction::Open`].
 //!
+//! The manual can come in several languages (the app gives one [`Manual`] per language, see
+//! [`ManualView::with_languages`]): two buttons at the right of the bar switch between them, the
+//! place is kept by the anchor of the heading, and the search runs in the language shown. The
+//! text of a document is drawn as it is ([`TextRun::verbatim`]): the language of the interface
+//! never changes a word of it.
+//!
 //! Colours come from the theme tokens; there is no italic face, so emphasis is drawn in a
 //! softer accent tone, and code spans sit on the LCD colour.
 
@@ -27,7 +33,8 @@ use crate::action::UiAction;
 use crate::canvas::{Align, Canvas, CanvasExt, TextRun};
 use crate::display_list::DisplayList;
 use crate::event::{Key, Modifiers, PointerButton, UiEvent};
-use crate::paint::{fit_label_weight, measure};
+use crate::i18n::Lang;
+use crate::paint::{fit_label_weight_raw, measure_raw};
 use crate::seq_paint::{self as sp, SeqTheme};
 use crate::text_field::{FieldColors, TextField};
 use crate::theme::{Theme, mix};
@@ -47,6 +54,7 @@ const RESULT_ROW: f64 = 54.0;
 const COLUMN_PAD: f64 = 22.0;
 const BAR_W: f64 = 8.0;
 const BUTTON_W: f64 = 30.0;
+const LANG_W: f64 = 74.0;
 const FONT: f32 = 11.0;
 const SMALL: f32 = 9.5;
 /// Most letters of a query.
@@ -76,6 +84,9 @@ struct Stop {
 #[derive(Debug)]
 pub struct ManualView {
     manual: Arc<Manual>,
+    /// The languages the manual comes in (empty when it has one), and the one shown.
+    languages: Vec<(Lang, Arc<Manual>)>,
+    lang: Lang,
     st: SeqTheme,
     bounds: Rect,
     scale: f64,
@@ -105,6 +116,8 @@ impl ManualView {
         let start = manual.start();
         let mut view = Self {
             manual,
+            languages: Vec::new(),
+            lang: Lang::English,
             st: SeqTheme::from_theme(&theme),
             bounds: Rect::new(0.0, 0.0, 1000.0, 700.0),
             scale: 1.0,
@@ -129,6 +142,68 @@ impl ManualView {
         };
         view.show(start);
         view
+    }
+
+    /// A panel over the manuals of several languages, open at the start of the one for `lang`
+    /// (the first when there is none for it). With two or more, the bar has a button for each.
+    pub fn with_languages(
+        theme: Theme,
+        languages: Vec<(Lang, Arc<Manual>)>,
+        lang: Lang,
+    ) -> Option<Self> {
+        let (shown, manual) = languages
+            .iter()
+            .find(|(l, _)| *l == lang)
+            .or_else(|| languages.first())
+            .cloned()?;
+        let mut view = Self::new(theme, manual);
+        view.lang = shown;
+        if languages.len() > 1 {
+            view.languages = languages;
+        }
+        Some(view)
+    }
+
+    /// The language shown.
+    pub fn language(&self) -> Lang {
+        self.lang
+    }
+
+    /// The languages the panel can switch between (none when the manual has one).
+    pub fn languages(&self) -> Vec<Lang> {
+        self.languages.iter().map(|(l, _)| *l).collect()
+    }
+
+    /// Shows the manual in `lang` at the place that matches the one being read (the same heading
+    /// anchor; the start when the other manual has none), with the history starting there. The
+    /// query stays and is run again in the new language. `false` when the panel has no manual for
+    /// `lang` or already shows it.
+    pub fn set_language(&mut self, lang: Lang) -> bool {
+        if lang == self.lang {
+            return false;
+        }
+        let Some(other) = self
+            .languages
+            .iter()
+            .find(|(l, _)| *l == lang)
+            .map(|(_, m)| m.clone())
+        else {
+            return false;
+        };
+        let here = self.current();
+        let doc = self.manual.pages().get(here.page).map_or(0, |p| p.doc);
+        let at = self
+            .manual
+            .heading_at(here)
+            .and_then(|(_, _, anchor)| other.anchor_location(doc, anchor))
+            .unwrap_or_else(|| other.start());
+        self.manual = other;
+        self.lang = lang;
+        self.history = vec![Stop { at, scroll: 0.0 }];
+        self.cursor = 0;
+        self.show(at);
+        self.requery();
+        true
     }
 
     /// Switches to `theme` and repaints.
@@ -338,11 +413,33 @@ impl ManualView {
         Rect::new(b.x1 + 6.0, b.y0, b.x1 + 6.0 + BUTTON_W, b.y1)
     }
 
+    /// The language buttons, left to right (none when the manual has one language).
+    pub fn language_rects(&self) -> Vec<(Lang, Rect)> {
+        let p = self.panel();
+        let n = self.languages.len();
+        let right = p.x1 - PAD;
+        self.languages
+            .iter()
+            .enumerate()
+            .map(|(i, (lang, _))| {
+                let x1 = right - (n - 1 - i) as f64 * (LANG_W + 4.0);
+                (
+                    *lang,
+                    Rect::new(x1 - LANG_W, p.y0 + 9.0, x1, p.y0 + BAR_H - 9.0),
+                )
+            })
+            .collect()
+    }
+
     /// The search field.
     pub fn field_rect(&self) -> Rect {
         let p = self.panel();
         let f = self.forward_rect();
-        Rect::new(f.x1 + 12.0, p.y0 + 7.0, p.x1 - PAD, p.y0 + BAR_H - 7.0)
+        let end = self
+            .language_rects()
+            .first()
+            .map_or(p.x1 - PAD, |(_, r)| r.x0 - 12.0);
+        Rect::new(f.x1 + 12.0, p.y0 + 7.0, end, p.y0 + BAR_H - 7.0)
     }
 
     /// The table of contents column.
@@ -604,6 +701,14 @@ impl ManualView {
         if !self.panel().contains(pos) {
             return vec![act(ManualAction::Close)];
         }
+        if let Some((lang, _)) = self
+            .language_rects()
+            .into_iter()
+            .find(|(_, r)| r.contains(pos))
+        {
+            self.set_language(lang);
+            return Vec::new();
+        }
         if self.field_rect().contains(pos) {
             self.dragging_field = true;
             self.field.press(pos, clicks, shift);
@@ -831,6 +936,21 @@ impl ManualView {
         if !self.can_forward() {
             sp::rect(c, fwd, st.background.with_alpha(0.55));
         }
+        for (lang, r) in self.language_rects() {
+            let on = lang == self.lang;
+            sp::button(c, st, r, "", on.then_some(t.highlight), !on && hover(r));
+            let ink = if on { t.on_accent } else { t.text };
+            c.text(
+                &TextRun::verbatim(
+                    lang.name(),
+                    Point::new(r.center().x, r.center().y + 3.5),
+                    SMALL,
+                    ink,
+                )
+                .align(Align::Center)
+                .weight(700),
+            );
+        }
         let field = self.field_rect();
         sp::lcd(c, st, field, Some(t.focus));
         if self.field.is_empty() && self.field.preedit().is_none() {
@@ -853,11 +973,7 @@ impl ManualView {
             .paint(c, field, FONT, field.height() - 6.0, colors, true);
         if self.searching() {
             let n = self.hits.len();
-            let count = if n == 1 {
-                "1 result".to_owned()
-            } else {
-                format!("{n} results")
-            };
+            let count = crate::i18n::tn(n as u64, "{n} result", "{n} results");
             sp::label(
                 c,
                 &count,
@@ -910,9 +1026,9 @@ impl ManualView {
                 mix(t.text, t.text_muted, 0.25)
             };
             let width = r.width() - 2.0 * 10.0 - indent;
-            let shown = fit_label_weight(c, &entry.title, width, FONT, weight);
+            let shown = fit_label_weight_raw(c, &entry.title, width, FONT, weight);
             c.text(
-                &TextRun::new(
+                &TextRun::verbatim(
                     shown,
                     Point::new(r.x0 + 10.0 + indent, r.y0 + 15.0),
                     FONT,
@@ -964,7 +1080,7 @@ impl ManualView {
                 weight,
                 tone,
             } => c.text(
-                &TextRun::new(text.as_str(), Point::new(*x, *y), *size, self.tone(*tone))
+                &TextRun::verbatim(text.as_str(), Point::new(*x, *y), *size, self.tone(*tone))
                     .weight(*weight),
             ),
             Draw::Fill { rect, tone } => {
@@ -1012,15 +1128,15 @@ impl ManualView {
                 sp::rect(c, r, t.selection.with_alpha(0.15));
             }
             let x = r.x0 + COLUMN_PAD;
-            let doc_w = measure(c, &hit.doc, SMALL, 400);
-            sp::label(
-                c,
-                &hit.doc,
-                r.x1 - COLUMN_PAD,
-                r.y0 + 20.0,
-                SMALL,
-                t.text_muted,
-                Align::End,
+            let doc_w = measure_raw(c, &hit.doc, SMALL, 400);
+            c.text(
+                &TextRun::verbatim(
+                    hit.doc.as_str(),
+                    Point::new(r.x1 - COLUMN_PAD, r.y0 + 20.0),
+                    SMALL,
+                    t.text_muted,
+                )
+                .align(Align::End),
             );
             marked(
                 c,
@@ -1073,7 +1189,7 @@ fn marked(
     colours: (Color, Color),
 ) {
     let (size, weight) = font;
-    let shown = fit_label_weight(c, text, width, size, weight);
+    let shown = fit_label_weight_raw(c, text, width, size, weight);
     let mut x = at.0;
     let mut run = String::new();
     let mut run_hit = false;
@@ -1086,8 +1202,8 @@ fn marked(
         } else {
             (colours.0, weight)
         };
-        c.text(&TextRun::new(run.as_str(), Point::new(*x, at.1), size, colour).weight(w));
-        *x += measure(c, run, size, w);
+        c.text(&TextRun::verbatim(run.as_str(), Point::new(*x, at.1), size, colour).weight(w));
+        *x += measure_raw(c, run, size, w);
         run.clear();
     };
     for (i, ch) in shown.chars().enumerate() {

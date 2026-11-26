@@ -8,7 +8,7 @@
 
 use super::markdown::{Block, Run};
 use crate::canvas::Canvas;
-use crate::paint::{fit_label_weight, measure};
+use crate::paint::{fit_label_weight_raw, measure_raw};
 use std::collections::BTreeMap;
 use vello::kurbo::Rect;
 
@@ -251,7 +251,7 @@ pub(super) fn layout_page(
                     tone: Tone::CodeBack,
                 });
                 for (k, line) in lines.iter().enumerate() {
-                    let shown = fit_label_weight(c, line, width - 16.0, CODE_SIZE, 400);
+                    let shown = fit_label_weight_raw(c, line, width - 16.0, CODE_SIZE, 400);
                     out.draws.push(Draw::Text {
                         x: 8.0,
                         y: y + 6.0
@@ -429,7 +429,7 @@ fn line_width(c: &mut dyn Canvas, runs: &[Run], weight: u16) -> f64 {
     runs.iter()
         .map(|r| {
             let w = if r.bold { 700 } else { weight };
-            measure(c, &r.text, BODY, w) + if r.code { 2.0 * SPAN_PAD } else { 0.0 }
+            measure_raw(c, &r.text, BODY, w) + if r.code { 2.0 * SPAN_PAD } else { 0.0 }
         })
         .sum()
 }
@@ -467,7 +467,7 @@ fn flow(
     if words.is_empty() {
         return 0.0;
     }
-    let space = measure(c, " ", size, 400);
+    let space = measure_raw(c, " ", size, 400);
     let weight_of = |run: usize| if runs[run].bold { 700 } else { base_weight };
     let mut lines = 0usize;
     let mut segs: Vec<Seg> = Vec::new();
@@ -539,16 +539,16 @@ fn flow(
                 segs.last().map_or("", |s| s.text.as_str()),
                 word.text
             );
-            let w = measure(c, &joined, size, weight);
+            let w = measure_raw(c, &joined, size, weight);
             (joined, last, w)
         } else {
-            let w = measure(c, &word.text, size, weight);
+            let w = measure_raw(c, &word.text, size, weight);
             (word.text.clone(), cursor + gap + pad, w)
         };
         let end = x + w + pad;
         if end > width && !segs.is_empty() {
             finish(&mut segs, &mut lines, out);
-            let w = measure(c, &word.text, size, weight);
+            let w = measure_raw(c, &word.text, size, weight);
             let (text, w) = clip_word(c, word.text, w, width - 2.0 * pad, size, weight);
             segs.push(Seg {
                 text,
@@ -591,8 +591,8 @@ fn clip_word(
     if w <= width {
         return (text, w);
     }
-    let cut = fit_label_weight(c, &text, width, size, weight);
-    let w = measure(c, &cut, size, weight);
+    let cut = fit_label_weight_raw(c, &text, width, size, weight);
+    let w = measure_raw(c, &cut, size, weight);
     (cut, w)
 }
 

@@ -88,6 +88,12 @@ pub fn measure<C: Canvas + ?Sized>(c: &mut C, text: &str, size: f32, weight: u16
     c.text_width(&TextRun::new(text, pt(0.0, 0.0), size, Color::BLACK).weight(weight))
 }
 
+/// [`measure`] for text that is shown as it is (a document, a name the user typed): it is never
+/// looked up in the language.
+pub fn measure_raw<C: Canvas + ?Sized>(c: &mut C, text: &str, size: f32, weight: u16) -> f64 {
+    c.text_width(&TextRun::verbatim(text, pt(0.0, 0.0), size, Color::BLACK).weight(weight))
+}
+
 /// Cuts `text` to fit `width` at `size`, measured on the canvas: the longest prefix that fits
 /// with a closing `.` (like [`fit_label`]); the text itself when it fits. At least one character
 /// is kept.

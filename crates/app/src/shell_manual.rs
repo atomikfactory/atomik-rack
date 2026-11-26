@@ -1,9 +1,12 @@
 //! The manual in the shell (Help > Manual): a large floating panel over the window with the
-//! user documents ([`crate::manual`]), a table of contents, search and Back and Forward.
+//! user documents ([`crate::manual`]), a table of contents, search, Back and Forward, and a
+//! switch between the languages the documents come in.
 //!
 //! The panel takes every event while it is open, like the command palette. It opens at the top
 //! of the manual, or at a section: the "More" link of the Help Mode panel and a "Manual:
-//! <heading>" row of the command palette open it there. A link that leaves the manual opens the
+//! <heading>" row of the command palette open it there. It opens in the language of the
+//! interface, and so does a link that sends it to a section; the switch at the top changes the
+//! language being read, for as long as the panel stays open. A link that leaves the manual opens the
 //! page of the repository it names (a fixed address, the way Help > Documentation opens the
 //! project page); a link to anything else says it is not part of the manual.
 
@@ -36,6 +39,7 @@ impl<B: AudioBackend> Shell<B> {
     /// manual does not have). An open manual goes there.
     pub(super) fn open_manual(&mut self, section: Option<&str>) {
         let view = self.manual_view_mut();
+        view.set_language(atomik_ui::i18n::language());
         if let Some(section) = section {
             view.goto_section(section);
         }
@@ -44,7 +48,11 @@ impl<B: AudioBackend> Shell<B> {
 
     /// Opens the manual at `at` (a heading found in it).
     pub(super) fn open_manual_at(&mut self, at: Location) {
-        self.manual_view_mut().goto(at);
+        let view = self.manual_view_mut();
+        // The place comes from the manual of the interface language (the palette lists its
+        // headings); a panel left in the other language goes back to it first.
+        view.set_language(atomik_ui::i18n::language());
+        view.goto(at);
         self.repaint = true;
     }
 
@@ -54,7 +62,12 @@ impl<B: AudioBackend> Shell<B> {
         let scale = self.scale();
         let bounds = self.plugin_modal_rect();
         self.manual.get_or_insert_with(|| {
-            let mut view = ManualView::new(theme, crate::manual::manual());
+            let mut view = ManualView::with_languages(
+                theme.clone(),
+                crate::manual::views(),
+                atomik_ui::i18n::language(),
+            )
+            .unwrap_or_else(|| ManualView::new(theme, crate::manual::current()));
             view.set_scale(scale);
             view.set_bounds(bounds);
             view

@@ -73,6 +73,14 @@ may break APIs and the patch and project formats.
   it is unprotected (the button is off and its tooltip says why), and a failure leaves the version listed with its
   file. A right-click on a row opens a menu with Restore, Compare, Rename, Protect and Delete. The project file and the
   project format do not change; the song is never a version and is never deleted.
+- **The built-in manual in French.** Help > Manual opens in French when the interface is in French, from
+  `docs/fr/README.md` (a full translation that keeps the English anchors, so every Help Mode link and command
+  palette entry opens the same section in both languages) and `docs/fr/KEYBOARD.md` (generated: the new option
+  `atomik --print-keymap --lang fr` writes it, with the French command titles, group titles and key names of the
+  interface). Two buttons, English and Français, at the top right of the manual switch the language being read; the
+  place is kept, and the search runs in the language shown. A heading may name its anchor with a trailing `{#id}`.
+  The text of a document is never looked up in the interface language, so the English manual reads the same in a
+  French interface.
 - **Help Mode explains the controls of the modal panels and of the editors.** About 330 controls now have a
   long help text with their shortcut and, where the manual has a section, a link: the export and film export panels,
   version history, backup, share and relink, the macro, modulation matrix and MIDI mapping panels, the analysis and

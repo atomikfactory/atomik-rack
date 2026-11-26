@@ -2,6 +2,7 @@
 
 use crate::settings::{AudioSettings, HostChoice, MidiInputSetting};
 use crate::windows::WindowKind;
+use atomik_ui::i18n::Lang;
 use atomik_ui::keymap::{Os, Profile, UserKeymap, sheet};
 use clap::Parser;
 use std::path::{Path, PathBuf};
@@ -65,6 +66,10 @@ pub struct Cli {
     /// With `--print-keymap`: only this profile (standard, legacy).
     #[arg(long, value_name = "PROFILE", value_parser = parse_profile, requires = "print_keymap")]
     pub profile: Option<Profile>,
+    /// With `--print-keymap`: the language of the sheet (en, fr); English when left out. The
+    /// output for `fr` is `docs/fr/KEYBOARD.md`.
+    #[arg(long, value_name = "LANG", value_parser = parse_lang, requires = "print_keymap")]
+    pub lang: Option<Lang>,
     /// User keymap file to use instead of `keymap.json` in the OS config directory (also saved
     /// to when the settings dialog changes the keys).
     #[arg(long, value_name = "FILE")]
@@ -311,6 +316,10 @@ fn parse_os(name: &str) -> Result<Os, String> {
     }
 }
 
+fn parse_lang(name: &str) -> Result<Lang, String> {
+    Lang::from_code(name).ok_or_else(|| format!("unknown language {name:?} (expected en, fr)"))
+}
+
 fn parse_profile(name: &str) -> Result<Profile, String> {
     Profile::ALL
         .into_iter()
@@ -329,7 +338,8 @@ pub fn cheat_sheet(cli: &Cli) -> Result<String, String> {
         .profile
         .map_or_else(|| Profile::ALL.to_vec(), |p| vec![p]);
     let oses = cli.os.map_or_else(|| Os::ALL.to_vec(), |o| vec![o]);
-    Ok(sheet::markdown(&profiles, &oses, user.as_ref()))
+    let lang = cli.lang.unwrap_or(Lang::English);
+    Ok(sheet::markdown(&profiles, &oses, user.as_ref(), lang))
 }
 
 fn read_keymap(path: &Path) -> Result<UserKeymap, String> {
@@ -580,28 +590,55 @@ mod tests {
         std::fs::remove_dir_all(&dir).ok();
     }
 
-    /// `docs/KEYBOARD.md` is the output of `atomik --print-keymap`.
-    /// Regenerate it with `ATOMIK_UPDATE_GOLDEN=1 cargo test -p atomik-app --lib cli::`.
+    /// `docs/KEYBOARD.md` and `docs/fr/KEYBOARD.md` are the output of `atomik --print-keymap`
+    /// and `atomik --print-keymap --lang fr`.
+    /// Regenerate them with `ATOMIK_UPDATE_GOLDEN=1 cargo test -p atomik-app --lib cli::`.
     #[test]
-    fn the_committed_keyboard_md_is_the_generated_cheat_sheet() {
-        let generated = cheat_sheet(&parse(&["--print-keymap"])).unwrap();
-        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/KEYBOARD.md");
-        if std::env::var_os("ATOMIK_UPDATE_GOLDEN").is_some_and(|v| v == "1") {
-            std::fs::write(&path, &generated).unwrap();
-            return;
+    fn the_committed_keyboard_sheets_are_the_generated_cheat_sheets() {
+        for (args, file) in [
+            (&["--print-keymap"][..], "docs/KEYBOARD.md"),
+            (
+                &["--print-keymap", "--lang", "fr"][..],
+                "docs/fr/KEYBOARD.md",
+            ),
+        ] {
+            let generated = cheat_sheet(&parse(args)).unwrap();
+            let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../..")
+                .join(file);
+            if std::env::var_os("ATOMIK_UPDATE_GOLDEN").is_some_and(|v| v == "1") {
+                std::fs::write(&path, &generated).unwrap();
+                continue;
+            }
+            let committed = std::fs::read_to_string(&path)
+                .unwrap_or_else(|_| {
+                    panic!(
+                        "missing {}; run with ATOMIK_UPDATE_GOLDEN=1",
+                        path.display()
+                    )
+                })
+                .replace("\r\n", "\n");
+            assert!(
+                committed == generated,
+                "{file} differs from `atomik {}`; regenerate with ATOMIK_UPDATE_GOLDEN=1",
+                args.join(" ")
+            );
         }
-        let committed = std::fs::read_to_string(&path)
-            .unwrap_or_else(|_| {
-                panic!(
-                    "missing {}; run with ATOMIK_UPDATE_GOLDEN=1",
-                    path.display()
-                )
-            })
-            .replace("\r\n", "\n");
-        assert!(
-            committed == generated,
-            "docs/KEYBOARD.md differs from `atomik --print-keymap`; regenerate with ATOMIK_UPDATE_GOLDEN=1"
-        );
+    }
+
+    #[test]
+    fn the_cheat_sheet_takes_a_language() {
+        assert!(parse(&["--print-keymap"]).lang.is_none());
+        let fr = parse(&["--print-keymap", "--lang", "FR", "--os", "win"]);
+        assert_eq!(fr.lang, Some(Lang::French));
+        let text = cheat_sheet(&fr).unwrap();
+        assert!(text.contains("Touches standard") && !text.contains("Standard keys"));
+        let en = cheat_sheet(&parse(&["--print-keymap", "--lang", "en", "--os", "win"])).unwrap();
+        assert!(en.contains("Standard keys") && !en.contains("Touches standard"));
+        let bad = Cli::try_parse_from(["atomik", "--print-keymap", "--lang", "de"]);
+        assert!(bad.is_err());
+        let alone = Cli::try_parse_from(["atomik", "--lang", "fr"]);
+        assert!(alone.is_err(), "--lang needs --print-keymap");
     }
 
     #[test]

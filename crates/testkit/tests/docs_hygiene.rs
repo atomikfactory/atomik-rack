@@ -137,7 +137,19 @@ fn anchors(text: &str) -> BTreeSet<String> {
     for (_, line) in prose_lines(text) {
         let hashes = line.chars().take_while(|c| *c == '#').count();
         if (1..=6).contains(&hashes) && line[hashes..].starts_with(' ') {
-            let base = slug(line[hashes..].trim_end_matches('#'));
+            let heading = line[hashes..].trim_end_matches('#').trim_end();
+            // A heading may name its anchor itself: `## Title {#id}` (the French documents keep
+            // the anchors of the English ones this way).
+            if let Some((_, id)) = heading.strip_suffix('}').and_then(|h| h.rsplit_once("{#"))
+                && !id.is_empty()
+                && id
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+            {
+                out.insert(id.to_owned());
+                continue;
+            }
+            let base = slug(heading);
             let n = seen.entry(base.clone()).or_insert(0);
             out.insert(if *n == 0 { base } else { format!("{base}-{n}") });
             *n += 1;
@@ -225,4 +237,28 @@ fn markdown_links_and_anchors_resolve() {
         "broken Markdown links:\n{}",
         broken.join("\n")
     );
+}
+
+/// The documents the built-in manual shows in French, next to their English source.
+const TRANSLATED: &[&str] = &["README.md"];
+
+#[test]
+fn a_french_document_keeps_every_anchor_of_its_english_one() {
+    // The Help Mode links and the command palette point at sections by anchor, so a French
+    // heading names the anchor of the English one (`## Titre {#english-anchor}`).
+    for name in TRANSLATED {
+        let english = fs::read_to_string(root().join("docs").join(name)).unwrap();
+        let french = fs::read_to_string(root().join("docs/fr").join(name)).unwrap();
+        let (en, fr) = (anchors(&english), anchors(&french));
+        let missing: Vec<&String> = en.difference(&fr).collect();
+        assert!(
+            missing.is_empty(),
+            "docs/fr/{name} lacks the anchors {missing:?} of docs/{name}"
+        );
+        let extra: Vec<&String> = fr.difference(&en).collect();
+        assert!(
+            extra.is_empty(),
+            "docs/fr/{name} has anchors {extra:?} that docs/{name} does not"
+        );
+    }
 }

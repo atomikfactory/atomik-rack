@@ -3,7 +3,9 @@
 //! It reads what the project's own documents use and nothing else:
 //!
 //! * headings (`#` to `######`) with a GitHub-style anchor each (lower case, letters, digits,
-//!   `-` and `_` kept, spaces turned into `-`, a repeated heading gets `-1`, `-2`...);
+//!   `-` and `_` kept, spaces turned into `-`, a repeated heading gets `-1`, `-2`...), or the
+//!   id a heading names itself with a trailing `{#id}` (a translation keeps the anchors of the
+//!   original this way; the id is not part of the heading text);
 //! * paragraphs, block quotes and rules;
 //! * bullet and numbered lists (nested by indent; a wrapped item line joins the item);
 //! * fenced code blocks (three backticks or tildes) and HTML comments (skipped);
@@ -170,11 +172,21 @@ pub fn parse(source: &str) -> Vec<Block> {
         }
         if let Some((level, text)) = heading(trimmed) {
             flush(&mut blocks, &mut para, &mut quote);
+            let (text, explicit) = explicit_id(text);
             let runs = inline(text);
-            let base = slug(&plain(&runs));
-            let n = seen.entry(base.clone()).or_insert(0);
-            let anchor = if *n == 0 { base } else { format!("{base}-{n}") };
-            *n += 1;
+            let anchor = match explicit {
+                Some(id) => {
+                    *seen.entry(id.to_owned()).or_insert(0) += 1;
+                    id.to_owned()
+                }
+                None => {
+                    let base = slug(&plain(&runs));
+                    let n = seen.entry(base.clone()).or_insert(0);
+                    let anchor = if *n == 0 { base } else { format!("{base}-{n}") };
+                    *n += 1;
+                    anchor
+                }
+            };
             blocks.push(Block::Heading {
                 level,
                 runs,
@@ -282,6 +294,24 @@ fn heading(trimmed: &str) -> Option<(u8, &str)> {
     }
     let text = rest.trim().trim_end_matches('#').trim_end();
     Some((hashes as u8, text))
+}
+
+/// A heading text split from its trailing `{#id}` (an id is letters, digits, `-` and `_`).
+fn explicit_id(text: &str) -> (&str, Option<&str>) {
+    let Some(body) = text.strip_suffix('}') else {
+        return (text, None);
+    };
+    match body.rsplit_once("{#") {
+        Some((head, id))
+            if !id.is_empty()
+                && id
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') =>
+        {
+            (head.trim_end(), Some(id))
+        }
+        _ => (text, None),
+    }
 }
 
 fn is_rule(trimmed: &str) -> bool {
@@ -699,6 +729,36 @@ mod tests {
             "poly-synth-atomikpoly-synth-instrument"
         );
         assert_eq!(slug("A_b - c"), "a_b---c");
+    }
+
+    #[test]
+    fn a_heading_may_name_its_own_anchor() {
+        let blocks = parse(
+            "# Main window {#the-main-window}
+
+## Aide {#help}
+
+## Aide
+
+## Code {#not an id}
+",
+        );
+        let heads: Vec<(String, String)> = blocks
+            .iter()
+            .filter_map(|b| match b {
+                Block::Heading { runs, anchor, .. } => Some((plain(runs), anchor.clone())),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            heads[0],
+            ("Main window".to_owned(), "the-main-window".to_owned())
+        );
+        assert_eq!(heads[1], ("Aide".to_owned(), "help".to_owned()));
+        // A heading without an id keeps the GitHub rule.
+        assert_eq!(heads[2].1, "aide");
+        // A brace that is not a well-formed id stays text.
+        assert_eq!(heads[3].0, "Code {#not an id}");
     }
 
     #[test]
