@@ -12,7 +12,7 @@ fn key_fields(key: Key) -> String {
     )
 }
 
-/// Writes `"key"`, `"key_changes"` and `"chords"` (each only when it holds something).
+/// Writes `"key"`, `"key_changes"`, `"chords"` and `"scales"` (each only when it holds something).
 pub(super) fn write_harmony(w: &mut String, song: &Song) {
     let h = &song.harmony;
     if let Some(key) = h.key {
@@ -42,6 +42,22 @@ pub(super) fn write_harmony(w: &mut String, song: &Song) {
                     c.length,
                     c.root,
                     json_str(c.quality.id())
+                )
+            }),
+        );
+        let _ = writeln!(w, ",");
+    }
+    if !h.scales.is_empty() {
+        let _ = write!(w, "    \"scales\": ");
+        list(
+            w,
+            "    ",
+            h.scales.iter().map(|s| {
+                format!(
+                    "{{\"id\": {}, \"name\": {}, \"mask\": {}}}",
+                    s.id,
+                    json_str(&s.name),
+                    s.mask
                 )
             }),
         );

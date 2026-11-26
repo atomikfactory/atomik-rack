@@ -3935,6 +3935,17 @@ Nothing allocates or locks, and a bounce sees exactly the same harmony at every 
 worker count. A song without key and chords gives devices no harmony at all. See
 [DECISIONS AB](DECISIONS.md#ab-the-song-harmony-reaches-devices-compiled-with-the-song-looked-up-per-batch).
 
+### Song scales
+
+The song also holds up to 16 **named scales**: a name and a set of the twelve pitch classes, saved in
+the song (the optional `"scales"` field, ignorable like the key and the chords) and edited in the
+Song Scales panel (Song menu). They are part of the harmony, so an edit is one undo step and reaches
+the engine with the next song swap. They do not change along the song, so every batch carries the
+whole table (`HarmonyNow::scale_mask(id)`, a fixed array: nothing allocates). The CV Quantizer picks
+one with `scale.source` named and `scale.id`; any number of quantizers can name the same scale and
+all follow its edits. A device saves the scale's id, so a rename keeps every link; a scale that was
+deleted leaves a quantizer on its own scale.
+
 ## Note Filter: `atomik.note-filter` (Utility, "Players")
 
 Transposes and filters the notes of `notes_in` onto `notes_out`: one stateless per-event map.
@@ -5836,7 +5847,8 @@ Sockets: `pitch_cv_in` (CV in), `pitch_cv_out`, `trig_out` (CV out).
 | `scale.custom` | off, on | off | toggle |
 | `scale.note.0` to `scale.note.11` | off, on: one per pitch class from C | C major | toggle |
 | `hysteresis` | 0 to 1 | 0 | semitones (shown as percent) |
-| `scale.source` | device, song | device | choice |
+| `scale.source` | device, song, named | device | choice |
+| `scale.id` | 0 to 255: the id of a song scale (the panel shows its name) | 0 | none |
 
 - The pitch CV is the one of the sequencers, `(key - 60) / 24`: 0 is middle C, +-1 two octaves
   either way, one semitone 1/24. An input beyond +-1 still quantizes (limited to +-8).
@@ -5854,6 +5866,10 @@ Sockets: `pitch_cv_in` (CV in), `pitch_cv_out`, `trig_out` (CV out).
 - `scale.source` song quantizes to the song key at the playhead (key changes included, see
   [How harmony reaches the devices](#how-harmony-reaches-the-devices)); with no song key every
   semitone passes.
+- `scale.source` named quantizes to the song scale with the id `scale.id`: a set of notes with a name
+  that belongs to the song (up to 16, see [Song scales](#song-scales)), shared by every quantizer
+  that names it, so editing the scale moves them all. A quantizer saves the id, not the name. With
+  no song, or after the scale was deleted, it keeps its own scale.
 
 ### Sample and Hold: `atomik.sample-hold` (Utility)
 

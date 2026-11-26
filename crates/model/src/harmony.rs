@@ -19,6 +19,13 @@
 //! [`DragHarmony`](crate::song::SongCommand::DragHarmony) for a drag) carrying the whole
 //! harmony, built with the pure helpers here. The project file stores the three parts as optional
 //! song fields written only when set (format 45, ignorable).
+//!
+//! The harmony also holds the song's **named scales** ([`SongScale`]): up to 16 sets of pitch classes
+//! with a name, that any CV Quantizer can pick by name instead of a scale of its own. Editing a scale
+//! is one more [`SetHarmony`](crate::song::SongCommand::SetHarmony), so every quantizer that uses it
+//! follows at once and one undo takes the edit back; a quantizer saves the scale's id, and a scale that
+//! is gone leaves it on its own scale. The field is `"scales"`, written only when set (format 45,
+//! ignorable: a reader that drops it opens the song with every quantizer on its own scale).
 
 use crate::chord_symbol::format_chord;
 use crate::song::MAX_TICK;
@@ -28,6 +35,10 @@ use crate::theory::{ChordKind, Scale, ScaleKind, pitch_name};
 pub const MAX_KEY_CHANGES: usize = 256;
 /// The most chords a song has.
 pub const MAX_CHORDS: usize = 4096;
+/// The most named scales a song has.
+pub const MAX_SCALES: usize = atomik_core::MAX_SONG_SCALES;
+/// The longest name of a scale, in characters.
+pub const MAX_SCALE_NAME: usize = 32;
 
 /// The names of the pitch classes with flats, C first.
 const FLAT_NAMES: [&str; 12] = [
@@ -114,6 +125,53 @@ pub struct KeyChange {
     pub key: Key,
 }
 
+/// A named scale of the song: a set of pitch classes that any CV Quantizer can use by name.
+///
+/// The `id` is what a quantizer saves (the name can change): the song gives the first id not in use
+/// to a new scale, so an id is not reused while its scale exists. The notes are a 12-bit mask,
+/// bit `pc` for pitch class `pc` (C = 0), with at least one note.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SongScale {
+    /// The id, `1..=255`.
+    pub id: u8,
+    /// The name shown in a quantizer's list: not blank, at most [`MAX_SCALE_NAME`] characters, unique
+    /// among the song's scales (case aside).
+    pub name: String,
+    /// The pitch classes, bit `pc` for pitch class `pc` (C = 0).
+    pub mask: u16,
+}
+
+impl SongScale {
+    /// A scale of the notes `mask` (limited to the twelve pitch classes).
+    pub fn new(id: u8, name: impl Into<String>, mask: u16) -> Self {
+        Self {
+            id,
+            name: name.into(),
+            mask: mask & 0x0fff,
+        }
+    }
+
+    /// The scale of `kind` on `root` (the notes of the piano roll's scale of that name).
+    pub fn from_kind(id: u8, name: impl Into<String>, root: u8, kind: ScaleKind) -> Self {
+        Self::new(id, name, Scale::new(root % 12, kind).pitch_mask())
+    }
+
+    /// Whether pitch class `pc` is one of the notes.
+    pub fn contains(&self, pc: u8) -> bool {
+        self.mask & (1 << (pc % 12)) != 0
+    }
+
+    /// How many notes the scale has.
+    pub fn len(&self) -> usize {
+        self.mask.count_ones() as usize
+    }
+
+    /// Whether the scale has no note (never true for a scale that can be stored).
+    pub fn is_empty(&self) -> bool {
+        self.mask == 0
+    }
+}
+
 /// A chord of the chord lane.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ChordEvent {
@@ -178,12 +236,66 @@ pub struct Harmony {
     pub changes: Vec<KeyChange>,
     /// Chords, sorted by start, never overlapping.
     pub chords: Vec<ChordEvent>,
+    /// The named scales, in the order the quantizers list them.
+    pub scales: Vec<SongScale>,
 }
 
 impl Harmony {
-    /// Whether the song has no key, no key change and no chord.
+    /// Whether the song has no key, no key change and no chord (named scales are not counted: they
+    /// are not a place in the song).
     pub fn is_empty(&self) -> bool {
         self.key.is_none() && self.changes.is_empty() && self.chords.is_empty()
+    }
+
+    /// The named scale with this id.
+    pub fn scale(&self, id: u8) -> Option<&SongScale> {
+        self.scales.iter().find(|s| s.id == id)
+    }
+
+    /// The named scale with this name (case aside).
+    pub fn scale_named(&self, name: &str) -> Option<&SongScale> {
+        let name = name.trim().to_lowercase();
+        self.scales.iter().find(|s| s.name.to_lowercase() == name)
+    }
+
+    /// The id a new scale takes: the one after the highest in use (the first free one when that is
+    /// the last id), so a scale that was deleted does not hand its id on at once. `None` when the
+    /// song has the most scales.
+    pub fn next_scale_id(&self) -> Option<u8> {
+        if self.scales.len() >= MAX_SCALES {
+            return None;
+        }
+        let max = self.scales.iter().map(|s| s.id).max().unwrap_or(0);
+        max.checked_add(1)
+            .or_else(|| (1..=u8::MAX).find(|id| self.scale(*id).is_none()))
+    }
+
+    /// A name for a new scale that no scale has: `base`, else `base 2`, `base 3`, ...
+    pub fn free_scale_name(&self, base: &str) -> String {
+        let base: String = base.trim().chars().take(MAX_SCALE_NAME - 4).collect();
+        let base = if base.is_empty() {
+            "Scale".to_owned()
+        } else {
+            base
+        };
+        if self.scale_named(&base).is_none() {
+            return base;
+        }
+        (2..)
+            .map(|n| format!("{base} {n}"))
+            .find(|name| self.scale_named(name).is_none())
+            .unwrap_or(base)
+    }
+
+    /// The scales as the engine takes them: id and notes.
+    pub fn scale_slots(&self) -> Vec<atomik_core::ScaleSlot> {
+        self.scales
+            .iter()
+            .map(|s| atomik_core::ScaleSlot {
+                id: s.id,
+                mask: s.mask,
+            })
+            .collect()
     }
 
     /// The key at `tick`: the last change at or before it, else the song key.
@@ -266,6 +378,32 @@ impl Harmony {
                 return Err(format!("key change {i} is not after the one before"));
             }
         }
+        if self.scales.len() > MAX_SCALES {
+            return Err(format!("at most {MAX_SCALES} scales"));
+        }
+        for (i, s) in self.scales.iter().enumerate() {
+            let name = s.name.trim();
+            if s.id == 0 || self.scales[..i].iter().any(|o| o.id == s.id) {
+                return Err(format!("scale {i} has no id of its own"));
+            }
+            if name.is_empty() || s.name != name || name.chars().any(char::is_control) {
+                return Err(format!("scale {i} needs a name"));
+            }
+            if name.chars().count() > MAX_SCALE_NAME {
+                return Err(format!(
+                    "a scale name has at most {MAX_SCALE_NAME} characters"
+                ));
+            }
+            if s.mask == 0 || s.mask > 0x0fff {
+                return Err(format!("scale {i} needs at least one of the twelve notes"));
+            }
+            if self.scales[..i]
+                .iter()
+                .any(|o| o.name.to_lowercase() == name.to_lowercase())
+            {
+                return Err(format!("two scales are named {name}"));
+            }
+        }
         if self.chords.len() > MAX_CHORDS {
             return Err(format!("at most {MAX_CHORDS} chords"));
         }
@@ -281,6 +419,27 @@ impl Harmony {
             }
         }
         Ok(())
+    }
+
+    /// The harmony with `scale` added, or replacing the scale with its id. Refused when the name
+    /// is blank, too long or another scale's, the scale has no note, or the song has the most
+    /// scales already.
+    pub fn with_scale(&self, scale: SongScale) -> Result<Harmony, String> {
+        let mut h = self.clone();
+        match h.scales.iter_mut().find(|s| s.id == scale.id) {
+            Some(slot) => *slot = scale,
+            None => h.scales.push(scale),
+        }
+        h.check()?;
+        Ok(h)
+    }
+
+    /// The harmony without the scale `id` (unchanged when there is none). A quantizer that still
+    /// names it uses its own scale.
+    pub fn without_scale(&self, id: u8) -> Harmony {
+        let mut h = self.clone();
+        h.scales.retain(|s| s.id != id);
+        h
     }
 
     /// The harmony with this song key.
@@ -538,6 +697,7 @@ mod tests {
     #[test]
     fn the_key_at_a_tick_follows_the_changes() {
         let h = Harmony {
+            scales: Vec::new(),
             key: Some(key(0, ScaleKind::Major)),
             changes: vec![
                 KeyChange {
@@ -692,6 +852,7 @@ mod tests {
     #[test]
     fn a_new_chord_is_the_tonic_of_the_key_at_its_tick() {
         let h = Harmony {
+            scales: Vec::new(),
             key: Some(key(0, ScaleKind::Major)),
             changes: vec![KeyChange {
                 tick: 4 * BAR,

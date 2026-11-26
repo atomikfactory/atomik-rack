@@ -396,6 +396,7 @@ impl TransportBar {
         let h = &doc.song.harmony;
         if self.keys.key != h.key || self.keys.changes != h.changes {
             self.keys = Harmony {
+                scales: Vec::new(),
                 key: h.key,
                 changes: h.changes.clone(),
                 chords: Vec::new(),

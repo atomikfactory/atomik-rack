@@ -11,6 +11,11 @@
 //! A change lands on the frame where a note at the same tick would be emitted, so a note and the
 //! chord starting under it agree. With the transport stopped the batch holds the harmony at the
 //! playhead. A song without key and chords gives [`HarmonyNow::NONE`].
+//!
+//! The song also holds up to [`MAX_SONG_SCALES`] **named scales** (an id and a set of pitch classes,
+//! [`ScaleTable`]) that a quantizer can use by id instead of a scale of its own. They hold for the
+//! whole song, not at a tick, so they ride in every batch's [`HarmonyNow`] as a small fixed table
+//! ([`HarmonyNow::scale_mask`]); an edit of a scale swaps the compiled song like any harmony edit.
 
 use std::sync::Arc;
 
@@ -94,6 +99,69 @@ pub struct HarmonyMark {
     pub chord: Option<SongChord>,
 }
 
+/// The most named scales a song holds (and a batch carries).
+pub const MAX_SONG_SCALES: usize = 16;
+
+/// A named scale of the song as devices see it: its id and its pitch classes as a 12-bit mask (bit
+/// `pc`, C = 0).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct ScaleSlot {
+    /// The id the song gives the scale (never reused for another scale while a device may name it).
+    pub id: u8,
+    /// The pitch classes of the scale.
+    pub mask: u16,
+}
+
+/// The named scales of the song, a fixed table (copyable: it rides in every batch's
+/// [`HarmonyNow`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ScaleTable {
+    slots: [ScaleSlot; MAX_SONG_SCALES],
+    len: u8,
+}
+
+impl Default for ScaleTable {
+    fn default() -> Self {
+        Self::EMPTY
+    }
+}
+
+impl ScaleTable {
+    /// No scales.
+    pub const EMPTY: ScaleTable = ScaleTable {
+        slots: [ScaleSlot { id: 0, mask: 0 }; MAX_SONG_SCALES],
+        len: 0,
+    };
+
+    /// A table of `slots` (the first [`MAX_SONG_SCALES`] of them; a later slot with the id of an
+    /// earlier one is dropped).
+    pub fn new(slots: &[ScaleSlot]) -> Self {
+        let mut t = Self::EMPTY;
+        for s in slots {
+            if usize::from(t.len) < MAX_SONG_SCALES && t.mask(s.id).is_none() {
+                t.slots[usize::from(t.len)] = *s;
+                t.len += 1;
+            }
+        }
+        t
+    }
+
+    /// The scales, in the order of the song.
+    pub fn slots(&self) -> &[ScaleSlot] {
+        &self.slots[..usize::from(self.len)]
+    }
+
+    /// The pitch classes of scale `id` (`None`: the song has no such scale).
+    pub fn mask(&self, id: u8) -> Option<u16> {
+        self.slots().iter().find(|s| s.id == id).map(|s| s.mask)
+    }
+
+    /// Whether the song has no named scale.
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+}
+
 /// The most marks one batch holds; changes beyond it in one batch are dropped (a batch is
 /// 64 frames, a chord this short is not music).
 pub const MAX_HARMONY_MARKS: usize = 8;
@@ -110,6 +178,7 @@ const EMPTY_MARK: HarmonyMark = HarmonyMark {
 pub struct HarmonyNow {
     marks: [HarmonyMark; MAX_HARMONY_MARKS],
     len: u8,
+    scales: ScaleTable,
 }
 
 impl Default for HarmonyNow {
@@ -123,6 +192,7 @@ impl HarmonyNow {
     pub const NONE: HarmonyNow = HarmonyNow {
         marks: [EMPTY_MARK; MAX_HARMONY_MARKS],
         len: 0,
+        scales: ScaleTable::EMPTY,
     };
 
     /// One mark for the whole batch.
@@ -166,6 +236,21 @@ impl HarmonyNow {
     /// Forgets every mark.
     pub fn clear(&mut self) {
         self.len = 0;
+    }
+
+    /// The named scales of the song (they hold for the whole batch and survive [`clear`](Self::clear)).
+    pub fn scales(&self) -> &ScaleTable {
+        &self.scales
+    }
+
+    /// Sets the named scales of the song.
+    pub fn set_scales(&mut self, scales: ScaleTable) {
+        self.scales = scales;
+    }
+
+    /// The pitch classes of the song scale `id` (`None`: the song has no such scale).
+    pub fn scale_mask(&self, id: u8) -> Option<u16> {
+        self.scales.mask(id)
     }
 
     /// The marks, offsets ascending; the first is at offset 0 when there is any.
@@ -225,6 +310,7 @@ pub struct SongHarmony {
     key: Option<Scale>,
     changes: Option<Arc<[KeyMark]>>,
     chords: Option<Arc<[ChordMark]>>,
+    scales: ScaleTable,
 }
 
 impl SongHarmony {
@@ -254,7 +340,19 @@ impl SongHarmony {
             key,
             changes: (!keep.is_empty()).then(|| keep.into()),
             chords: (!cs.is_empty()).then(|| cs.into()),
+            scales: ScaleTable::EMPTY,
         }
+    }
+
+    /// The harmony with these named scales (see [`ScaleTable`]).
+    pub fn with_scales(mut self, scales: &[ScaleSlot]) -> Self {
+        self.scales = ScaleTable::new(scales);
+        self
+    }
+
+    /// The named scales of the song.
+    pub fn scales(&self) -> ScaleTable {
+        self.scales
     }
 
     /// Whether the song has no key, no key change and no chord.
@@ -475,5 +573,54 @@ mod tests {
         };
         assert!(slash.contains(55));
         assert_eq!(slash.pitch_mask().count_ones(), 3);
+    }
+
+    #[test]
+    fn a_scale_table_looks_a_scale_up_by_id_and_keeps_the_first_of_a_repeated_id() {
+        let t = ScaleTable::new(&[
+            ScaleSlot { id: 3, mask: 0b101 },
+            ScaleSlot {
+                id: 7,
+                mask: 0b1000,
+            },
+            ScaleSlot { id: 3, mask: 0b1 },
+        ]);
+        assert_eq!(t.slots().len(), 2);
+        assert_eq!(t.mask(3), Some(0b101));
+        assert_eq!(t.mask(7), Some(0b1000));
+        assert_eq!(t.mask(4), None);
+        assert!(ScaleTable::EMPTY.is_empty() && !t.is_empty());
+    }
+
+    #[test]
+    fn a_scale_table_holds_at_most_the_limit() {
+        let many: Vec<ScaleSlot> = (0..40)
+            .map(|i| ScaleSlot {
+                id: i as u8 + 1,
+                mask: 1,
+            })
+            .collect();
+        let t = ScaleTable::new(&many);
+        assert_eq!(t.slots().len(), MAX_SONG_SCALES);
+        assert_eq!(t.mask(MAX_SONG_SCALES as u8), Some(1));
+        assert_eq!(t.mask(MAX_SONG_SCALES as u8 + 1), None);
+    }
+
+    #[test]
+    fn the_scales_of_a_batch_survive_a_clear_of_its_marks() {
+        let mut now = HarmonyNow::single(0, Some(c_major()), None);
+        now.set_scales(ScaleTable::new(&[ScaleSlot { id: 1, mask: 0b11 }]));
+        now.clear();
+        assert!(now.marks().is_empty());
+        assert_eq!(now.scale_mask(1), Some(0b11));
+        assert_eq!(HarmonyNow::NONE.scale_mask(1), None);
+    }
+
+    #[test]
+    fn a_song_harmony_carries_its_scales_without_being_a_harmony() {
+        let h = SongHarmony::default().with_scales(&[ScaleSlot { id: 2, mask: 0b101 }]);
+        assert!(h.is_empty(), "scales are not a key or a chord");
+        assert_eq!(h.scales().mask(2), Some(0b101));
+        assert_ne!(h, SongHarmony::default());
     }
 }

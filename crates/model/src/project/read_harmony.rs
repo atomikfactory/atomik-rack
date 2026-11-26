@@ -1,8 +1,10 @@
-//! Reading the song's optional harmony fields: `"key"`, `"key_changes"` and `"chords"` (see
+//! Reading the song's optional harmony fields: `"key"`, `"key_changes"`, `"chords"` and `"scales"` (see
 //! [`crate::harmony`]).
 
 use super::*;
-use crate::harmony::{ChordEvent, Harmony, Key, KeyChange, MAX_CHORDS, MAX_KEY_CHANGES};
+use crate::harmony::{
+    ChordEvent, Harmony, Key, KeyChange, MAX_CHORDS, MAX_KEY_CHANGES, MAX_SCALES, SongScale,
+};
 use crate::theory::{ChordKind, ScaleKind};
 
 /// Reads a pitch class `0..12`.
@@ -75,6 +77,21 @@ pub(super) fn load_harmony(
                 quality,
                 bass,
             });
+        }
+    }
+    if let Some(list) = obj.get("scales") {
+        let lp = path.field("scales");
+        let items = array(list, &lp)?;
+        if items.len() > MAX_SCALES {
+            return Err(lp.error(format!("at most {MAX_SCALES} scales")));
+        }
+        for (i, item) in items.iter().enumerate() {
+            let p = lp.index(i);
+            let o = schema::object(item, &p, Obj::SongScale, version)?;
+            let id = uint(&o["id"], &p.field("id"), 255)? as u8;
+            let name = string(&o["name"], &p.field("name"))?.to_owned();
+            let mask = uint(&o["mask"], &p.field("mask"), 0x0fff)? as u16;
+            harmony.scales.push(SongScale { id, name, mask });
         }
     }
     harmony.check().map_err(|m| path.error(m))?;

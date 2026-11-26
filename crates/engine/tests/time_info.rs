@@ -481,3 +481,47 @@ fn a_loop_wrap_brings_back_the_harmony_of_the_loop_start() {
         );
     }
 }
+
+#[test]
+fn devices_see_the_named_scales_of_the_song_in_every_batch_and_an_edit_replaces_them() {
+    use atomik_engine::{ScaleSlot, SongHarmony};
+    let (mut e, mut h, log) = rig();
+    // Scales only: no key and no chord, so there are no marks, but the table is there.
+    let mut input = song_input(Vec::new(), &[(0, 120.0)]);
+    input.harmony = SongHarmony::default().with_scales(&[
+        ScaleSlot { id: 4, mask: 0b101 },
+        ScaleSlot {
+            id: 9,
+            mask: 0b1000,
+        },
+    ]);
+    h.submit_song(atomik_engine::compile_song(&input).unwrap())
+        .unwrap();
+    batches(&mut e, 2);
+    h.transport(TransportCommand::Play).unwrap();
+    batches(&mut e, 200);
+    {
+        let log = log.lock().unwrap();
+        let from = log
+            .iter()
+            .position(|t| t.harmony.scale_mask(4).is_some())
+            .unwrap();
+        assert!(from <= 2, "the song is swapped in at once");
+        assert!(log.iter().any(|t| t.playing));
+        for (n, t) in log[from..].iter().enumerate() {
+            assert!(t.harmony.marks().is_empty(), "batch {n}");
+            assert_eq!(t.harmony.scale_mask(4), Some(0b101), "batch {n}");
+            assert_eq!(t.harmony.scale_mask(9), Some(0b1000), "batch {n}");
+            assert_eq!(t.harmony.scale_mask(5), None, "batch {n}");
+        }
+    }
+    // An edit of one scale is a new song: the next batches carry it.
+    input.harmony = SongHarmony::default().with_scales(&[ScaleSlot { id: 4, mask: 0b111 }]);
+    h.submit_song(atomik_engine::compile_song(&input).unwrap())
+        .unwrap();
+    batches(&mut e, 8);
+    let log = log.lock().unwrap();
+    let last = log.last().unwrap();
+    assert_eq!(last.harmony.scale_mask(4), Some(0b111));
+    assert_eq!(last.harmony.scale_mask(9), None, "a deleted scale is gone");
+}

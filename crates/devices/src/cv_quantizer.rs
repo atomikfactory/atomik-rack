@@ -26,6 +26,12 @@
 //! * **Hysteresis** (0..1 semitone) makes the quantizer stay on its key until the input has moved
 //!   that far past the middle between two scale keys, so a wobbling input does not chatter between
 //!   them. At 0 it is the plain nearest key.
+//! * **Source.** `scale.source` `device` uses the scale above, `song` the song key at the playhead
+//!   (key changes included; no key: every semitone) and `named` the song scale with the id
+//!   `scale.id` (a scale made in the song's scale list and chosen by name in the panel, see
+//!   `atomik_model::harmony::SongScale`). Every quantizer that names a scale follows it, so an edit of
+//!   the scale reaches them all at the next batch. A named scale that the song lacks (no song,
+//!   or a scale that was deleted) leaves the device on its own scale.
 //! * No latency. A non-finite input counts as 0; allocation-free.
 
 use crate::tool_support::{choice, count, cv_in, cv_out, finite, linear, pulse_samples, toggle};
@@ -44,6 +50,12 @@ const P_CUSTOM: u32 = 3;
 const P_NOTE0: u32 = 4;
 const P_HYSTERESIS: u32 = 16;
 const P_SCALE_SOURCE: u32 = 17;
+const P_SCALE_ID: u32 = 18;
+
+/// `scale.source` values: the device's own scale, the song key, a named scale of the song.
+const SOURCE_DEVICE: u8 = 0;
+const SOURCE_SONG: u8 = 1;
+const SOURCE_NAMED: u8 = 2;
 
 /// The custom scale a device starts with: C major.
 const C_MAJOR: u16 = 0b1010_1011_0101;
@@ -89,7 +101,7 @@ static ROOTS: [&str; 12] = [
     "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B",
 ];
 
-static PARAMS: [ParamDescriptor; 18] = [
+static PARAMS: [ParamDescriptor; 19] = [
     choice(P_SCALE, "scale", "Scale", &SCALES, 1.0),
     choice(P_ROOT, "root", "Root", &ROOTS, 0.0),
     count(P_TRANSPOSE, "transpose", "Transpose", -24.0, 24.0, 0.0),
@@ -119,9 +131,10 @@ static PARAMS: [ParamDescriptor; 18] = [
         P_SCALE_SOURCE,
         "scale.source",
         "Scale source",
-        &["device", "song"],
+        &["device", "song", "named"],
         0.0,
     ),
+    count(P_SCALE_ID, "scale.id", "Song scale", 0.0, 255.0, 0.0),
 ];
 
 static SOCKETS: [SocketDescriptor; 3] = [
@@ -195,8 +208,11 @@ pub struct CvQuantizer {
     key: Option<i32>,
     last_in: f32,
     last_key: i32,
-    /// The scale comes from the song key at the playhead (no key: every semitone).
-    song: bool,
+    /// Where the scale comes from (`SOURCE_DEVICE`, `SOURCE_SONG` or `SOURCE_NAMED`).
+    source: u8,
+    /// The id of the named song scale (`SOURCE_NAMED`; 0 or an id the song lacks: the device's own
+    /// scale).
+    scale_id: u8,
     /// The mask the cached `last_key` was found with.
     used_mask: u16,
 }
@@ -216,7 +232,8 @@ impl CvQuantizer {
             key: None,
             last_in: f32::NAN,
             last_key: MIDDLE_C,
-            song: false,
+            source: SOURCE_DEVICE,
+            scale_id: 0,
             used_mask: 0,
         };
         q.derive();
@@ -280,7 +297,11 @@ impl Device for CvQuantizer {
                 self.last_in = f32::NAN;
             }
             P_SCALE_SOURCE => {
-                self.song = v >= 0.5;
+                self.source = v.clamp(0.0, 2.0).round() as u8;
+                self.last_in = f32::NAN;
+            }
+            P_SCALE_ID => {
+                self.scale_id = v.clamp(0.0, 255.0).round() as u8;
                 self.last_in = f32::NAN;
             }
             _ => {}
@@ -292,11 +313,17 @@ impl Device for CvQuantizer {
         let mut pitch = [0.0f32; BATCH];
         let mut trig = [0.0f32; BATCH];
         let harmony = *ctx.harmony();
+        // A named song scale holds for the whole batch; the song leaves the device's own scale when it
+        // has no scale of that id (a deleted one).
+        let named = match self.source {
+            SOURCE_NAMED => harmony.scale_mask(self.scale_id).unwrap_or(self.mask),
+            _ => self.mask,
+        };
         for n in 0..BATCH {
-            let mask = if self.song {
+            let mask = if self.source == SOURCE_SONG {
                 harmony.key_at(n as u16).map_or(0, |k| k.pitch_mask())
             } else {
-                self.mask
+                named
             };
             if mask != self.used_mask {
                 self.used_mask = mask;
@@ -376,6 +403,7 @@ mod tests {
                 "scale.note.11",
                 "hysteresis",
                 "scale.source",
+                "scale.id",
             ],
             &["pitch_cv_in", "pitch_cv_out", "trig_out"],
         );
@@ -395,6 +423,78 @@ mod tests {
         // The device's own scale (C major) is back with the source on device.
         h.set_param("scale.source", 0.0);
         assert_eq!(quantize(&mut h, 61.0), 60.0);
+    }
+
+    /// The song scales a harness sees: `(id, notes)` pairs.
+    fn song_scales(h: &mut DeviceHarness, scales: &[(u8, u16)]) {
+        use atomik_core::{HarmonyNow, ScaleSlot, ScaleTable};
+        let slots: Vec<ScaleSlot> = scales
+            .iter()
+            .map(|(id, mask)| ScaleSlot {
+                id: *id,
+                mask: *mask,
+            })
+            .collect();
+        let mut now = HarmonyNow::NONE;
+        now.set_scales(ScaleTable::new(&slots));
+        h.time_mut().harmony = now;
+    }
+
+    #[test]
+    fn scale_source_named_quantizes_to_the_song_scale_with_that_id() {
+        let mut h = harness(Box::new(CvQuantizer::new()));
+        // C, E and G only (bits 0, 4, 7), and a whole-tone-like set on id 5.
+        song_scales(&mut h, &[(2, 0b1001_0001), (5, 0b0101_0101_0101)]);
+        h.set_param("scale.source", 2.0);
+        h.set_param("scale.id", 2.0);
+        assert_eq!(quantize(&mut h, 62.0), 60.0, "D falls to C: ties go down");
+        assert_eq!(quantize(&mut h, 63.0), 64.0);
+        assert_eq!(quantize(&mut h, 66.0), 67.0);
+        assert_eq!(quantize(&mut h, 69.0), 67.0);
+        h.set_param("scale.id", 5.0);
+        assert_eq!(quantize(&mut h, 61.0), 60.0);
+        assert_eq!(quantize(&mut h, 62.0), 62.0, "D is in the second scale");
+        // Back on the device's own scale (C major).
+        h.set_param("scale.source", 0.0);
+        assert_eq!(quantize(&mut h, 65.0), 65.0);
+    }
+
+    #[test]
+    fn a_named_scale_that_the_song_lacks_leaves_the_device_on_its_own_scale() {
+        let mut h = harness(Box::new(CvQuantizer::new())); // C major
+        h.set_param("scale.source", 2.0);
+        // No song scales at all (a rack without a song), and the id 0.
+        assert_eq!(quantize(&mut h, 61.0), 60.0);
+        assert_eq!(quantize(&mut h, 65.0), 65.0);
+        // An id the song does not have (a deleted scale).
+        song_scales(&mut h, &[(2, 0b1)]);
+        h.set_param("scale.id", 9.0);
+        assert_eq!(quantize(&mut h, 65.0), 65.0);
+        h.set_param("scale.id", 2.0);
+        assert_eq!(
+            quantize(&mut h, 65.0),
+            60.0,
+            "now the song scale holds only C"
+        );
+    }
+
+    #[test]
+    fn an_edit_of_the_song_scale_reaches_the_quantizer_at_the_next_batch() {
+        let mut h = harness(Box::new(CvQuantizer::new()));
+        h.set_param("scale.source", 2.0);
+        h.set_param("scale.id", 1.0);
+        song_scales(&mut h, &[(1, 0b1)]);
+        assert_eq!(quantize(&mut h, 62.0), 60.0);
+        song_scales(&mut h, &[(1, 0b101)]); // C and D now
+        assert_eq!(quantize(&mut h, 62.0), 62.0);
+    }
+
+    #[test]
+    fn the_source_choices_before_the_named_one_behave_as_they_did() {
+        let p = DESCRIPTOR.param_by_key("scale.source").unwrap();
+        assert_eq!(p.default, 0.0);
+        assert_eq!(p.max, 2.0);
+        assert_eq!(DESCRIPTOR.param_by_key("scale.id").unwrap().default, 0.0);
     }
 
     #[test]

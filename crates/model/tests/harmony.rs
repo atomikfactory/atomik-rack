@@ -7,7 +7,8 @@ mod common;
 use atomik_device_sdk::Registry;
 use atomik_model::theory::{ChordKind, ScaleKind};
 use atomik_model::{
-    ChordEvent, Document, Harmony, Key, KeyChange, SongCommand, SyncOp, load_project, save_project,
+    ChordEvent, Document, Harmony, Key, KeyChange, MAX_SCALES, SongCommand, SongScale, SyncOp,
+    load_project, save_project,
 };
 use common::song::*;
 use common::*;
@@ -35,6 +36,7 @@ fn full() -> Harmony {
     let mut slash = chord(2, 1, 0, ChordKind::Major);
     slash.bass = Some(7);
     Harmony {
+        scales: Vec::new(),
         key: Some(key(9, ScaleKind::NaturalMinor)),
         changes: vec![KeyChange {
             tick: 8 * BAR,
@@ -261,6 +263,169 @@ fn a_bad_harmony_in_a_file_is_refused_with_its_place() {
     ];
     for (field, value, place) in cases {
         let message = load_error(&with_song_field(field, value.clone()));
+        assert!(message.contains(place), "{value}: {message}");
+    }
+}
+
+fn pentatonic() -> SongScale {
+    SongScale::from_kind(1, "Pentatonic", 9, ScaleKind::MinorPentatonic)
+}
+
+fn with_scales() -> Harmony {
+    Harmony {
+        scales: vec![pentatonic(), SongScale::new(2, "Triad", 0b1001_0001)],
+        ..full()
+    }
+}
+
+#[test]
+fn a_song_scale_is_a_set_of_notes_with_a_name_and_an_id() {
+    let s = pentatonic();
+    // A minor pentatonic: A C D E G.
+    assert_eq!(s.mask, 0b10_1001_0101);
+    assert!(s.contains(9) && s.contains(0) && !s.contains(1));
+    assert_eq!(s.len(), 5);
+    assert_eq!(
+        SongScale::new(3, "x", 0xffff).mask,
+        0x0fff,
+        "twelve notes at most"
+    );
+}
+
+#[test]
+fn the_scales_are_part_of_the_harmony_with_one_undo_step() {
+    let reg = registry();
+    let mut d = doc(&reg);
+    set(&mut d, &reg, full());
+    let ops = set(&mut d, &reg, with_scales());
+    // Quantizers read the scales on the engine side: the song is swapped.
+    assert_eq!(ops, vec![SyncOp::ViewChanged, SyncOp::SongChanged]);
+    assert_eq!(d.doc().song.harmony.scales.len(), 2);
+    d.undo().unwrap();
+    assert!(d.doc().song.harmony.scales.is_empty());
+    d.redo().unwrap();
+    assert_eq!(d.doc().song.harmony, with_scales());
+}
+
+#[test]
+fn editing_a_scale_keeps_its_id_so_the_devices_that_name_it_follow() {
+    let h = with_scales();
+    let edited = h.with_scale(SongScale::new(1, "Pentatonic", 0b11)).unwrap();
+    assert_eq!(edited.scales.len(), 2);
+    assert_eq!(edited.scale(1).unwrap().mask, 0b11);
+    assert_eq!(edited.scale(2), h.scale(2));
+    // A rename keeps the id too.
+    let renamed = h.with_scale(SongScale::new(1, "Minor five", 0b11)).unwrap();
+    assert_eq!(renamed.scale_named("minor FIVE").unwrap().id, 1);
+}
+
+#[test]
+fn a_new_scale_takes_the_id_after_the_highest_and_a_name_nobody_has() {
+    let h = with_scales();
+    assert_eq!(h.next_scale_id(), Some(3));
+    assert_eq!(h.without_scale(2).next_scale_id(), Some(2));
+    assert_eq!(Harmony::default().next_scale_id(), Some(1));
+    assert_eq!(h.free_scale_name("Triad"), "Triad 2");
+    assert_eq!(h.free_scale_name("Other"), "Other");
+    assert_eq!(h.free_scale_name("  "), "Scale");
+    let mut full_song = Harmony::default();
+    for i in 0..MAX_SCALES {
+        let id = full_song.next_scale_id().unwrap();
+        full_song = full_song
+            .with_scale(SongScale::new(id, format!("S{i}"), 1))
+            .unwrap();
+    }
+    assert_eq!(full_song.next_scale_id(), None);
+    assert!(
+        full_song
+            .with_scale(SongScale::new(200, "One more", 1))
+            .is_err()
+    );
+}
+
+#[test]
+fn a_bad_scale_is_refused() {
+    let reg = registry();
+    let mut d = doc(&reg);
+    let bad = |s: SongScale, others: Vec<SongScale>| {
+        let mut h = Harmony::default();
+        h.scales = others;
+        h.scales.push(s);
+        h
+    };
+    let cases = [
+        bad(SongScale::new(1, "", 1), vec![]),
+        bad(SongScale::new(1, " padded", 1), vec![]),
+        bad(SongScale::new(1, "No notes", 0), vec![]),
+        bad(SongScale::new(0, "Id zero", 1), vec![]),
+        bad(SongScale::new(1, "a".repeat(33), 1), vec![]),
+        bad(SongScale::new(2, "pentatonic", 1), vec![pentatonic()]),
+        bad(SongScale::new(1, "Same id", 1), vec![pentatonic()]),
+    ];
+    for h in cases {
+        assert!(
+            d.apply(sc(SongCommand::SetHarmony(h.clone())), &reg)
+                .is_err(),
+            "{h:?}"
+        );
+    }
+    assert!(d.doc().song.harmony.scales.is_empty());
+}
+
+#[test]
+fn the_scales_round_trip_through_the_project_file_and_only_when_set() {
+    let reg = registry();
+    let mut d = doc(&reg);
+    set(&mut d, &reg, full());
+    assert!(
+        text(&d)["song"].get("scales").is_none(),
+        "written only when set"
+    );
+    set(&mut d, &reg, with_scales());
+    let saved = save_project(d.doc());
+    let back = load_project(&saved, &reg).unwrap();
+    assert_eq!(back.song.harmony, with_scales());
+    assert_eq!(save_project(&back), saved, "the file is canonical");
+    let v: Value = serde_json::from_str(&saved).unwrap();
+    assert_eq!(v["song"]["scales"][0]["name"], "Pentatonic");
+    assert_eq!(v["song"]["scales"][1]["mask"], 0b1001_0001);
+}
+
+#[test]
+fn the_scales_field_is_ignorable_so_an_older_reader_drops_it_and_the_format_stays() {
+    let reg = registry();
+    let mut d = doc(&reg);
+    set(&mut d, &reg, with_scales());
+    let v = text(&d);
+    assert_eq!(v["version"], 45, "no format bump");
+    assert_eq!(v["compat"], 44);
+    assert_eq!(v["ignorable"]["song.scales"], 45);
+}
+
+#[test]
+fn a_bad_scale_in_a_file_is_refused_with_its_place() {
+    let cases = [
+        (
+            serde_json::json!([{"id": 1, "name": "A", "mask": 5000}]),
+            "song.scales[0].mask",
+        ),
+        (
+            serde_json::json!([{"id": 300, "name": "A", "mask": 1}]),
+            "song.scales[0].id",
+        ),
+        (serde_json::json!([{"id": 1, "mask": 1}]), "song.scales[0]"),
+        (
+            serde_json::json!([{"id": 1, "name": "A", "mask": 1, "extra": 1}]),
+            "song.scales[0].extra",
+        ),
+        (
+            serde_json::json!([{"id": 1, "name": "A", "mask": 0}]),
+            "song",
+        ),
+        (serde_json::json!("C"), "song.scales"),
+    ];
+    for (value, place) in cases {
+        let message = load_error(&with_song_field("scales", value.clone()));
         assert!(message.contains(place), "{value}: {message}");
     }
 }

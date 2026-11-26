@@ -88,6 +88,7 @@ fn chord(bar: i64, bars: i64, root: u8, quality: ChordKind) -> ChordEvent {
 
 fn lane_harmony() -> Harmony {
     Harmony {
+        scales: Vec::new(),
         key: Some(am_key()),
         changes: vec![KeyChange {
             tick: 4 * BAR,
