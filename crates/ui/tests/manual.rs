@@ -722,3 +722,47 @@ fn a_search_matches_its_golden() {
     v.paint(&mut dl);
     check("manual_search_1x.json", &dl.to_json());
 }
+
+#[test]
+fn the_language_buttons_switch_the_manual_and_keep_the_place() {
+    use atomik_ui::Lang;
+    let fr = Arc::new(Manual::new(&[Source {
+        file: "README.md",
+        name: "Manuel",
+        text: "# Accueil {#home}\n\nBonjour.\n\n## Suite {#more}\n\nTexte.\n",
+    }]));
+    let english = Arc::new(Manual::new(&[Source {
+        file: "README.md",
+        name: "Manual",
+        text: "# Home\n\nHello.\n\n## More\n\nText.\n",
+    }]));
+    let mut v = ManualView::with_languages(
+        Theme::dark(),
+        vec![(Lang::English, english), (Lang::French, fr)],
+        Lang::English,
+    )
+    .unwrap();
+    v.set_bounds(BOUNDS);
+    assert_eq!(v.languages(), vec![Lang::English, Lang::French]);
+    assert!(v.goto_section("More"));
+    let buttons = v.language_rects();
+    assert_eq!(buttons.len(), 2);
+    assert!(!v.set_language(Lang::English), "already shown");
+    // A click on the French button shows the French manual at the same heading.
+    let click = buttons[1].1.center();
+    v.handle(&UiEvent::PointerDown {
+        pos: click,
+        button: atomik_ui::PointerButton::Primary,
+        modifiers: Modifiers::NONE,
+        clicks: 1,
+    });
+    assert_eq!(v.language(), Lang::French);
+    assert_eq!(v.title(), "Suite");
+    // The search runs in the language shown.
+    v.set_query("bonjour");
+    assert_eq!(v.hits().len(), 1);
+    v.set_query("hello");
+    assert!(v.hits().is_empty());
+    // A panel with one manual has no buttons.
+    assert!(view().language_rects().is_empty());
+}
