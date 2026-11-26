@@ -73,6 +73,23 @@ may break APIs and the patch and project formats.
   it is unprotected (the button is off and its tooltip says why), and a failure leaves the version listed with its
   file. A right-click on a row opens a menu with Restore, Compare, Rename, Protect and Delete. The project file and the
   project format do not change; the song is never a version and is never deleted.
+- **The eight-fader surface sends level meters and has Flip, function keys, an extender and V-pot modes.** The unit's
+  level meters follow each strip's peak (the top step marks a clip). Flip swaps what the faders and the V-pots drive.
+  The Pan, Send and Plug-in keys choose what the V-pots drive: the pan, one of the eight sends of the strip (a second
+  press takes the next send) or the parameters of the selected device, eight at a time, with the bank keys turning the
+  pages. F1 to F8 run the commands a surface's `function_keys` setting binds to them. A second unit set up with the
+  new "Extender" driver shows the eight strips after the main unit's and follows its bank, Flip and V-pot mode. The
+  console's meters are now also read while a surface shows them with the console hidden. Projects and renders do not
+  change.
+- **A HUI-compatible control surface driver.** Settings > Surfaces offers "Control surface (HUI-compatible)": faders
+  and touch, select, mute, solo and record-ready with their lamps, V-pots as pans with rings, the jog wheel, the
+  transport keys and lamps, the bank keys, the four-character names and the meters, with the unit's ping answered.
+- **An OSC surface for tablets and other software.** Settings > Surfaces offers an "OSC" driver that listens on a UDP
+  port (9000 by default, this computer only unless "The local network" is chosen) and exposes the strips' faders,
+  switches, pans, the master, the transport, jog, function keys and the parameters of the selected device, with
+  feedback to every client that has sent a packet (at its own address or on a chosen answer port). The address map is
+  listed in the driver's source; the OSC 1.0 encoder and decoder are in the program, with no new dependency. It is off
+  until a surface with that driver is added.
 - **Snapshots that change the effect chain, and a bounce that recalls them.** A mixer snapshot now keeps each
   effect of a strip's insert chain with its state (type, parameters, a container's inside, a plugin's saved state).
   Recalling it makes the chains match, in one undo step: an effect the rack lacks is added again from its kept

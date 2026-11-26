@@ -14,7 +14,9 @@
 use atomik_midi_io::MidiError;
 use atomik_midi_io::ports::{MidiListener, MidiSender, listen, open_output};
 use atomik_midi_io::surface::SurfaceDriver;
+use atomik_midi_io::surface::osc_wire::{self, Message};
 use std::collections::VecDeque;
+use std::net::{IpAddr, Ipv4Addr, SocketAddr, UdpSocket};
 use std::sync::{Arc, Mutex, PoisonError};
 
 /// The shortest time between two feedback passes, in seconds (30 per second: motors and
@@ -127,6 +129,108 @@ impl SurfaceLink for SystemLink {
     }
 }
 
+/// The most clients an OSC surface answers at once (the oldest is dropped for a new one).
+const OSC_PEERS: usize = 8;
+/// The most datagrams read from the socket in one frame.
+const OSC_BURST: usize = 1024;
+/// The default port of an OSC surface.
+pub const OSC_DEFAULT_PORT: u16 = 9000;
+
+/// OSC over UDP: a socket bound to one port (this computer only, or every network interface) as
+/// the two ports of a surface. A datagram that arrives is a message from the surface; a message
+/// to the surface goes to every client that has sent one (the source address of its packets, or
+/// the same address on the reply port when the client listens on a port of its own). A client
+/// that is new is announced to the driver with the message `/surface/hello` ahead of its first
+/// packet, so the driver shows it everything.
+#[derive(Debug)]
+pub struct OscLink {
+    socket: UdpSocket,
+    clients: Vec<SocketAddr>,
+    reply_port: Option<u16>,
+    buffer: Vec<u8>,
+}
+
+impl OscLink {
+    /// Binds `port` on the loopback address, or on every interface with `lan`. A reply port
+    /// sends the answers there instead of to the port the client sent from.
+    ///
+    /// # Errors
+    /// A message when the port cannot be bound (in use, or not allowed).
+    pub fn bind(port: u16, lan: bool, reply_port: Option<u16>) -> Result<Self, String> {
+        let ip = if lan {
+            Ipv4Addr::UNSPECIFIED
+        } else {
+            Ipv4Addr::LOCALHOST
+        };
+        let socket = UdpSocket::bind(SocketAddr::new(IpAddr::V4(ip), port))
+            .map_err(|e| format!("OSC port {port}: {e}"))?;
+        socket
+            .set_nonblocking(true)
+            .map_err(|e| format!("OSC port {port}: {e}"))?;
+        Ok(Self {
+            socket,
+            clients: Vec::new(),
+            reply_port,
+            buffer: vec![0; 65_536],
+        })
+    }
+
+    /// The address the socket is bound to.
+    pub fn local_addr(&self) -> Option<SocketAddr> {
+        self.socket.local_addr().ok()
+    }
+
+    /// The clients that get the answers, as addresses.
+    pub fn clients(&self) -> &[SocketAddr] {
+        &self.clients
+    }
+
+    fn remember(&mut self, from: SocketAddr) -> bool {
+        let to = match self.reply_port {
+            Some(port) => SocketAddr::new(from.ip(), port),
+            None => from,
+        };
+        if self.clients.contains(&to) {
+            return false;
+        }
+        if self.clients.len() >= OSC_PEERS {
+            self.clients.remove(0);
+        }
+        self.clients.push(to);
+        true
+    }
+}
+
+impl SurfaceLink for OscLink {
+    fn poll(&mut self, out: &mut Vec<Vec<u8>>) {
+        for _ in 0..OSC_BURST {
+            match self.socket.recv_from(&mut self.buffer) {
+                Ok((len, from)) => {
+                    if self.remember(from) {
+                        out.push(osc_wire::encode(&Message::new("/surface/hello")));
+                    }
+                    out.push(self.buffer[..len].to_vec());
+                }
+                // A client that went away (an ICMP answer on some systems) is not a message.
+                Err(e) if e.kind() == std::io::ErrorKind::ConnectionReset => {}
+                Err(_) => break,
+            }
+        }
+    }
+
+    fn send(&mut self, bytes: &[u8]) {
+        for client in &self.clients {
+            // A client that cannot be reached is not worth a message per frame.
+            let _ = self.socket.send_to(bytes, client);
+        }
+    }
+
+    fn describe(&self) -> String {
+        self.local_addr()
+            .map_or_else(|| "OSC".to_owned(), |a| format!("OSC on {a}"))
+    }
+}
+
 /// A surface in memory: what a test or a headless session plays the surface with. Clones share
 /// the queues.
 #[derive(Debug, Clone, Default)]
@@ -184,6 +288,8 @@ pub struct SurfaceHost {
     pub(crate) received: u64,
     /// The driver has been connected (the first frame does it).
     pub(crate) connected: bool,
+    /// The command bound to each function key (`id` or `id=argument`; empty for none).
+    pub(crate) functions: Vec<String>,
 }
 
 impl std::fmt::Debug for SurfaceHost {
@@ -209,7 +315,16 @@ impl SurfaceHost {
             sent: 0,
             received: 0,
             connected: false,
+            functions: Vec::new(),
         }
+    }
+
+    /// Binds commands to the function keys (the first is F1): each an `id` or `id=argument` of
+    /// the command registry; an empty one leaves the key unbound.
+    #[must_use]
+    pub fn with_functions(mut self, functions: Vec<String>) -> Self {
+        self.functions = functions;
+        self
     }
 
     /// Names the surface `id` (the name of its settings entry) and its input port `port`, which

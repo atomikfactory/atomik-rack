@@ -1767,7 +1767,17 @@ surface's own move, a touched fader left alone, V-pot decoding, the LED ring val
 their LEDs, bank and channel moves and their limits, the transport keys, the jog wheel, the scribble
 strip SysEx byte for byte (cut names, non-ASCII), the time display digit by digit in beats and
 timecode, the handshake response of a worked example, and that a second feedback pass with the same
-state sends nothing. `crates/app/src/midi_control.rs` and `crates/app/src/midi.rs` test the hub and
+state sends nothing. The same file scripts the rest of the eight-fader driver: the level meters
+(channel pressure, the clip step, only changes sent), Flip, the Send and Plug-in keys with their
+pages, the function keys and the extender (its strips, its own SysEx id, following the main unit's
+bank, flip and mode). `crates/midi-io/src/surface/hui_tests.rs` plays scripted byte streams into the
+HUI driver (the ping, zone and port pairs, the two-controller faders, V-pots, jog, transport and
+bank zones) and checks its feedback byte for byte. `crates/midi-io/src/surface/osc_wire.rs` has the
+OSC encoder and decoder with the exact bytes of the specification's example, every argument type,
+bundles, packing under a size limit and damaged packets (every prefix and every changed byte), and
+`osc_tests.rs` the address map in both directions. `crates/app/src/app_core_osc_tests.rs` runs the
+OSC surface through a real UDP socket on the loopback address (a client socket in the test plays the
+tablet; every wait is on a condition with a bound of seconds). `crates/app/src/midi_control.rs` and `crates/app/src/midi.rs` test the hub and
 that a consumed message plays no note (running status intact, everything consumed while learning).
 `crates/app/src/app_core_midimap_tests.rs` is the learn flow in the core (an armed target, learn
 mode swallowing the first change, a 14 bit pair, a note as a toggle, learning a target again), the
@@ -1780,7 +1790,8 @@ the mappings and ports, persistence through save and load, and presets between t
 console order (channels, buses, VCA groups), a fader move and the motor following the project, a
 touched fader as one undo step, V-pots and rings, the keys and LEDs, banking, the transport lamps,
 rewind and the jog wheel, the time display, the master, the throttle (30 passes a second) and the
-handshake. `crates/app/src/shell_midimap_tests.rs` clicks through the Mixer menu, the right-click
+handshake. `app_core_surface_modes_tests.rs` runs meters, Flip, the send and plug-in modes, the
+function keys and an extender through the core. `crates/app/src/shell_midimap_tests.rs` clicks through the Mixer menu, the right-click
 menu of a control, the MIDI Mappings panel, the preset requests and the surface settings.
 `crates/ui/tests/midi_marks.rs` and the unit tests of `midi_maps_panel.rs` cover the marks (a dot
 per mapped control, outlines while learning, nothing extra without marks), the right click and the
@@ -1812,7 +1823,25 @@ Hand checks, not automated (they need hardware):
   the strip numbers in the assignment display), the transport keys and lamps, the jog wheel, the
   timecode and beats display with its key, and the master fader. Unplug and replug the surface and
   reopen Settings: the surface is shown again. Surfaces differ in how strictly they follow the
-  protocol (the handshake, the display layout): note which one you used and what it did.
+  protocol (the handshake, the display layout): note which one you used and what it did. Also check
+  the level meters (they move with the audio, and the clip step lights on a peak at full scale),
+  Flip (the faders show the pans and the V-pots the levels, and turning each changes the right
+  one), the Send key (the V-pots turn the first send; a second press takes the second), the
+  Plug-in key (the V-pots turn the parameters of the selected device, the bank keys turn the
+  pages), F1 to F8 with `function_keys` set in the settings file, and, with a second unit set up as
+  an extender, that its strips follow the main unit's bank.
+- **A surface that speaks the older protocol (HUI-compatible).** Choose it in Settings > Surfaces.
+  The unit pings the host: it must stay online. Check the faders both ways, touch, select, mute,
+  solo and record-ready with their lamps, the V-pots as pans, the jog wheel, the transport keys and
+  lamps, the bank keys, the four-character names and the meters. The zone and port numbers the
+  driver reads are the ones its module docs list: note any key that does nothing and which
+  surface it was.
+- **OSC from a tablet.** Add a surface with the OSC driver, leave the network choice on "This
+  computer only" and check from the same computer first (any OSC test tool sending to port 9000),
+  then choose "The local network" and use a tablet app on the same network sending to this
+  computer's address and listening on the answer port. Faders, mutes, solos, the transport and the
+  selected device's parameters must move the project, and the project's changes (play, a fader moved
+  with the mouse, a new selected device) must come back. A port that is in use must be reported.
 ## Detached windows
 
 The window code in `platform/` is not unit-tested (it needs a window and a GPU); what it decides is

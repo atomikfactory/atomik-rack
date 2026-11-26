@@ -3690,6 +3690,25 @@ C compares (Shift marks a second version); F2 renames; Delete deletes => C compa
 Version deleted => Version supprimée
 this version is protected: unprotect it before deleting it => cette version est protégée : retirez sa protection avant de la supprimer
 
+# Control surfaces: the extender, HUI, OSC, the function keys and what the V-pots drive
+Extender of the control surface (MCU-compatible) => Extension de la surface de contrôle (compatible MCU)
+Control surface (HUI-compatible) => Surface de contrôle (compatible HUI)
+OSC (tablet or other software, over the network) => OSC (tablette ou autre logiciel, par le réseau)
+OSC port (this computer listens here) => Port OSC (cet ordinateur écoute ici)
+OSC answers go to port => Les réponses OSC vont au port
+OSC reachable from => OSC joignable depuis
+The port the client sent from => Le port d'envoi du client
+This computer only => Cet ordinateur seulement
+The local network => Le réseau local
+{port} (default) => {port} (par défaut)
+{name} F{key} has no command (set function_keys in the settings file) => {name} F{key} n'a pas de commande (réglez function_keys dans le fichier des réglages)
+V-pots: pan => V-pots : panoramique
+V-pots: send {n} => V-pots : envoi {n}
+V-pots: {name} => V-pots : {name}
+V-pots: plug-in parameters (select a device) => V-pots : paramètres du plug-in (sélectionnez un appareil)
+{name}: parameters {first} to {last} of {total} (page {page} of {pages}) => {name} : paramètres {first} à {last} sur {total} (page {page} sur {pages})
+No device with knobs is selected => Aucun appareil à boutons n'est sélectionné
+
 # Tooltips: version history
 A protected version cannot be deleted: unprotect it first => Une version protégée ne peut pas être supprimée : retirez d'abord sa protection
 Delete the chosen version for good (Delete) => Supprimer définitivement la version choisie (Suppr)

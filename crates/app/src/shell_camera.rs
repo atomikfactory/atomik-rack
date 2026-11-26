@@ -60,6 +60,27 @@ impl<B: AudioBackend> Shell<B> {
         }
     }
 
+    /// Runs the commands the function keys of the control surfaces asked for, as the key bound
+    /// to each would (`id` or `id=argument`), and says so when one does not apply here.
+    pub(super) fn run_surface_commands(&mut self) {
+        for command in self.core.take_surface_commands() {
+            let (id, arg) = match command.split_once('=') {
+                Some((id, arg)) => (id.trim(), Some(arg.trim())),
+                None => (command.trim(), None),
+            };
+            match self.run_command(id, arg) {
+                Some(mut requests) => self.pending.append(&mut requests),
+                None => {
+                    let name = atomik_ui::keymap::Registry::bundled()
+                        .get(id)
+                        .map_or(id, |d| d.label);
+                    self.notify(format!("{name} is not available in this view"));
+                }
+            }
+            self.repaint = true;
+        }
+    }
+
     /// Hands the views the core's state; called once a frame.
     pub(super) fn sync_camera_ui(&mut self) {
         if let Some(prefs) = self.core.take_camera_calibrated() {

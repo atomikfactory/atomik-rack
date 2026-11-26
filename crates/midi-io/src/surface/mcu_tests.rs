@@ -523,3 +523,342 @@ fn the_driver_is_found_by_its_id() {
         assert!(super::super::driver_by_id(id).is_some(), "{label}");
     }
 }
+
+// ---------------------------------------------------------------- meters, flip, modes, extender
+
+/// A press of a key: the note on a surface sends.
+fn key(m: &mut Mcu, s: &SurfaceState, note: u8) -> Vec<SurfaceAction> {
+    actions(m, s, &[0x90, note, 0x7F])
+}
+
+fn notice(a: &[SurfaceAction]) -> &str {
+    match a.last() {
+        Some(SurfaceAction::Notice(text)) => text,
+        other => panic!("a notice, got {other:?}"),
+    }
+}
+
+#[test]
+fn the_meter_steps_run_from_silence_to_the_clip_mark() {
+    assert_eq!(meter_step(0.0), 0);
+    assert_eq!(meter_step(-1.0), 0);
+    assert_eq!(meter_step(f32::NAN), 0);
+    assert_eq!(meter_step(0.5), 6);
+    assert_eq!(meter_step(0.99), 0x0B);
+    assert_eq!(meter_step(1.0), 0x0C, "a clip");
+    assert_eq!(meter_step(3.0), 0x0C);
+}
+
+#[test]
+fn a_level_meter_is_channel_pressure_with_the_strip_in_the_high_nibble() {
+    let mut s = state(8);
+    s.strips[2].meter = 0.5;
+    s.strips[5].meter = 1.0;
+    let mut m = Mcu::new();
+    let first = feedback(&mut m, &s);
+    assert!(first.contains(&vec![0xD0, 0x26]), "strip 2 at step 6");
+    assert!(first.contains(&vec![0xD0, 0x5C]), "strip 5 clips");
+    assert!(
+        first.contains(&vec![0xD0, 0x00]),
+        "a silent strip is told so once"
+    );
+    assert!(feedback(&mut m, &s).is_empty());
+    s.strips[2].meter = 0.0;
+    assert_eq!(feedback(&mut m, &s), vec![vec![0xD0, 0x20]]);
+}
+
+#[test]
+fn connecting_turns_the_meters_on_and_names_the_unit() {
+    let mut out = Vec::new();
+    Mcu::new().connect(&state(8), &mut out);
+    assert_eq!(out[0], vec![0xF0, 0x00, 0x00, 0x66, 0x14, 0x00, 0xF7]);
+    for strip in 0..8u8 {
+        assert!(out.contains(&vec![0xF0, 0, 0, 0x66, 0x14, 0x20, strip, 0x03, 0xF7]));
+    }
+    let mut out = Vec::new();
+    Mcu::extender().connect(&state(16), &mut out);
+    assert_eq!(out[0], vec![0xF0, 0x00, 0x00, 0x66, 0x15, 0x00, 0xF7]);
+}
+
+#[test]
+fn flip_swaps_the_faders_and_the_v_pots() {
+    let mut s = state(8);
+    s.strips[1].fader = 0.25;
+    s.strips[1].pan = Some(1.0);
+    let mut m = Mcu::new();
+    feedback(&mut m, &s);
+    assert!(key(&mut m, &s, 0x32).is_empty());
+    assert!(m.is_flipped());
+    // The motor of fader 1 now shows the pan (hard right is the top), the ring the level.
+    let flipped = feedback(&mut m, &s);
+    assert!(flipped.contains(&vec![0xE1, 0x7F, 0x7F]), "{flipped:?}");
+    assert!(flipped.contains(&vec![0x90, 0x32, 0x7F]), "the Flip lamp");
+    let ring = flipped
+        .iter()
+        .find(|b| b[..2] == [0xB0, 0x31])
+        .expect("ring of strip 1");
+    assert_eq!(ring[2], 0x20 | 4, "a bar to the level 0.25");
+    // Moving the fader sets the pan; turning the V-pot changes the level.
+    assert_eq!(
+        actions(&mut m, &s, &[0xE1, 0x00, 0x00]),
+        [SurfaceAction::Strip {
+            strip: 1,
+            control: StripControl::Pan,
+            change: KnobMove::To(0.0)
+        }]
+    );
+    assert_eq!(
+        actions(&mut m, &s, &[0xB0, 0x11, 0x02]),
+        [SurfaceAction::Strip {
+            strip: 1,
+            control: StripControl::Level,
+            change: KnobMove::By(2.0 / 32.0)
+        }]
+    );
+    // Flip again: back to the default jobs.
+    key(&mut m, &s, 0x32);
+    assert!(!m.is_flipped());
+    assert!(matches!(
+        actions(&mut m, &s, &[0xE1, 0x00, 0x00]).as_slice(),
+        [SurfaceAction::Fader { strip: 1, .. }]
+    ));
+}
+
+#[test]
+fn the_send_key_points_the_v_pots_at_a_send_and_the_next_press_takes_the_next_one() {
+    let mut s = state(8);
+    s.strips[0].send = Some(0.5);
+    s.strips[0].send_text = "-9.0dB".into();
+    let mut m = Mcu::new();
+    assert_eq!(m.needs().send, None);
+    assert_eq!(notice(&key(&mut m, &s, 0x29)), "V-pots: send 1");
+    assert_eq!(m.vpot_mode(), VpotMode::Send);
+    assert_eq!(m.needs().send, Some(1));
+    assert_eq!(
+        actions(&mut m, &s, &[0xB0, 0x10, 0x41]),
+        [SurfaceAction::Strip {
+            strip: 0,
+            control: StripControl::Send(1),
+            change: KnobMove::By(-1.0 / 32.0)
+        }]
+    );
+    let shown = feedback(&mut m, &s);
+    assert!(
+        shown.contains(&lcd_message(LOWER_ROW, b"-9.0dB ")),
+        "{shown:?}"
+    );
+    assert!(shown.contains(&vec![0x90, 0x29, 0x7F]), "the Send lamp");
+    assert!(
+        shown.contains(&vec![0x90, 0x2A, 0x00]),
+        "the Pan lamp is off"
+    );
+    assert_eq!(notice(&key(&mut m, &s, 0x29)), "V-pots: send 2");
+    assert_eq!(m.send_slot(), 2);
+    for _ in 0..7 {
+        key(&mut m, &s, 0x29);
+    }
+    assert_eq!(m.send_slot(), 1, "after the eighth, the first again");
+    // Pan takes the V-pots back.
+    assert_eq!(notice(&key(&mut m, &s, 0x2A)), "V-pots: pan");
+    assert!(matches!(
+        actions(&mut m, &s, &[0xB0, 0x10, 0x01]).as_slice(),
+        [SurfaceAction::Pan { strip: 0, .. }]
+    ));
+}
+
+fn with_knobs(n: usize, params: usize) -> SurfaceState {
+    let mut s = state(n);
+    s.knobs = (0..params).map(|i| Some(i as f32 / 100.0)).collect();
+    s.remote = RemoteDevice {
+        id: Some("dev".into()),
+        name: "Chorus".into(),
+        params: (0..params).map(|i| format!("Param{i}")).collect(),
+        stepped: vec![false; params],
+    };
+    s
+}
+
+#[test]
+fn plug_in_mode_drives_a_page_of_device_parameters_and_the_bank_keys_turn_pages() {
+    let s = with_knobs(8, 20);
+    let mut m = Mcu::new();
+    assert!(notice(&key(&mut m, &s, 0x2B)).contains("Chorus"));
+    // V-pot 3 turns parameter 3 of page one.
+    assert_eq!(
+        actions(&mut m, &s, &[0xB0, 0x13, 0x04]),
+        [SurfaceAction::Knob {
+            knob: 3,
+            change: KnobMove::By(4.0 / 32.0)
+        }]
+    );
+    let shown = feedback(&mut m, &s);
+    assert!(shown.contains(&lcd_message(0, b"Param0 ")), "names above");
+    // The value of parameter 3 (0.03) is a percentage below.
+    assert!(shown.contains(&lcd_message(LOWER_ROW + 7 * 3, b"3%     ")));
+    // Page right: parameters 9 to 16, announced.
+    let got = key(&mut m, &s, 0x2F);
+    assert_eq!(
+        notice(&got),
+        "Chorus: parameters 9 to 16 of 20 (page 2 of 3)"
+    );
+    assert_eq!(m.page(), 1);
+    assert_eq!(m.bank(), 0, "the strips did not move");
+    assert_eq!(
+        actions(&mut m, &s, &[0xB0, 0x10, 0x01]),
+        [SurfaceAction::Knob {
+            knob: 8,
+            change: KnobMove::By(1.0 / 32.0)
+        }]
+    );
+    key(&mut m, &s, 0x2F);
+    assert_eq!(m.page(), 2);
+    key(&mut m, &s, 0x2F);
+    assert_eq!(m.page(), 0, "wraps round");
+    key(&mut m, &s, 0x2E);
+    assert_eq!(m.page(), 2);
+    // Flipped, the faders drive the parameters.
+    key(&mut m, &s, 0x32);
+    assert_eq!(
+        actions(&mut m, &s, &[0xE0, 0x00, 0x40]),
+        [SurfaceAction::Knob {
+            knob: 16,
+            change: KnobMove::To(bend_to_fader(8192))
+        }]
+    );
+    // The command that turns the knob pages does the same.
+    let mut acts = Vec::new();
+    m.knob_page(1, &s, &mut acts);
+    assert_eq!(m.page(), 0);
+    assert_eq!(acts.len(), 1);
+}
+
+#[test]
+fn plug_in_mode_without_a_device_says_so() {
+    let s = state(8);
+    let mut m = Mcu::new();
+    assert!(notice(&key(&mut m, &s, 0x2B)).contains("select a device"));
+    assert_eq!(
+        notice(&key(&mut m, &s, 0x2F)),
+        "No device with knobs is selected"
+    );
+    assert_eq!(m.page(), 0);
+}
+
+#[test]
+fn the_function_keys_are_reported_by_number() {
+    let s = state(8);
+    let mut m = Mcu::new();
+    for n in 0..8u8 {
+        assert_eq!(key(&mut m, &s, 0x36 + n), [SurfaceAction::Function(n + 1)]);
+    }
+    assert!(
+        key(&mut m, &s, 0x3E).is_empty(),
+        "F9 is not a key of the unit"
+    );
+    assert!(
+        actions(&mut m, &s, &[0x90, 0x36, 0x00]).is_empty(),
+        "a release is nothing"
+    );
+}
+
+#[test]
+fn an_extender_has_the_next_eight_strips_and_follows_the_main_unit() {
+    let s = state(20);
+    let mut main = Mcu::new();
+    let mut ext = Mcu::extender();
+    assert!(!main.extends() && ext.extends());
+    assert_eq!(ext.name(), "mcu-extender");
+    main.set_units(2);
+    ext.follow(main.linked().unwrap());
+    // Fader 1 of the extender is strip 9.
+    assert!(matches!(
+        actions(&mut ext, &s, &[0xE1, 0x00, 0x40]).as_slice(),
+        [SurfaceAction::Fader { strip: 9, .. }]
+    ));
+    assert_eq!(key(&mut ext, &s, 0x08 + 2), [SurfaceAction::ToggleSolo(10)]);
+    // The extender has no master fader, no transport and no bank keys of its own.
+    assert!(actions(&mut ext, &s, &[0xE8, 0x7F, 0x7F]).is_empty());
+    assert!(key(&mut ext, &s, 0x5E).is_empty());
+    assert!(key(&mut ext, &s, 0x2F).is_empty());
+    // The bank keys of the main unit move both units by sixteen.
+    key(&mut main, &s, 0x2F);
+    assert_eq!(main.bank(), 16);
+    ext.follow(main.linked().unwrap());
+    assert_eq!(ext.bank(), 16);
+    // Strip 16 + 8 does not exist in a project of twenty strips.
+    assert!(actions(&mut ext, &s, &[0xE0, 0x00, 0x40]).is_empty());
+    // The channel keys move by one strip; the extender stays eight after.
+    key(&mut main, &s, 0x30);
+    ext.follow(main.linked().unwrap());
+    assert_eq!(ext.bank(), 15);
+    assert!(actions(&mut ext, &s, &[0xE0, 0x00, 0x40]).is_empty());
+    key(&mut main, &s, 0x30);
+    key(&mut main, &s, 0x30);
+    key(&mut main, &s, 0x30);
+    key(&mut main, &s, 0x30);
+    ext.follow(main.linked().unwrap());
+    assert_eq!(ext.bank(), 11);
+    assert!(matches!(
+        actions(&mut ext, &s, &[0xE0, 0x00, 0x40]).as_slice(),
+        [SurfaceAction::Fader { strip: 19, .. }]
+    ));
+}
+
+#[test]
+fn an_extender_shows_its_strips_with_its_own_id_and_none_of_the_main_displays() {
+    let mut s = state(16);
+    s.strips[8].name = "Nine".into();
+    s.strips[8].meter = 1.0;
+    let mut ext = Mcu::extender();
+    ext.follow(Linked {
+        bank: 0,
+        flip: false,
+        vpot: VpotMode::Pan,
+        send_slot: 1,
+        page: 0,
+        units: 2,
+    });
+    let out = feedback(&mut ext, &s);
+    let mut name = vec![0xF0, 0, 0, 0x66, 0x15, 0x12, 0x00];
+    name.extend_from_slice(b"Nine   ");
+    name.push(0xF7);
+    assert!(out.contains(&name), "{out:?}");
+    assert!(out.contains(&vec![0xD0, 0x0C]), "its first strip clips");
+    // No master fader (channel 8), no transport lamp, no time digits.
+    assert!(!out.iter().any(|b| b[0] == 0xE8));
+    assert!(!out.iter().any(|b| b[..2] == [0x90, 0x5E]));
+    assert!(!out.iter().any(|b| b[..2] == [0xB0, 0x49]));
+    // Strip 8 at 0.5: the first fader of the extender.
+    assert!(out.contains(&vec![0xE0, 0x00, 0x40]));
+}
+
+#[test]
+fn the_extender_takes_over_flip_and_the_v_pot_mode_and_pages_in_sixteens() {
+    let s = with_knobs(16, 40);
+    let mut main = Mcu::new();
+    main.set_units(2);
+    let mut ext = Mcu::extender();
+    key(&mut main, &s, 0x2B);
+    key(&mut main, &s, 0x2F);
+    assert_eq!(main.page(), 1);
+    ext.follow(main.linked().unwrap());
+    // Page 1 of sixteen: the main unit has parameters 16..24, the extender 24..32.
+    assert_eq!(
+        actions(&mut main, &s, &[0xB0, 0x10, 0x01]),
+        [SurfaceAction::Knob {
+            knob: 16,
+            change: KnobMove::By(1.0 / 32.0)
+        }]
+    );
+    assert_eq!(
+        actions(&mut ext, &s, &[0xB0, 0x10, 0x01]),
+        [SurfaceAction::Knob {
+            knob: 24,
+            change: KnobMove::By(1.0 / 32.0)
+        }]
+    );
+    key(&mut main, &s, 0x32);
+    ext.follow(main.linked().unwrap());
+    assert!(ext.is_flipped());
+    assert_eq!(ext.vpot_mode(), VpotMode::Plugin);
+}
