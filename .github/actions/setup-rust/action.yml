@@ -77,6 +77,9 @@ runs:
         fi
         echo "SCCACHE_GHA_ENABLED=true" >> "$GITHUB_ENV"
         echo "RUSTC_WRAPPER=sccache" >> "$GITHUB_ENV"
+        # Keep the server for the whole job: its default 10-minute idle exit made the end-of-job
+        # statistics read a fresh, empty server after the long test run.
+        echo "SCCACHE_IDLE_TIMEOUT=0" >> "$GITHUB_ENV"
 
     - name: Cache Cargo registry and target
       uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
