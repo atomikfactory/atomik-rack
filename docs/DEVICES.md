@@ -5919,6 +5919,10 @@ Sockets: `gate_in`, `gate_b_in` (CV in), `gate_out`, `trig_out` (CV out).
 | `divide` | 1 to 16 | 1 | none |
 | `delay` | 0 to 2000 | 0 | ms |
 | `length` | 0 to 2000 | 0 | ms |
+| `delay.sync` | off, on | off | toggle |
+| `delay.note` | 0 to 23: 1/64T to 1/1D, 1 bar, 2 bars, 4 bars | 10 (1/8) | choice |
+| `length.sync` | off, on | off | toggle |
+| `length.note` | 0 to 23: the same note values | 10 (1/8) | choice |
 
 - The chain is logic, divide, delay, length. Gates have hysteresis (high above 0.5, low below 0.3).
 - `logic` combines `gate_in` (A) with `gate_b_in` (B; unconnected counts as low); `a` ignores B. A
@@ -5926,9 +5930,18 @@ Sockets: `gate_in`, `gate_b_in` (CV in), `gate_out`, `trig_out` (CV out).
 - `divide` passes the first of every N rising edges together with its gate and drops the rest.
 - `delay` shifts the result later by up to two seconds, edges and length together. It is a
   deliberate delay, not a latency. A change takes effect at once.
+- `delay.sync` makes the delay the note value `delay.note` of the transport tempo instead of `delay`.
+  The note values run from 1/64 to 1/1 as triplet (`T`), plain and dotted (`D`), then `1 bar`,
+  `2 bars` and `4 bars` of the time signature at the batch (a whole note is four beats). The time is
+  worked out for every batch from the tempo and the meter, rounded to a whole number of samples, so
+  a tempo ramp moves it; it is cut to the delay line, which holds a minute. A bounce and the live
+  engine read the same tempo map, so they agree.
 - `length` 0 keeps the gate as long as it was; above 0 each rising edge makes a gate of exactly that
   many ms (at least one sample), and an edge inside a running gate restarts it, so a trigger
   becomes a gate of a set length.
+- `length.sync` makes the length the note value `length.note` (the same table) instead of `length`;
+  a note value is never zero, so a synced length always replaces the gate. A project saved before
+  these params loads with both switches off and plays exactly as it did.
 - `trig_out` is a 1 ms pulse at every rising edge of `gate_out`, a gate to trigger converter.
 
 ### Envelope Follower: `atomik.envelope-follower` (Utility)

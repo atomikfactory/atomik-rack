@@ -16,6 +16,11 @@ may break APIs and the patch and project formats.
   it is unprotected (the button is off and its tooltip says why), and a failure leaves the version listed with its
   file. A right-click on a row opens a menu with Restore, Compare, Rename, Protect and Delete. The project file and the
   project format do not change; the song is never a version and is never deleted.
+- **The gate processor's delay and length can be set in note values.** Each has a sync switch (`delay.sync`,
+  `length.sync`) and a note value (`delay.note`, `length.note`) from 1/64 to 1/1 as triplet, plain and dotted, then one,
+  two and four bars of the time signature, taken from the transport tempo; a tempo change moves a synced time at once.
+  A synced delay is kept inside the delay line (a minute); a synced length always replaces the gate. The switches are
+  off in a project saved before them, which plays and bounces exactly as it did.
 
 ### Changed
 - **The device CPU readout no longer allocates in a playing window.** Each pass (about five a second) rebuilt every
