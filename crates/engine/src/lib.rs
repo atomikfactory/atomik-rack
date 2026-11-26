@@ -64,6 +64,7 @@ pub use offline::{
     render_offline_with, try_render_offline, try_render_offline_scripted, try_render_offline_song,
     try_render_offline_with,
 };
+pub use phase_lock::LockStrength;
 pub use plan::{RELEASE_HEADROOM, RenderPlan};
 pub use player::{HOLD_CAPACITY, lane_value};
 pub use preview::{

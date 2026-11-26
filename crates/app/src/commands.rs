@@ -8,6 +8,7 @@
 use crate::midi_file::MidiResolution;
 use crate::practice::PracticeAction;
 use crate::record::InputQuantize;
+use crate::settings::ClockLock;
 pub use crate::transition_choice::TransitionChoice;
 use crate::windows::WindowKind;
 use atomik_engine::{ReferenceBand, ReferenceSolo};
@@ -294,6 +295,11 @@ pub enum AppCommand {
     /// Options ▸ Sync ▸ Follow MIDI Clock: the transport follows the clock of the Sync settings'
     /// input port.
     ToggleClockIn,
+    /// Options ▸ Sync ▸ Follow Tempo Only: a followed clock gives only its tempo (the transport
+    /// stays the user's).
+    ToggleClockTempoOnly,
+    /// Options ▸ Sync ▸ Clock Lock: how tightly the song is held to the followed clock.
+    SetClockLock(ClockLock),
     /// Options ▸ Chase Notes: the selected track's note chase on or off.
     ToggleChase,
     /// View > Show Console Links: draw the channel to master cables on the back of
@@ -1126,6 +1132,10 @@ impl AppCommand {
             AppCommand::ToggleClockOut => ("sync.clock_out", None),
             AppCommand::ToggleClockWhileStopped => ("sync.clock_while_stopped", None),
             AppCommand::ToggleClockIn => ("sync.follow_clock", None),
+            AppCommand::ToggleClockTempoOnly => ("sync.follow_tempo_only", None),
+            AppCommand::SetClockLock(ClockLock::Tight) => ("sync.clock_lock", Some("tight")),
+            AppCommand::SetClockLock(ClockLock::Normal) => ("sync.clock_lock", Some("normal")),
+            AppCommand::SetClockLock(ClockLock::Loose) => ("sync.clock_lock", Some("loose")),
             AppCommand::ToggleChase => ("sequencer.toggle_chase", None),
             AppCommand::Quantize(InputQuantize::OFF) => ("transport.input_quantize", Some("off")),
             AppCommand::Quantize(InputQuantize::EIGHTH) => {
@@ -1605,6 +1615,10 @@ impl AppCommand {
             ("sync.clock_out", None) => AppCommand::ToggleClockOut,
             ("sync.clock_while_stopped", None) => AppCommand::ToggleClockWhileStopped,
             ("sync.follow_clock", None) => AppCommand::ToggleClockIn,
+            ("sync.follow_tempo_only", None) => AppCommand::ToggleClockTempoOnly,
+            ("sync.clock_lock", Some("tight")) => AppCommand::SetClockLock(ClockLock::Tight),
+            ("sync.clock_lock", Some("normal")) => AppCommand::SetClockLock(ClockLock::Normal),
+            ("sync.clock_lock", Some("loose")) => AppCommand::SetClockLock(ClockLock::Loose),
             ("sequencer.toggle_chase", None) => AppCommand::ToggleChase,
             ("transport.input_quantize", Some("off")) => AppCommand::Quantize(InputQuantize::OFF),
             ("transport.input_quantize", Some("eighth")) => {
@@ -2448,6 +2462,10 @@ pub struct MenuState {
     pub clock_while_stopped: bool,
     /// The transport follows a MIDI clock.
     pub follow_clock: bool,
+    /// A followed clock gives only its tempo.
+    pub follow_tempo_only: bool,
+    /// How tightly the song is held to a followed clock.
+    pub clock_lock: ClockLock,
     /// The project's sample rate in Hz.
     pub sample_rate: u32,
     /// The resolution of the MIDI files File > Export MIDI writes.
@@ -3031,6 +3049,8 @@ fn menus_in_english(
     let cables = |label, v: CableVisibility| check(label, AppCommand::Cables(v), state.cables == v);
     let quantize =
         |label, q: InputQuantize| check(label, AppCommand::Quantize(q), state.quantize == q);
+    let lock =
+        |label, l: ClockLock| check(label, AppCommand::SetClockLock(l), state.clock_lock == l);
     let transport = AppCommand::Transport;
     let open_recent = MenuEntry::Submenu(Submenu {
         label: "Open Recent",
@@ -4867,6 +4887,15 @@ fn menus_in_english(
                             AppCommand::ToggleClockIn,
                             state.follow_clock,
                         ),
+                        check(
+                            "Follow Tempo Only",
+                            AppCommand::ToggleClockTempoOnly,
+                            state.follow_tempo_only,
+                        ),
+                        MenuEntry::Separator,
+                        lock("Clock Lock: Tight", ClockLock::Tight),
+                        lock("Clock Lock: Normal", ClockLock::Normal),
+                        lock("Clock Lock: Loose", ClockLock::Loose),
                     ],
                 }),
                 MenuEntry::Separator,
@@ -5114,6 +5143,8 @@ mod tests {
             clock_out: false,
             clock_while_stopped: false,
             follow_clock: false,
+            follow_tempo_only: false,
+            clock_lock: ClockLock::Normal,
             sample_rate: 48_000,
             midi_resolution: MidiResolution::Native,
             midi_chords: false,
@@ -5673,6 +5704,10 @@ mod tests {
         v.push(AppCommand::ToggleClockOut);
         v.push(AppCommand::ToggleClockWhileStopped);
         v.push(AppCommand::ToggleClockIn);
+        v.push(AppCommand::ToggleClockTempoOnly);
+        for l in ClockLock::ALL {
+            v.push(AppCommand::SetClockLock(l));
+        }
         v.push(AppCommand::ToggleChase);
         for q in [
             InputQuantize::OFF,
@@ -6039,6 +6074,10 @@ mod tests {
                 "MIDI Clock Out",
                 "Send Clock While Stopped",
                 "Follow MIDI Clock",
+                "Follow Tempo Only",
+                "Clock Lock: Tight",
+                "Clock Lock: Normal",
+                "Clock Lock: Loose",
                 "Settings\u{2026}",
                 "Audio and MIDI Setup\u{2026}",
                 "Plugin Manager\u{2026}"
@@ -6294,6 +6333,8 @@ mod tests {
             clock_out: false,
             clock_while_stopped: false,
             follow_clock: false,
+            follow_tempo_only: false,
+            clock_lock: ClockLock::Normal,
             sample_rate: 48_000,
             midi_resolution: MidiResolution::Native,
             midi_chords: false,
@@ -6358,6 +6399,8 @@ mod tests {
                 clock_out: false,
                 clock_while_stopped: false,
                 follow_clock: false,
+                follow_tempo_only: false,
+                clock_lock: ClockLock::Normal,
                 sample_rate: 48_000,
                 midi_resolution: MidiResolution::Native,
                 midi_chords: false,

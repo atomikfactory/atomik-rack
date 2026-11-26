@@ -2365,3 +2365,23 @@ outcome would depend on the machine's speed); stopping on the UI thread and only
 as long as a hung open).
 
 **Status.** Decided by the owner on 2026-11-25.
+
+## CA. Following a MIDI clock: a switch for the tempo alone and a lock strength, not an automatic guess
+
+**Decision.** A sender that streams clocks with no Start and no Song Position Pointer is handled by an explicit
+setting, Options > Sync > Follow Tempo Only: the song plays from its own position and takes the measured tempo. How
+tightly the song is held to a sender that does send a position is a second setting, Clock Lock (Tight, Normal,
+Loose), where Normal is the rule the lock always had. Both are app settings (Settings > Sync), not part of the
+project, and a bounce never follows a clock.
+
+**Why.** The two other senders look the same for the first moments: a sender that has not yet sent its Start also
+streams clocks alone, so guessing "tempo only" from what has arrived would play the song when it should wait, or
+wait when the sender never starts. A switch is what the other hosts offer, and it keeps the existing behaviour
+unchanged when off. The lock strength changes one rule (how fast and how far a position error is closed), and the
+default is the value it had.
+
+**Rejected.** Detecting a sender with no Start after some seconds and switching by itself (the transport would
+change owner without a word); a per-project setting (the sender belongs to the machine, not the song); a free
+numeric lock time (three named strengths cover a steady, a normal and a wandering sender).
+
+**Status.** Chosen by the implementer from common practice; open to the owner's review.

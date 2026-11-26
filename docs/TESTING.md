@@ -2623,6 +2623,15 @@ Hand checks, not automated (they need MIDI hardware):
   runs: the song stops within half a second and no note hangs; plug it back in and it continues.
 - The transport buttons and Space do nothing while following and say why; switch following off
   and they work again. A bounce while following is unchanged.
+- Follow Tempo Only: with a sender that streams clocks and no Start (a small hardware box, or a
+  clock-only mode), switch on Options > Sync > Follow Tempo Only, press Play on the computer: the song
+  plays from its own position and its tempo follows the box; turn the tempo knob and the song follows
+  within a beat; Stop on the computer stops it; the box's own Start and Stop do nothing to the song.
+  The transport buttons work and the status line reads "following clock tempo".
+- Clock Lock: with a sender whose tempo wanders, follow the whole clock (Start, then let the tempo swing
+  for a minute). Tight keeps the song on the beat of the box most closely; Normal is as before; Loose lets
+  the song stray by about a clock before it pulls back and never lurches. Choose each from Options > Sync >
+  Clock Lock and from Settings > Sync.
 - Check the DSP load meter with clock out on and with following on, at a small buffer: it should
   not move.
 

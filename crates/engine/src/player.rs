@@ -103,6 +103,11 @@
 //!   deterministic, and locates to it when the two are a beat apart. A Start or a Song
 //!   Position Pointer is the hard anchor: the position jumps there and the lock starts afresh.
 //!   Without a count (a sender that has not said where it is) the song runs on the tempo alone.
+//!   How tightly the lock holds is a setting of the cell ([`crate::LockStrength`], read once per
+//!   batch). With the cell's tempo-only switch on, only the tempo is followed (for a sender that
+//!   streams ticks and nothing else): the transport commands and the count-in work, the song
+//!   plays from its own position and the clock's Start, Stop, Continue and position are not acted
+//!   on, nor is a lost clock (the last tempo stays).
 
 use crate::arena::Arena;
 use crate::audio::{AudioRt, CompiledAudio, Renderer};
@@ -685,6 +690,9 @@ struct Follow {
     quiet_frames: u64,
     /// The phase lock: the remainder of the corrections too small for a whole frame.
     lock: PhaseLock,
+    /// Only the clock's tempo is followed: the transport stays the user's (the mode the follow
+    /// began in).
+    tempo_only: bool,
 }
 
 /// The clock may be silent this long (in seconds) while the sender runs before the transport
@@ -1003,7 +1011,10 @@ impl Player {
         sr: f64,
         dropped: &AtomicU64,
     ) {
-        if self.follow.is_some()
+        // Following the tempo only leaves the transport to the user; the practice speed still
+        // gives way to the clock's tempo.
+        let (follows, tempo_only) = self.follow.map_or((false, false), |f| (true, f.tempo_only));
+        if follows
             && matches!(
                 command,
                 TransportCommand::Play
@@ -1012,6 +1023,7 @@ impl Player {
                     | TransportCommand::Locate(_)
                     | TransportCommand::Speed(_)
             )
+            && !(tempo_only && !matches!(command, TransportCommand::Speed(_)))
         {
             return;
         }
@@ -1174,6 +1186,12 @@ impl Player {
             (false, None) => {}
             (true, None) => self.enter_follow(sr, engine_tempo, dropped),
             (false, Some(_)) => self.leave_follow(sr, engine_tempo, dropped),
+            (true, Some(f)) if f.tempo_only != self.external.tempo_only() => {
+                // The mode changed: leave and enter again (the transport stops, as it does when
+                // following is switched on or off).
+                self.leave_follow(sr, engine_tempo, dropped);
+                self.enter_follow(sr, engine_tempo, dropped);
+            }
             (true, Some(f)) => self.follow_step(f, sr, engine_tempo, dropped),
         }
     }
@@ -1205,6 +1223,7 @@ impl Player {
             clocks: state.clocks,
             quiet_frames: 0,
             lock: PhaseLock::default(),
+            tempo_only: self.external.tempo_only(),
         });
         // The same musical position on the clock's tempo, with the cursors moved to it.
         self.apply_command(
@@ -1242,6 +1261,11 @@ impl Player {
                 .round()
                 .max(0.0) as u64;
             f.tempo = t;
+        }
+        if f.tempo_only {
+            // Only the tempo: the sender's Start, Stop, Continue and position are not the song's.
+            self.follow = Some(f);
+            return;
         }
         let locate = (s.locates != f.locates).then_some(s.position);
         f.locates = s.locates;
@@ -1300,7 +1324,11 @@ impl Player {
         let expected = expected_tick(phase, looped);
         let tick = map.tick(self.pos as f64, sr);
         let tpf = map.ticks_per_frame(tick, sr);
-        match f.lock.step(error_ticks(expected, tick, looped), tpf) {
+        match f.lock.step(
+            error_ticks(expected, tick, looped),
+            tpf,
+            self.external.lock_strength(),
+        ) {
             Correction::Frames(n) => {
                 let mut pos = (self.pos as i64).saturating_add(n).max(0) as u64;
                 if looped.is_some() {

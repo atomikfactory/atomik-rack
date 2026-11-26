@@ -8,8 +8,8 @@ mod common;
 use atomik_core::{NoteKind, PPQ, Ticks};
 use atomik_device_sdk::MidiTap;
 use atomik_engine::{
-    CLOCK, CONTINUE, EngineHandle, ExternalClock, ExternalState, START, STOP, SyncConfig,
-    TransportCommand,
+    CLOCK, CONTINUE, EngineHandle, ExternalClock, ExternalState, LockStrength, START, STOP,
+    SyncConfig, TransportCommand,
 };
 use common::song::*;
 use std::sync::Arc;
@@ -464,6 +464,172 @@ fn without_a_position_count_the_song_runs_on_the_tempo_alone() {
     f.run_counted(8, 500);
     let advanced = f.handle.transport_state().tick - tick;
     assert!((advanced - 8 * 500 * 64 / 100).abs() < 200, "{advanced}");
+}
+
+/// A follower that takes only the clock's tempo: the sender streams ticks and nothing else.
+fn tempo_only() -> Following {
+    let mut f = Following::new();
+    f.cell.set_tempo_only(true);
+    f.run(64);
+    f
+}
+
+impl Following {
+    /// The sender's tempo as the follower measured it, clocks only (no Start, no position).
+    fn tempo(&mut self, bpm: f64) {
+        self.publish(|s| s.tempo = Some(bpm));
+    }
+}
+
+/// The ticks `frames` frames take at `bpm`.
+fn ticks_at(bpm: f64, frames: usize) -> i64 {
+    (bpm * PPQ as f64 / (60.0 * 48_000.0) * frames as f64).round() as i64
+}
+
+#[test]
+fn tempo_only_plays_from_the_users_position_at_the_clocks_tempo() {
+    let mut f = tempo_only();
+    f.tempo(90.0);
+    f.run(960 * 4);
+    // Clocks alone do not play the song.
+    assert!(!f.handle.transport_state().playing);
+    f.handle.transport(TransportCommand::Play).unwrap();
+    f.run(960);
+    let from = f.handle.transport_state().tick;
+    f.run(960 * 50);
+    let t = f.handle.transport_state();
+    assert!(t.playing);
+    // 48_000 frames at 90 BPM is one and a half beats, to within a batch of rounding.
+    let want = ticks_at(90.0, 960 * 50);
+    assert!(
+        (t.tick - from - want).abs() < 100,
+        "{} vs {want}",
+        t.tick - from
+    );
+}
+
+#[test]
+fn tempo_only_leaves_the_transport_to_the_user() {
+    let mut f = tempo_only();
+    f.tempo(120.0);
+    // Start, Continue and a position from the sender are not acted on.
+    f.publish(|s| {
+        s.running = true;
+        s.position = 3 * PPQ;
+        s.locates += 1;
+    });
+    f.run(960 * 4);
+    assert!(!f.handle.transport_state().playing);
+    assert_eq!(f.handle.transport_state().tick, 0);
+    // The user locates and plays; the sender's Stop does not stop the song.
+    f.handle
+        .transport(TransportCommand::Locate(Ticks(2 * PPQ)))
+        .unwrap();
+    f.run(64);
+    assert_eq!(f.handle.transport_state().tick, 2 * PPQ);
+    f.handle.transport(TransportCommand::Play).unwrap();
+    f.run(960 * 2);
+    f.publish(|s| s.running = false);
+    f.run(960 * 4);
+    assert!(f.handle.transport_state().playing);
+    // A lost clock does not stop it either, and the last tempo stays.
+    f.run_silent(48_000);
+    let tick = f.handle.transport_state().tick;
+    f.run_silent(24_000);
+    let moved = f.handle.transport_state().tick - tick;
+    assert!(f.handle.transport_state().playing);
+    assert!((moved - ticks_at(120.0, 24_000)).abs() < 100, "{moved}");
+    f.handle.transport(TransportCommand::Stop).unwrap();
+    f.run(960);
+    assert!(!f.handle.transport_state().playing);
+}
+
+#[test]
+fn tempo_only_tracks_a_drifting_clock() {
+    let mut f = tempo_only();
+    f.tempo(100.0);
+    f.handle.transport(TransportCommand::Play).unwrap();
+    f.run(960);
+    let start = f.handle.transport_state().tick;
+    // The sender drifts between 100 and 140 BPM in steps of one clock.
+    let mut want = 0;
+    for k in 0..200 {
+        let bpm = 120.0 + 20.0 * (f64::from(k) * 0.1).sin();
+        f.tempo(bpm);
+        f.run(960);
+        want += ticks_at(bpm, 960);
+    }
+    let got = f.handle.transport_state().tick - start;
+    // Every batch is on the tempo that was measured: the song keeps the sender's pace to within
+    // two clocks over about four seconds.
+    assert!(
+        (got - want).abs() < 2 * atomik_engine::TICKS_PER_CLOCK,
+        "{got} vs {want}"
+    );
+    // The tempo did move: a song stuck on the first tempo would be far off.
+    let slow = ticks_at(100.0, 960 * 200);
+    assert!((got - slow).abs() > 1000, "{got} vs a flat 100 BPM {slow}");
+}
+
+#[test]
+fn switching_the_mode_while_following_hands_the_transport_back_or_takes_it() {
+    // Whole clock first: the sender plays the song.
+    let mut f = Following::new();
+    f.start_at(120.0, 0);
+    f.run(960 * 4);
+    assert!(f.handle.transport_state().playing);
+    // Tempo only: the transport stops and is the user's from here.
+    f.cell.set_tempo_only(true);
+    f.run(960 * 4);
+    assert!(!f.handle.transport_state().playing);
+    f.handle.transport(TransportCommand::Play).unwrap();
+    f.run(960 * 4);
+    assert!(f.handle.transport_state().playing);
+    // Whole clock again: the sender runs, so the song plays, and Stop is ignored once more.
+    f.cell.set_tempo_only(false);
+    f.run(960 * 4);
+    f.handle.transport(TransportCommand::Stop).unwrap();
+    f.run(960 * 4);
+    assert!(f.handle.transport_state().playing);
+    f.publish(|s| s.running = false);
+    f.run(960 * 4);
+    assert!(!f.handle.transport_state().playing);
+}
+
+/// The lag of the song behind a counted sender after 40 clocks that come faster than the tempo it
+/// reports, at `strength`.
+fn lag_at(strength: LockStrength) -> i64 {
+    let mut f = Following::new();
+    f.cell.set_lock_strength(strength);
+    f.start_counting(120.0);
+    f.run_counted(40, 960);
+    f.lag()
+}
+
+#[test]
+fn each_lock_strength_corrects_within_its_bound() {
+    let clock = atomik_engine::TICKS_PER_CLOCK;
+    // Unlocked, the song falls about 1600 ticks behind in 40 clocks (see the test above).
+    let (tight, normal, loose) = (
+        lag_at(LockStrength::Tight),
+        lag_at(LockStrength::Normal),
+        lag_at(LockStrength::Loose),
+    );
+    assert!(tight.abs() < clock / 2, "tight {tight}");
+    assert!(normal.abs() < clock / 2, "normal {normal}");
+    // Loose lets the song stray by its dead band (a clock) and a staircase step before it acts.
+    assert!(loose.abs() < 2 * clock, "loose {loose}");
+    // The strengths are not the same rule: loose strays further than the other two.
+    assert!(
+        loose.abs() > normal.abs() && loose.abs() > tight.abs(),
+        "{tight} {normal} {loose}"
+    );
+    // The default strength is the normal one.
+    assert_eq!(ExternalClock::new().lock_strength(), LockStrength::Normal);
+    let mut dflt = Following::new();
+    dflt.start_counting(120.0);
+    dflt.run_counted(40, 960);
+    assert_eq!(dflt.lag(), normal);
 }
 
 #[test]
