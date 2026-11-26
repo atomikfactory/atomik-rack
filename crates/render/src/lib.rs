@@ -14,11 +14,8 @@
 //! - [`bundle`]: project folder bundles (layout rules and asset loading for bounces).
 //! - [`plugin_pass`]: the bounce loop for projects with plugins (pre-roll, restarts, latency).
 //! - [`project`]: `.atomik` projects: the song as engine input and the song bounce.
-<<<<<<< HEAD
-//! - [`live_preview`]: a scratch project played by hand, block by block, with notes sent while it renders.
-=======
 //! - `recall`: the snapshot lane played in a bounce (the recalls of the lane, as hot edits).
->>>>>>> origin/feat/snapshot-chains
+//! - [`live_preview`]: a scratch project played by hand, block by block, with notes sent while it renders.
 //! - [`samples`]: sampler sample maps from document zones (shared with the app).
 //! - [`warp`]: the buffers of warped audio clips (time-stretch and pitch-shift) for a bounce.
 //! - [`wav`]: interleaved WAV writing (32-bit float or 24-bit PCM) and reading.
