@@ -192,7 +192,9 @@ its items to this file in the same pull request, with the automated test it comp
 - **Expected:** the transport follows start, stop and tempo; the readout in the status line says that
   the clock is external; losing the clock stops following without a crash. The song stays on the beat of the
   source however the tempo wanders (no slow drift), the audio clips play from where the song reaches them,
-  and a position pointer moves the song at once.
+  and a position pointer moves the song at once. With a sender of clocks alone, Follow Tempo Only plays the
+  song from its own position at the sender's tempo, and Clock Lock Tight, Normal and Loose each hold the beat
+  within their bound.
 - **Automated:** `crates/engine/tests/song_sync.rs`
 - **Known bad:** a transport that keeps running after the clock stops; a song that creeps away from a
   source whose tempo wanders.

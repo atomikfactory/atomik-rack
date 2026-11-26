@@ -1593,6 +1593,8 @@ impl<B: AudioBackend> LiveSession<B> {
         });
         let want = s.follows().then(|| s.clock_in_port.clone()).flatten();
         let cell = r.handle.external_clock();
+        cell.set_tempo_only(s.follow_tempo_only);
+        cell.set_lock_strength(s.clock_lock.strength());
         match want {
             Some(name) if r.clock_in.as_ref().is_some_and(|c| c.wanted == name) => {}
             Some(name) => {
@@ -1668,14 +1670,18 @@ impl<B: AudioBackend> LiveSession<B> {
             return SyncStatus::default();
         };
         let cell = r.handle.external_clock();
-        let following = r.clock_in.is_some() && cell.following();
+        let active = r.clock_in.is_some() && cell.following();
+        // Following the tempo only leaves the transport to the user: it is not "following".
+        let tempo_only = active && cell.tempo_only();
+        let following = active && !tempo_only;
         let state = cell.read();
         SyncStatus {
             clock_out: r.handle.sync_out().config().enabled,
             clock_in_port: r.clock_in.as_ref().map(|c| c.wanted.clone()),
             clock_in_error: self.clock_error.clone(),
             following,
-            external_tempo: state.tempo.filter(|_| following),
+            tempo_only,
+            external_tempo: state.tempo.filter(|_| active),
             external_running: following && state.running,
             receiving: self.clock_receiving,
         }

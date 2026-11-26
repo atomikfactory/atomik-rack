@@ -932,6 +932,8 @@ mod tests {
             clock_out: false,
             clock_while_stopped: false,
             follow_clock: false,
+            follow_tempo_only: false,
+            clock_lock: crate::settings::ClockLock::Normal,
             sample_rate: 48_000,
             midi_resolution: crate::midi_file::MidiResolution::Native,
             midi_chords: false,

@@ -34,7 +34,8 @@
 //!     "clock_out": true,
 //!     "out_ports": [{ "name": "Example Drum Machine", "offset_ms": -5 }],
 //!     "send_while_stopped": false, "send_position": true, "restart_on_locate": true,
-//!     "clock_in_port": "Example Sequencer", "follow_clock": false
+//!     "clock_in_port": "Example Sequencer", "follow_clock": false,
+//!     "follow_tempo_only": false, "clock_lock": "normal"
 //!   },
 //!   "device_loss": {
 //!     "reset_to_default": false,
@@ -70,7 +71,11 @@
 //! the transport is stopped, `send_position` adding Song Position Pointer and `restart_on_locate`
 //! sending Stop, the position and Continue for a locate while playing. `follow_clock` makes the
 //! transport follow the clock of `clock_in_port` (its tempo, Start, Stop, Continue and position)
-//! and the transport buttons stop working while it does. Clock settings are app settings, not part
+//! and the transport buttons stop working while it does; `follow_tempo_only` follows the tempo of
+//! the clock and nothing else (for a sender that streams ticks with no Start or Song Position
+//! Pointer: the song plays from its own position and the transport buttons work), and
+//! `clock_lock` (`"tight"`, `"normal"`, `"loose"`) is how tightly the song is held to the
+//! sender's position while it follows the whole clock. Clock settings are app settings, not part
 //! of the project, and a bounce never follows a clock.
 //! It is an app setting, not part of the project. `device_loss.reset_to_default` makes the app
 //! switch to the host's default devices on its own when the stream is lost (default off: it says
@@ -537,6 +542,43 @@ pub struct ClockOutPort {
     pub offset_ms: i32,
 }
 
+/// How tightly the song is held to the position of the clock it follows (the Clock lock setting;
+/// see `atomik_engine::LockStrength`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ClockLock {
+    /// Corrects faster.
+    Tight,
+    /// The rule the lock always had.
+    #[default]
+    Normal,
+    /// Tolerates more drift before it corrects, for a sender that wanders.
+    Loose,
+}
+
+impl ClockLock {
+    /// The three strengths, tightest first.
+    pub const ALL: [ClockLock; 3] = [ClockLock::Tight, ClockLock::Normal, ClockLock::Loose];
+
+    /// The name the settings dialog and the menu show.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Tight => "Tight",
+            Self::Normal => "Normal",
+            Self::Loose => "Loose",
+        }
+    }
+
+    /// The engine's strength.
+    pub fn strength(self) -> atomik_engine::LockStrength {
+        match self {
+            Self::Tight => atomik_engine::LockStrength::Tight,
+            Self::Normal => atomik_engine::LockStrength::Normal,
+            Self::Loose => atomik_engine::LockStrength::Loose,
+        }
+    }
+}
+
 /// MIDI clock in and out (the Sync tab of the settings).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
@@ -556,6 +598,11 @@ pub struct SyncSettings {
     /// Follow the clock of `clock_in_port`: its tempo, start, stop and position drive the
     /// transport, which the transport buttons then cannot.
     pub follow_clock: bool,
+    /// Follow only the tempo of the clock: the transport stays the user's and the clock's Start,
+    /// Stop, Continue and position are ignored (for a sender of ticks alone).
+    pub follow_tempo_only: bool,
+    /// How tightly the song is held to the clock's position while the whole clock is followed.
+    pub clock_lock: ClockLock,
 }
 
 impl Default for SyncSettings {
@@ -568,6 +615,8 @@ impl Default for SyncSettings {
             restart_on_locate: true,
             clock_in_port: None,
             follow_clock: false,
+            follow_tempo_only: false,
+            clock_lock: ClockLock::Normal,
         }
     }
 }
@@ -1291,6 +1340,8 @@ mod tests {
                 restart_on_locate: false,
                 clock_in_port: Some("Example Sequencer".into()),
                 follow_clock: true,
+                follow_tempo_only: true,
+                clock_lock: ClockLock::Loose,
             },
             device_loss: DeviceLossSettings {
                 reset_to_default: true,
@@ -1335,7 +1386,8 @@ mod tests {
             r#"{ "sync": { "clock_out": true,
                  "out_ports": [ { "name": "A", "offset_ms": 900 }, { "name": "  " },
                                 { "name": "A", "offset_ms": 1 }, { "name": "B", "offset_ms": -900 } ],
-                 "clock_in_port": " ", "follow_clock": true } }"#,
+                 "clock_in_port": " ", "follow_clock": true,
+                 "follow_tempo_only": true, "clock_lock": "tight" } }"#,
         )
         .unwrap();
         let ports: Vec<_> = s
@@ -1349,12 +1401,15 @@ mod tests {
             vec![("A", MAX_CLOCK_OFFSET_MS), ("B", -MAX_CLOCK_OFFSET_MS)]
         );
         assert_eq!(s.sync.clock_in_port, None);
+        assert!(s.sync.follow_tempo_only);
+        assert_eq!(s.sync.clock_lock, ClockLock::Tight);
         // A clock to follow needs a port, a clock to send needs one too.
         assert!(!s.sync.follows());
         assert!(s.sync.sends());
         // Defaults: off, position and restart on.
         let d = SyncSettings::default();
         assert!(!d.sends() && !d.follows() && d.send_position && d.restart_on_locate);
+        assert!(!d.follow_tempo_only && d.clock_lock == ClockLock::Normal);
         assert_eq!(AudioSettings::from_json("{}").unwrap().sync, d);
     }
 

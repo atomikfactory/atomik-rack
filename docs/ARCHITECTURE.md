@@ -3389,6 +3389,21 @@ locates to the count; a Start or a Song Position Pointer is the hard anchor, a l
 lock. A sender that has not said where it is (clocks and Continue only) gives no count and the song runs
 on the tempo alone.
 
+How tightly the lock holds is a setting (Clock lock in the Sync tab and Options > Sync, `settings.json`
+`sync.clock_lock`, an app setting; `ExternalClock::set_lock_strength`, read once per batch). Normal is the rule
+above. Tight closes the error over a sixteenth of a beat at up to 20 % of the ticks of a batch. Loose leaves an
+error inside one clock alone and closes the rest over a quarter of a beat at up to 10 %, for a sender whose tempo
+wanders; the relocate threshold (a beat) is the same for all three. The strength is the one parameter of
+`PhaseLock::step`.
+
+Follow Tempo Only (`sync.follow_tempo_only`, `ExternalClock::set_tempo_only`) is for a sender that streams clocks
+and nothing else. The player then takes only the measured tempo (the same constant segment, the same smoothing
+of the follower): Play, Stop, Locate and the count-in work, so the song plays from its own position when the user
+presses Play, and the sender's Start, Continue, Stop and position are not acted on. A clock that stops does not
+stop the song: the last tempo stays. The practice speed still gives way to the clock's tempo. Changing the mode
+while following stops the transport, like switching following on or off. The status line says "following clock
+tempo" and the transport buttons are not refused.
+
 Audio clips play while following (`audio_follow.rs`). They are placed on the song's own tempo map, which the
 followed tempo replaces, so a clip is played like a note: it starts at the player's frame where the song
 reaches its first frame (through the followed tempo and back through the song's own map) and runs at its
@@ -5722,6 +5737,7 @@ the context menus in the **Clipboard, selection and context menus** bullet, and 
 creation chain in the **Creation chain** bullet.
 
 - **Registry and keymap data** ([ui/src/keymap](../crates/ui/src/keymap), pure, no window system).
+  `Registry::bundled()` lists every command (666) by a stable dotted id with label, group, default
   `Registry::bundled()` lists every command (665) by a stable dotted id with label, group, default
   context, an optional choice argument, and the flags `repeatable`, `menu` and `can_decline`.
   `default_keymap.json` (embedded) holds two profiles, `standard` and `legacy` (the keys of earlier

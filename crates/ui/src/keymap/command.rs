@@ -191,6 +191,8 @@ pub const WINDOW_ARGS: &[&str] = &["main", "rack", "mixer"];
 pub const SONG_ARGS: &[&str] = &["0", "1", "2", "3", "4", "5", "6", "7", "8"];
 /// The values of `transport.input_quantize`.
 pub const QUANTIZE_ARGS: &[&str] = &["off", "eighth", "sixteenth"];
+/// The values of `sync.clock_lock`: how tightly the song is held to a followed MIDI clock.
+pub const CLOCK_LOCK_ARGS: &[&str] = &["tight", "normal", "loose"];
 /// The values of `transport.loop_move`: the loop moves by bars or its length changes by bars.
 pub const LOOP_MOVE_ARGS: &[&str] = &["bar:-1", "bar:+1", "length:-1", "length:+1"];
 /// The values of `transport.go_locator`.
@@ -3445,6 +3447,9 @@ const COMMANDS: &[CommandDef] = &[
         G::Sequencer,
         C::Sequencer,
     ),
+    cmd("sync.clock_lock", "Clock Lock", G::Transport, C::Global)
+        .arg(CLOCK_LOCK_ARGS)
+        .menu(),
     cmd("sync.clock_out", "MIDI Clock Out", G::Transport, C::Global).menu(),
     cmd(
         "sync.clock_while_stopped",
@@ -3456,6 +3461,13 @@ const COMMANDS: &[CommandDef] = &[
     cmd(
         "sync.follow_clock",
         "Follow MIDI Clock",
+        G::Transport,
+        C::Global,
+    )
+    .menu(),
+    cmd(
+        "sync.follow_tempo_only",
+        "Follow Tempo Only",
         G::Transport,
         C::Global,
     )

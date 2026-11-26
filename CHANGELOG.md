@@ -73,6 +73,14 @@ may break APIs and the patch and project formats.
   it is unprotected (the button is off and its tooltip says why), and a failure leaves the version listed with its
   file. A right-click on a row opens a menu with Restore, Compare, Rename, Protect and Delete. The project file and the
   project format do not change; the song is never a version and is never deleted.
+- **Follow Tempo Only and Clock Lock for a followed MIDI clock.** Options > Sync (and the Sync tab of Settings) has a
+  Follow Tempo Only switch for a sender that streams clocks and nothing else (no Start, no Song Position Pointer): the
+  song plays from its own position when you press Play, its tempo follows the measured clock tempo, the transport
+  buttons work, the sender's Start, Stop and position are not acted on, and a clock that stops leaves the last tempo.
+  Clock Lock (Tight, Normal, Loose) sets how tightly the song is held to the position of a clock that sends one: Tight
+  corrects faster, Loose leaves an error inside one clock alone, for a sender that wanders; Normal is what it was.
+  Both are saved with the app settings, not the project. Nothing changes with the defaults, and a bounce never follows
+  a clock.
 - **The built-in manual in French.** Help > Manual opens in French when the interface is in French, from
   `docs/fr/README.md` (a full translation that keeps the English anchors, so every Help Mode link and command
   palette entry opens the same section in both languages) and `docs/fr/KEYBOARD.md` (generated: the new option

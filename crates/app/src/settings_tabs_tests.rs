@@ -2177,6 +2177,8 @@ fn the_sync_tab_lists_the_clock_out_and_in_settings() {
             "A locate while playing",
             "MIDI clock in port",
             "Follow the clock in",
+            "Follow the tempo only",
+            "Clock lock",
         ]
     );
     let sections = d.sections();
@@ -2201,6 +2203,8 @@ fn the_sync_tab_lists_the_clock_out_and_in_settings() {
                 | Choice::ClockRestart(true)
                 | Choice::ClockInPort(None)
                 | Choice::ClockFollow(false)
+                | Choice::ClockTempoOnly(false)
+                | Choice::ClockLock(crate::settings::ClockLock::Normal)
         );
         assert_eq!(d.is_selected(c), want, "{label}");
     }
@@ -2218,6 +2222,8 @@ fn the_clock_choices_are_applied_with_the_settings() {
         Choice::ClockRestart(false),
         Choice::ClockInPort(Some("Example Keyboard".into())),
         Choice::ClockFollow(true),
+        Choice::ClockTempoOnly(true),
+        Choice::ClockLock(crate::settings::ClockLock::Tight),
     ] {
         d.choose(choice);
     }
@@ -2234,6 +2240,8 @@ fn the_clock_choices_are_applied_with_the_settings() {
         ("Example Surface", -5)
     );
     assert_eq!(y.clock_in_port.as_deref(), Some("Example Keyboard"));
+    assert!(y.follow_tempo_only);
+    assert_eq!(y.clock_lock, crate::settings::ClockLock::Tight);
     // The offset moves the ports that are on: choosing it again with the port on sets it.
     let mut d = sync_dialog(s);
     d.choose(Choice::ClockOffset(10));

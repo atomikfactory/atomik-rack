@@ -25,7 +25,7 @@ use crate::keymap_store::WorkflowPrefs;
 use crate::menubar::text_width;
 use crate::session::AudioBackend;
 use crate::settings::{
-    AudioSettings, BUFFER_CHOICES, CLOCK_OFFSET_CHOICES, HostChoice, LINGER_CHOICES,
+    AudioSettings, BUFFER_CHOICES, CLOCK_OFFSET_CHOICES, ClockLock, HostChoice, LINGER_CHOICES,
     MASTER_TUNE_CHOICES, MAX_BUFFER, MAX_SURFACES, MIN_BUFFER, MidiInputRole, PRE_COUNT_CHOICES,
     RECORD_OFFSET_CHOICES, SurfaceSettings, WORKER_CHOICES,
 };
@@ -185,6 +185,10 @@ pub enum Choice {
     ClockInPort(Option<String>),
     /// Whether the transport follows the clock in.
     ClockFollow(bool),
+    /// Whether only the tempo of the clock in is followed.
+    ClockTempoOnly(bool),
+    /// How tightly the song is held to the clock in.
+    ClockLock(ClockLock),
     /// Lists the audio hosts, devices and MIDI ports again (an action, not a setting).
     Rescan,
     /// Opens the controller set-up wizard (an action, not a setting).
@@ -1339,6 +1343,19 @@ impl SettingsDialog {
                 options: switch(Choice::ClockFollow),
                 chips: true,
             },
+            Section {
+                title: "Follow the tempo only",
+                options: switch(Choice::ClockTempoOnly),
+                chips: true,
+            },
+            Section {
+                title: "Clock lock",
+                options: ClockLock::ALL
+                    .into_iter()
+                    .map(|l| (l.label().to_string(), Choice::ClockLock(l)))
+                    .collect(),
+                chips: true,
+            },
         ]
     }
 
@@ -1592,6 +1609,8 @@ impl SettingsDialog {
             Choice::ClockRestart(on) => d.sync.restart_on_locate == *on,
             Choice::ClockInPort(n) => d.sync.clock_in_port == *n,
             Choice::ClockFollow(on) => d.sync.follow_clock == *on,
+            Choice::ClockTempoOnly(on) => d.sync.follow_tempo_only == *on,
+            Choice::ClockLock(l) => d.sync.clock_lock == *l,
         }
     }
 
@@ -1685,6 +1704,8 @@ impl SettingsDialog {
             Choice::ClockRestart(on) => self.draft.sync.restart_on_locate = on,
             Choice::ClockInPort(n) => self.draft.sync.clock_in_port = n,
             Choice::ClockFollow(on) => self.draft.sync.follow_clock = on,
+            Choice::ClockTempoOnly(on) => self.draft.sync.follow_tempo_only = on,
+            Choice::ClockLock(l) => self.draft.sync.clock_lock = l,
         }
     }
 
@@ -1703,6 +1724,10 @@ impl SettingsDialog {
                 "Following a clock: its tempo, Start, Stop, Continue and position drive the transport."
                     .to_string(),
                 "The transport buttons do nothing then, the audio clips are silent and a bounce is never affected."
+                    .to_string(),
+                "Tempo only is for a sender of clocks with no Start: the song plays from its own position."
+                    .to_string(),
+                "Clock lock: how tightly the song is held to the clock; loose suits a sender that wanders."
                     .to_string(),
             ];
             notes.extend(self.lists.errors.iter().cloned());
