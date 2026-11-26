@@ -283,6 +283,9 @@ impl RackView {
                     out.push(UiAction::Command(cmd));
                 }
             }
+            PlayerBtn::ScaleTag => self.scale_tag_down(i, true, out),
+            PlayerBtn::ScaleNew => self.scale_picker(i, true, out),
+            PlayerBtn::ScaleEdit => self.scale_picker(i, false, out),
             PlayerBtn::OctaveDec | PlayerBtn::OctaveInc => {
                 let now = self.param_value(i, "octaves").round() as i32;
                 let next = if b == PlayerBtn::OctaveInc {
@@ -296,6 +299,39 @@ impl RackView {
                 }
             }
         }
+    }
+
+    /// A click on the name tag of a quantizer's scale strip: the next (or before) source.
+    pub(super) fn scale_tag_down(&mut self, i: usize, forward: bool, out: &mut Vec<UiAction>) {
+        self.select(i, out);
+        let d = &self.devices[i];
+        let (Some(desc), Some(dev)) = (d.desc, d.device.as_ref()) else {
+            return;
+        };
+        let now = crate::scale_strip::source_of(dev, &desc);
+        let next = crate::scale_strip::cycled(now, &self.song_scales, forward);
+        out.push(UiAction::Command(crate::scale_strip::source_command(
+            &d.key, next,
+        )));
+    }
+
+    /// NEW (a scale made from the device's own notes) or EDIT (the scale the tag names) of a
+    /// quantizer's scale strip: asks the app for the scale picker.
+    fn scale_picker(&mut self, i: usize, new: bool, out: &mut Vec<UiAction>) {
+        let d = &self.devices[i];
+        let (Some(desc), Some(dev)) = (d.desc, d.device.as_ref()) else {
+            return;
+        };
+        let id = match crate::scale_strip::source_of(dev, &desc) {
+            crate::scale_strip::Source::Named(id) if !new => Some(id),
+            _ if new => None,
+            _ => return,
+        };
+        out.push(UiAction::SongScalePicker {
+            device: d.key.clone(),
+            id,
+            own: crate::scale_strip::own_mask(dev, &desc),
+        });
     }
 
     /// `SetParam` of a choice param unless it already has that value.

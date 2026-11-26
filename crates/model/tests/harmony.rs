@@ -348,10 +348,12 @@ fn a_bad_scale_is_refused() {
     let reg = registry();
     let mut d = doc(&reg);
     let bad = |s: SongScale, others: Vec<SongScale>| {
-        let mut h = Harmony::default();
-        h.scales = others;
-        h.scales.push(s);
-        h
+        let mut scales = others;
+        scales.push(s);
+        Harmony {
+            scales,
+            ..Harmony::default()
+        }
     };
     let cases = [
         bad(SongScale::new(1, "", 1), vec![]),

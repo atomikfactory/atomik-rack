@@ -54,7 +54,8 @@
 //!             "groups"?: [{"id", "name", "parent"?, "collapsed"?, "color"?, "muted"? (v43), "solo"? (v43)}…]
 //!                                                                     (v22; written only when non-empty),
 //!             "key"?: {"root": 0..=11, "scale": a scale id but "chromatic"}, "key_changes"?: [{"tick", "root",
-//!                           "scale"}…], "chords"?: [{"tick", "length", "root", "quality": a chord id, "bass"?: 0..=11}…]
+//!                           "scale"}…], "chords"?: [{"tick", "length", "root", "quality": a chord id, "bass"?: 0..=11}…],
+//!                           "scales"?: [{"id": 1..=255, "name", "mask": 1..=4095 (bit pc = pitch class)}…]
 //!                                                  (v45, ignorable; each written only when set),
 //!             "launcher"?: {"quantize"? ("none", "1/16", "1/8", "1/4", "1/2", "1 bar", "2 bars", "4 bars"; omitted for
 //!                           "1 bar"), "stop_empty"? (`false` only), "scenes"?: [{"name"?, "color"?, "tempo"?}…],
@@ -464,8 +465,9 @@
 //! scenes, slots and the launch quantize, written only when it holds something and ignorable (a reader
 //! that drops it opens the song with its arrangement and no launcher). A slot is a note clip of a note
 //! track; its `"row"` is a scene index, and a slot of a device without a track is not written.
-//! The song may also carry its harmony (see [`crate::harmony`]) in three optional fields, `"key"`,
-//! `"key_changes"` and `"chords"`, written only when set and ignorable (a reader that drops them opens the
+//! The song may also carry its harmony (see [`crate::harmony`]) in four optional fields, `"key"`,
+//! `"key_changes"`, `"chords"` and `"scales"` (named scales for the CV Quantizers, see
+//! [`crate::harmony::SongScale`]), written only when set and ignorable (a reader that drops them opens the
 //! song without a key or a chord lane). Chords are sorted by tick and never overlap.
 //! An audio clip may also carry `"pitch_edits"` after its `"warp"` (see [`crate::pitch_edit`]): one
 //! `[src_start, src_end, cents, drift, vibrato_keep]` per edited note, in asset frames, sorted and

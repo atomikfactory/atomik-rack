@@ -553,6 +553,7 @@ pub fn chord_wheel_layout(desc: &DeviceDescriptor) -> PanelSpec {
         drum_gen: None,
         arp: None,
         key_chord: None,
+        scale_strip: None,
         chord_wheel: Some(panel),
         modsrc: None,
         wavetable: None,

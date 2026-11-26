@@ -3939,7 +3939,8 @@ worker count. A song without key and chords gives devices no harmony at all. See
 
 The song also holds up to 16 **named scales**: a name and a set of the twelve pitch classes, saved in
 the song (the optional `"scales"` field, ignorable like the key and the chords) and edited in the
-Song Scales panel (Song menu). They are part of the harmony, so an edit is one undo step and reaches
+scale picker that the NEW and EDIT buttons of a CV Quantizer panel open. They are part of the harmony,
+so an edit is one undo step and reaches
 the engine with the next song swap. They do not change along the song, so every batch carries the
 whole table (`HarmonyNow::scale_mask(id)`, a fixed array: nothing allocates). The CV Quantizer picks
 one with `scale.source` named and `scale.id`; any number of quantizers can name the same scale and

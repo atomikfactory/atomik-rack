@@ -26,6 +26,14 @@ may break APIs and the patch and project formats.
   (`track.note`, 1/64 to four bars, triplet and dotted). The next tick starts the stretch again; with the trigger clock
   it starts at the rising edge and no longer depends on how long the gate stays high. A project saved before the
   setting tracks half a cycle, as it did.
+- **Song scales that several CV Quantizers share.** The song can hold up to 16 named scales (a name and any set of the
+  twelve notes), saved in the project as the optional field `scales` (ignorable, so the project format does not change
+  and an older build opens the song with every quantizer on its own scale). A quantizer's panel has a name tag that a
+  click cycles through its own notes, the song key and the song scales by name (right click goes back), NEW to save
+  its own scale as a song scale and EDIT to change the one in use: a name, the notes, or a fill from a root and a
+  scale of the piano roll, with REMOVE to delete it. Every quantizer that uses a scale follows an edit at once, and
+  one undo takes it back. A quantizer saves the scale's id, so renaming keeps the links and a deleted scale leaves
+  its quantizers on their own notes.
 
 ### Changed
 - **The device CPU readout no longer allocates in a playing window.** Each pass (about five a second) rebuilt every

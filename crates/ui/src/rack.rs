@@ -264,6 +264,12 @@ enum PlayerBtn {
     OctaveInc,
     /// The FROM CLIP button of a Key & Chord panel.
     FromClip,
+    /// The name tag of a CV Quantizer's scale strip (click: next source, right click: before).
+    ScaleTag,
+    /// The NEW button of a CV Quantizer's scale strip.
+    ScaleNew,
+    /// The EDIT button of a CV Quantizer's scale strip.
+    ScaleEdit,
     /// A button, a lane mute or the cells of a drum generator panel.
     Drum(DrumButton),
     /// A part of a Chord Wheel panel: the wheel, a card, a padlock, a length or a button.
@@ -681,6 +687,8 @@ pub struct RackView {
     /// The song key (short) and the chord at the playhead, for the SONG tags of the devices that
     /// follow the song.
     song_harmony: (Option<String>, Option<String>),
+    /// The scales saved in the song (id, name), for the scale strips of the CV Quantizers.
+    song_scales: Vec<(u8, String)>,
     repaint: bool,
     content_height: f64,
     /// How many columns the view lays out (1 inside a container).
@@ -927,6 +935,30 @@ impl RackView {
         )
     }
 
+    /// Tells the view the scales saved in the song (id and name, in the song's order): the scale
+    /// strips of the CV Quantizers name and cycle through them.
+    pub fn set_song_scales<'a>(
+        &mut self,
+        scales: impl ExactSizeIterator<Item = (u8, &'a str)> + Clone,
+    ) {
+        let same = self.song_scales.len() == scales.len()
+            && self
+                .song_scales
+                .iter()
+                .zip(scales.clone())
+                .all(|((i, n), (j, m))| *i == j && n == m);
+        if !same {
+            self.song_scales = scales.map(|(i, n)| (i, n.to_owned())).collect();
+            for d in &mut self.devices {
+                if d.spec.scale_strip.is_some() {
+                    d.revision += 1;
+                    d.lists = [None, None];
+                }
+            }
+            self.repaint = true;
+        }
+    }
+
     /// Tells the view the scale of the clip open in the piano roll (`None` when no clip is open
     /// or it has no scale): it enables the FROM CLIP button of the Key & Chord panels.
     pub fn set_clip_scale(&mut self, scale: Option<atomik_model::theory::Scale>) {
@@ -1084,6 +1116,7 @@ impl RackView {
             midi: crate::MidiMarks::default(),
             clip_scale: None,
             song_harmony: (None, None),
+            song_scales: Vec::new(),
             repaint: true,
             content_height: 0.0,
             columns: 1,
@@ -1603,6 +1636,9 @@ impl RackView {
             (Some(d), _) if type_id == crate::key_chord_panel::KEY_CHORD_TYPE => {
                 crate::key_chord_panel::key_chord_layout(d)
             }
+            (Some(d), _) if type_id == crate::scale_strip::QUANTIZER_TYPE => {
+                crate::scale_strip::quantizer_layout(d)
+            }
             (Some(d), _) if crate::fx::FxKind::of(type_id).is_some() => {
                 crate::fx_layout::fx_layout(
                     crate::fx::FxKind::of(type_id).unwrap_or(crate::fx::FxKind::Reverb),
@@ -1622,6 +1658,7 @@ impl RackView {
                 drum_gen: None,
                 arp: None,
                 key_chord: None,
+                scale_strip: None,
                 chord_wheel: None,
                 modsrc: None,
                 wavetable: None,
@@ -2223,6 +2260,16 @@ impl RackView {
                             let hit = Hit::Player(i, PlayerBtn::FromClip);
                             tree.add(dn, kc.from_clip + off, hit, false);
                         }
+                        if let Some(ss) = d.spec.scale_strip {
+                            tree.add(dn, ss.tag + off, Hit::Player(i, PlayerBtn::ScaleTag), false);
+                            tree.add(dn, ss.new + off, Hit::Player(i, PlayerBtn::ScaleNew), false);
+                            tree.add(
+                                dn,
+                                ss.edit + off,
+                                Hit::Player(i, PlayerBtn::ScaleEdit),
+                                false,
+                            );
+                        }
                         if let Some(cw) = d.spec.chord_wheel {
                             let wheel = Hit::Player(i, PlayerBtn::Wheel(WheelButton::Wheel));
                             tree.add(dn, cw.wheel + off, wheel, false);
@@ -2552,6 +2599,21 @@ impl RackView {
             return None;
         }
         let b = d.spec.key_chord?.from_clip;
+        Some(self.rack_to_view(b.center() + d.offset()))
+    }
+
+    /// Centre of the name tag (`0`), NEW button (`1`) or EDIT button (`2`) of a CV Quantizer's scale
+    /// strip (logical view coordinates), when it is on screen-side (front, unfolded).
+    pub fn scale_strip_center(&self, key: &DeviceKey, part: u8) -> Option<Point> {
+        if self.flip != Flip::Front {
+            return None;
+        }
+        let d = &self.devices[self.device_index(key)?];
+        if d.folded {
+            return None;
+        }
+        let s = d.spec.scale_strip?;
+        let b = [s.tag, s.new, s.edit][usize::from(part.min(2))];
         Some(self.rack_to_view(b.center() + d.offset()))
     }
 
@@ -4310,6 +4372,9 @@ impl RackView {
             (Hit::Player(i, PlayerBtn::Wheel(WheelButton::Wheel)), PointerButton::Secondary) => {
                 self.wheel_menu(i, rp, pos, out);
             }
+            (Hit::Player(i, PlayerBtn::ScaleTag), PointerButton::Secondary) => {
+                self.scale_tag_down(i, false, out);
+            }
             (Hit::Player(i, b), PointerButton::Primary) => {
                 self.player_down(i, b, modifiers, clicks, out);
             }
@@ -5421,6 +5486,7 @@ impl RackView {
             master: d.master.info(),
             mix: d.mix.info(if d.is_mix() { &d.meters } else { &[] }),
             from_clip: self.clip_scale.is_some(),
+            song_scales: &self.song_scales,
             song_key: self.song_harmony.0.as_deref(),
             song_chord: self.song_harmony.1.as_deref(),
             sampling: self.sampling.as_ref() == Some(&d.key),
