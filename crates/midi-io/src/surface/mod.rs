@@ -13,10 +13,15 @@
 //! view draws. The driver owns the bank (which eight strips the surface shows).
 
 pub mod generic;
+pub mod hui;
 pub mod mcu;
+pub mod osc;
+pub mod osc_wire;
 
 pub use generic::Generic;
+pub use hui::Hui;
 pub use mcu::Mcu;
+pub use osc::Osc;
 
 /// What kind of console strip a surface strip stands for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -53,6 +58,14 @@ pub struct StripState {
     pub armed: bool,
     /// The strip is selected.
     pub selected: bool,
+    /// The signal level for a level meter: 0 is silence, 1 is full scale (a peak at or over
+    /// 0 dBFS), in between a 60 dB range drawn linearly in dB.
+    pub meter: f32,
+    /// The level of the send the driver asked for (see [`Needs::send`]), 0..=1, when the strip
+    /// has that send.
+    pub send: Option<f32>,
+    /// The send level as text (`-12.0dB`).
+    pub send_text: String,
 }
 
 /// The master fader.
@@ -119,6 +132,56 @@ pub struct RemoteDevice {
     /// Which of the parameters are stepped (a choice or a switch): they jump by steps, so the
     /// soft takeover leaves them alone.
     pub stepped: Vec<bool>,
+}
+
+/// What a driver needs the host to put into the [`SurfaceState`] beyond the basics. Reading
+/// meters and sends costs a little on every frame, so only a driver that shows them asks.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Needs {
+    /// The strips' [`StripState::meter`].
+    pub meters: bool,
+    /// The send (1-based) whose level goes into [`StripState::send`].
+    pub send: Option<u8>,
+}
+
+/// What a V-pot (or, flipped, a fader) of an eight-fader surface drives.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum VpotMode {
+    /// The strip's pan.
+    #[default]
+    Pan,
+    /// The level of one send of the strip.
+    Send,
+    /// The parameters of the device the surface follows, a page of eight at a time.
+    Plugin,
+}
+
+/// What a unit tells the unit linked to it (an extender follows the main unit).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Linked {
+    /// The index of the strip on the first fader of the main unit.
+    pub bank: usize,
+    /// Faders and V-pots are swapped.
+    pub flip: bool,
+    /// What the V-pots drive.
+    pub vpot: VpotMode,
+    /// The send (1-based) the send mode addresses.
+    pub send_slot: u8,
+    /// The page of device parameters.
+    pub page: usize,
+    /// How many units share the bank (a main unit alone is 1).
+    pub units: usize,
+}
+
+/// What a strip's control is, when it is not the one the fader and the V-pot have by default.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StripControl {
+    /// The strip's level (the fader of the console).
+    Level,
+    /// The strip's pan.
+    Pan,
+    /// The level of a send, 1-based.
+    Send(u8),
 }
 
 /// A transport key.
@@ -188,6 +251,19 @@ pub enum SurfaceAction {
     Transport(TransportButton),
     /// The jog wheel turned by this many detents (positive is forward).
     Jog(i32),
+    /// A control of a strip moved to a position or by an amount (an eight-fader surface that
+    /// is flipped or whose V-pots drive something else than the pan). Positions and amounts are
+    /// fractions of the control's range.
+    Strip {
+        /// The strip.
+        strip: usize,
+        /// The control.
+        control: StripControl,
+        /// How it moved.
+        change: KnobMove,
+    },
+    /// A function key (1-based) was pressed: the app runs the command the user bound to it.
+    Function(u8),
     /// A remote knob moved: the knob (0-based) drives the matching parameter of the device the
     /// surface follows.
     Knob {
@@ -211,6 +287,29 @@ pub trait SurfaceDriver: Send {
     fn feeds_mappings(&self) -> bool {
         false
     }
+
+    /// What the state has to carry for this driver (see [`Needs`]).
+    fn needs(&self) -> Needs {
+        Needs::default()
+    }
+
+    /// The unit's bank, mode and page, for a unit linked to it (`None` for a driver that has no
+    /// linked units).
+    fn linked(&self) -> Option<Linked> {
+        None
+    }
+
+    /// True for a unit that adds strips to the main unit (an extender) and follows its
+    /// [`Self::linked`] state.
+    fn extends(&self) -> bool {
+        false
+    }
+
+    /// The main unit's state (an extender takes it over).
+    fn follow(&mut self, _main: Linked) {}
+
+    /// How many units share the bank, told to the main unit by the host.
+    fn set_units(&mut self, _units: usize) {}
 
     /// The surface was just connected: appends what to send to bring it online and, since
     /// nothing is known about what it shows, everything it should show for `state`.
@@ -243,6 +342,9 @@ pub trait SurfaceDriver: Send {
 pub fn driver_by_id(id: &str) -> Option<Box<dyn SurfaceDriver>> {
     match id {
         "mcu" => Some(Box::new(Mcu::new())),
+        "mcu-extender" => Some(Box::new(Mcu::extender())),
+        "hui" => Some(Box::new(Hui::new())),
+        "osc" => Some(Box::new(Osc::new())),
         "generic" => Some(Box::new(Generic::new())),
         _ => None,
     }
@@ -251,5 +353,11 @@ pub fn driver_by_id(id: &str) -> Option<Box<dyn SurfaceDriver>> {
 /// The ids and labels of the drivers, in the order the settings list them.
 pub const DRIVERS: &[(&str, &str)] = &[
     ("mcu", "Control surface (MCU-compatible)"),
+    (
+        "mcu-extender",
+        "Extender of the control surface (MCU-compatible)",
+    ),
+    ("hui", "Control surface (HUI-compatible)"),
+    ("osc", "OSC (tablet or other software, over the network)"),
     ("generic", "Generic controller (mapped)"),
 ];
