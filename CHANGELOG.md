@@ -51,6 +51,11 @@ may break APIs and the patch and project formats.
   legs of a pull request without the `full-ci` label; every push to `main` and every manual run still runs them on
   all three systems (the debug legs, macOS included, and the release legs). `cargo test` works as before. No test
   was removed or changed.
+- **CI compiles each crate once: the compiled crates are cached with sccache.** The clippy job, the test legs, the
+  plugin sandbox job and the coverage shards compile through sccache, which keeps its store in the GitHub Actions
+  cache (no secret). The workspace's own crates are cached as well as the dependencies, so a run whose code did
+  not change in a crate downloads it instead of building it; the job logs end with the cache hit rate. The
+  registry and git cache stays. Release, nightly and package builds do not use it. See `docs/TESTING.md`.
 
 ## [0.5.0-rc.3] - 2026-11-25
 

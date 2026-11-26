@@ -107,11 +107,18 @@ jobs:
       - uses: ./.github/actions/setup-rust
         with:
           cache-key: clippy
+          sccache: "true"
       - name: cargo clippy
         env:
           PACKAGES: ${{ needs.changes.outputs.packages }}
         # shellcheck disable=SC2086
         run: cargo clippy $PACKAGES --all-targets -- -D warnings
+      - name: sccache statistics
+        if: always()
+        shell: bash
+        # The hit rate of this job's compiles. A missing sccache (the setup failed) is not a
+        # second error.
+        run: command -v sccache > /dev/null && sccache --show-stats || true
 
   test:
     name: test (${{ matrix.os }}, ${{ matrix.profile }})
@@ -155,6 +162,7 @@ jobs:
         if: env.RUN_CODE == 'true'
         with:
           cache-key: test-${{ matrix.profile }}
+          sccache: "true"
       # The test plugins are libraries of the workspace: build them once here, next to the tests'
       # own dependencies, and tell the tests so (no nested `cargo build` under a lock in each
       # test binary). Without the variable the tests build what they need themselves.
@@ -215,6 +223,12 @@ jobs:
           name: pixel-diff-${{ matrix.os }}-${{ matrix.profile }}
           path: target/pixel-diff/
           if-no-files-found: ignore
+      - name: sccache statistics
+        if: always() && env.RUN_CODE == 'true'
+        shell: bash
+        # The hit rate of this job's compiles. A missing sccache (the setup failed) is not a
+        # second error.
+        run: command -v sccache > /dev/null && sccache --show-stats || true
 
   # The plugin sandbox with a real child process on the two platforms where its wake-up calls and
   # the redirection of the child's stdout are not Windows code: the doorbell, the shared block,
@@ -246,6 +260,7 @@ jobs:
       - uses: ./.github/actions/setup-rust
         with:
           cache-key: sandbox
+          sccache: "true"
       # The test plugin libraries first, as the test job does: the tests then only locate them.
       - name: Build the test plugins
         shell: bash
@@ -262,6 +277,12 @@ jobs:
       - run: >-
           cargo test -p atomik-plugin-ipc -p atomik-plugin-sandbox -p atomik-plugin-hostd
           -p atomik-plugin-host --no-fail-fast
+      - name: sccache statistics
+        if: always()
+        shell: bash
+        # The hit rate of this job's compiles. A missing sccache (the setup failed) is not a
+        # second error.
+        run: command -v sccache > /dev/null && sccache --show-stats || true
 
   deny:
     name: cargo-deny
