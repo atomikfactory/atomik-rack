@@ -24,8 +24,8 @@ use crate::app_core::midimap::{GestureKey, Resolved};
 use crate::surface::SurfaceHost;
 use atomik_core::PPQ;
 use atomik_midi_io::surface::{
-    KnobMove, MasterState, PositionState, RemoteDevice, StripKind, StripState, SurfaceAction,
-    SurfaceDriver, SurfaceState, TransportButton, TransportLeds,
+    KnobMove, MasterState, Needs, PositionState, RemoteDevice, StripControl, StripKind, StripState,
+    SurfaceAction, SurfaceDriver, SurfaceState, TransportButton, TransportLeds,
 };
 use atomik_ui::timeline::tick_to_seconds;
 
@@ -39,6 +39,9 @@ pub const MAX_REMOTE_PARAMS: usize = 16 * REMOTE_KNOBS;
 fn is_remote_param(key: &str) -> bool {
     !atomik_model::console::is_hidden_param(key) && key != "bypass" && !key.starts_with("cv.")
 }
+
+/// The range of a surface's level meter: this many dB below full scale is silence.
+const SURFACE_METER_RANGE_DB: f32 = 60.0;
 
 /// What a surface strip is in the project.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -214,7 +217,14 @@ impl<S: EngineSink> AppCore<S> {
     }
 
     /// The surface's view of the project, with what each strip stands for.
+    #[cfg(test)]
     pub(super) fn surface_view(&self) -> (SurfaceState, Vec<StripRef>) {
+        self.surface_view_with(Needs::default())
+    }
+
+    /// [`Self::surface_view`] with what a driver asked for besides the basics: the level of
+    /// each strip's meter and of one send.
+    pub(super) fn surface_view_with(&self, needs: Needs) -> (SurfaceState, Vec<StripRef>) {
         let doc = self.doc();
         let console = &doc.console;
         let reg = &self.registry;
@@ -241,6 +251,16 @@ impl<S: EngineSink> AppCore<S> {
         let channel_strip = |key: &DeviceKey, name: String, kind: StripKind, armed: bool| {
             let pan = doc.param_value(key, "pan", reg);
             let fader_db = doc.effective_fader_db(key, reg);
+            let (send, send_text) = match needs.send {
+                Some(slot) => {
+                    let param = format!("send{slot}.level");
+                    match doc.param_value(key, &param, reg) {
+                        Some(db) => (Some(norm(key, &param)), db_text(Some(db))),
+                        None => (None, String::new()),
+                    }
+                }
+                None => (None, String::new()),
+            };
             StripState {
                 name,
                 kind,
@@ -252,6 +272,13 @@ impl<S: EngineSink> AppCore<S> {
                 solo: flag(key, "solo"),
                 armed,
                 selected: selected.contains(key),
+                meter: if needs.meters {
+                    self.strip_meter_level(key)
+                } else {
+                    0.0
+                },
+                send,
+                send_text,
             }
         };
         for c in &console.channels {
@@ -286,6 +313,7 @@ impl<S: EngineSink> AppCore<S> {
                 solo: v.solo,
                 armed: false,
                 selected: !v.members.is_empty() && v.members.iter().all(|m| selected.contains(m)),
+                ..StripState::default()
             });
             refs.push(StripRef::Vca(v.id));
         }
@@ -313,8 +341,8 @@ impl<S: EngineSink> AppCore<S> {
     /// The surface `id`'s view of the project: [`Self::surface_view`] plus the value of every
     /// remote parameter of the device the surface follows (the driver shows them a page at a
     /// time).
-    pub(super) fn surface_view_of(&self, id: &str) -> (SurfaceState, Vec<StripRef>) {
-        let (mut state, refs) = self.surface_view();
+    pub(super) fn surface_view_of(&self, id: &str, needs: Needs) -> (SurfaceState, Vec<StripRef>) {
+        let (mut state, refs) = self.surface_view_with(needs);
         (state.knobs, state.remote) = self.remote_knobs(id);
         (state, refs)
     }
@@ -397,7 +425,7 @@ impl<S: EngineSink> AppCore<S> {
     pub fn knob_page(&mut self, delta: i32) {
         let mut hosts = std::mem::take(&mut self.surfaces);
         for host in &mut hosts {
-            let (state, refs) = self.surface_view_of(&host.id);
+            let (state, refs) = self.surface_view_of(&host.id, host.driver.needs());
             let mut actions = Vec::new();
             host.driver.knob_page(delta, &state, &mut actions);
             for action in actions {
@@ -435,6 +463,50 @@ impl<S: EngineSink> AppCore<S> {
         self.surface_set(key, false, &r, norm.clamp(0.0, 1.0));
     }
 
+    /// The level a surface's meter shows for strip `key`: the console's peak reading (the same
+    /// ballistics as the strip's own meter), 0 at silence (60 dB down) and 1 at full scale.
+    fn strip_meter_level(&self, key: &DeviceKey) -> f32 {
+        self.console.meter(key).map_or(0.0, |m| {
+            let db = m.peak[0].level_db.max(m.peak[1].level_db);
+            if db.is_nan() {
+                0.0
+            } else {
+                ((db + SURFACE_METER_RANGE_DB) / SURFACE_METER_RANGE_DB).clamp(0.0, 1.0)
+            }
+        })
+    }
+
+    /// True while a control surface shows level meters (the console's meters are then read every
+    /// frame, even with the console hidden).
+    pub fn surfaces_want_meters(&self) -> bool {
+        self.surfaces
+            .iter()
+            .any(|h| h.connected && h.driver.needs().meters)
+    }
+
+    /// The commands the function keys of the surfaces asked for since the last call, as the ids
+    /// of the command registry (`id` or `id=argument`), for the shell to run.
+    pub fn take_surface_commands(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.surface_commands)
+    }
+
+    /// A function key of the surface `host` was pressed: queues the command the user bound to it,
+    /// or says there is none.
+    fn surface_function(&mut self, host: &SurfaceHost, key: u8) {
+        let command = host
+            .functions
+            .get(usize::from(key).saturating_sub(1))
+            .map(|c| c.trim())
+            .filter(|c| !c.is_empty());
+        match command {
+            Some(command) => self.surface_commands.push(command.to_owned()),
+            None => self.report(format!(
+                "{} F{key} has no command (set function_keys in the settings file)",
+                host.id
+            )),
+        }
+    }
+
     fn surface_position(&self) -> PositionState {
         let song = &self.doc().song;
         let tick = self.position.max(0);
@@ -462,6 +534,10 @@ impl<S: EngineSink> AppCore<S> {
         }
         let mut hosts = std::mem::take(&mut self.surfaces);
         self.midi.set_now(now);
+        // The extenders take over the main unit's bank first.
+        for i in 0..hosts.len() {
+            link_units(&mut hosts, i);
+        }
         for host in &mut hosts {
             self.surface_host_frame(host, now);
         }
@@ -470,7 +546,7 @@ impl<S: EngineSink> AppCore<S> {
     }
 
     fn surface_host_frame(&mut self, host: &mut SurfaceHost, now: f64) {
-        let (state, refs) = self.surface_view_of(&host.id);
+        let (state, refs) = self.surface_view_of(&host.id, host.driver.needs());
         let mut out = Vec::new();
         if !host.connected {
             host.connected = true;
@@ -500,11 +576,14 @@ impl<S: EngineSink> AppCore<S> {
             self.surface_message(&host.port, &host.id, message);
         }
         for action in actions {
-            self.apply_surface_action(action, &refs, &host.id);
+            match action {
+                SurfaceAction::Function(key) => self.surface_function(host, key),
+                action => self.apply_surface_action(action, &refs, &host.id),
+            }
         }
         if now >= host.next_feedback {
             // What the actions changed is what the surface shows next.
-            let (state, _) = self.surface_view_of(&host.id);
+            let (state, _) = self.surface_view_of(&host.id, host.driver.needs());
             host.driver.feedback(&state, &mut out);
             host.send_all(&mut out);
             host.next_feedback = now + crate::surface::FEEDBACK_PERIOD;
@@ -603,6 +682,13 @@ impl<S: EngineSink> AppCore<S> {
                 self.follow_console_selection();
                 self.after_view_change();
             }
+            SurfaceAction::Strip {
+                strip,
+                control,
+                change,
+            } => self.surface_strip_control(id, strip, control, change, refs),
+            // The host runs the function keys: it knows the commands bound to them.
+            SurfaceAction::Function(_) => {}
             SurfaceAction::Transport(button) => self.surface_transport(button),
             SurfaceAction::Knob { knob, change } => self.surface_knob(id, knob, change),
             SurfaceAction::Notice(message) => self.reject(message),
@@ -612,6 +698,39 @@ impl<S: EngineSink> AppCore<S> {
                 self.transport_action(TransportAction::Locate(tick));
             }
         }
+    }
+
+    /// A control of a strip moved (a flipped fader, a V-pot that drives a level or a send).
+    fn surface_strip_control(
+        &mut self,
+        id: &str,
+        strip: usize,
+        control: StripControl,
+        change: KnobMove,
+        refs: &[StripRef],
+    ) {
+        let Some(r) = refs.get(strip) else { return };
+        let param = match control {
+            StripControl::Level => "fader".to_owned(),
+            StripControl::Pan => "pan".to_owned(),
+            StripControl::Send(slot) => format!("send{slot}.level"),
+        };
+        let resolved = match (control, r) {
+            (StripControl::Level, StripRef::Vca(vca)) => Some(Resolved::Vca(*vca)),
+            _ => self.strip_param(r, &param),
+        };
+        let Some(resolved) = resolved else { return };
+        let norm = match change {
+            KnobMove::To(value) => value,
+            KnobMove::By(delta) => {
+                let Some(now) = self.target_value(&resolved) else {
+                    return;
+                };
+                now + delta
+            }
+        };
+        let key = GestureKey::Surface(format!("{id}:{param}:{strip}"));
+        self.surface_set(key, false, &resolved, norm.clamp(0.0, 1.0));
     }
 
     fn surface_touch(&mut self, key: GestureKey, touched: bool) {
@@ -675,6 +794,22 @@ impl<S: EngineSink> AppCore<S> {
     }
 }
 
+/// Tells the unit `i` of `hosts` what the main unit it extends shows (the first surface whose
+/// driver has linked units), and tells that main unit how many units share its bank.
+fn link_units(hosts: &mut [SurfaceHost], i: usize) {
+    if hosts[i].driver.extends() {
+        let main = hosts
+            .iter()
+            .find_map(|h| (!h.driver.extends()).then(|| h.driver.linked()).flatten());
+        if let Some(main) = main {
+            hosts[i].driver.follow(main);
+        }
+    } else if hosts[i].driver.linked().is_some() {
+        let extenders = hosts.iter().filter(|h| h.driver.extends()).count();
+        hosts[i].driver.set_units(1 + extenders);
+    }
+}
+
 /// A level as text: `-6.0dB`, `-inf`.
 fn db_text(db: Option<f32>) -> String {
     match db {
@@ -705,3 +840,11 @@ mod surfaces_tests;
 #[cfg(test)]
 #[path = "app_core_controller_tests.rs"]
 mod controller_tests;
+
+#[cfg(test)]
+#[path = "app_core_surface_modes_tests.rs"]
+mod modes_tests;
+
+#[cfg(test)]
+#[path = "app_core_osc_tests.rs"]
+mod osc_tests;

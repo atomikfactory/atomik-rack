@@ -4199,8 +4199,40 @@ fast forward move a bar and the jog wheel a sixteenth per detent.
   non-ASCII becomes `?`), the name above and the pan below (the fader's value while it is touched).
   The host connection handshake answers a query with the documented response to its challenge; the
   device query goes out on connect and "go offline" on disconnect. Every bank move and a handshake
-  make the next pass send the whole surface again. Level meters, flip and the function keys are not
-  implemented.
+  make the next pass send the whole surface again. **Level meters** are channel pressure (one step
+  of twelve, the top one a clip) from the console's own peak ballistics, read every frame while a
+  surface shows them (`Needs::meters`, `AppCore::surfaces_want_meters`: the console meters are then
+  read even with the console hidden). **Flip** swaps what the faders and the V-pots drive. The
+  Pan, Send and Plug-in keys choose what the V-pots drive: the pan, one of the eight sends of the
+  strip (`send<k>.level`; pressing Send again takes the next one), or the parameters of the device
+  the surface follows, eight at a time (sixteen with an extender), the bank keys turning the pages.
+  Those controls are `SurfaceAction::Strip` (a strip's level, pan or send, set or turned) and the
+  existing `Knob`. The **function keys** F1 to F8 are `SurfaceAction::Function`: the host queues the
+  registry command the surface's `function_keys` setting binds to the key
+  (`AppCore::take_surface_commands`) and the shell runs it as the key bound to it would. An
+  **extender** (`Mcu::extender`, id `mcu-extender`, SysEx device id `0x15`) is a second surface in
+  the list: its eight strips follow the main unit's, it takes over the main unit's bank, flip,
+  V-pot mode and page each frame (`SurfaceDriver::linked` / `follow`), and the main unit's bank
+  keys then move sixteen strips (`set_units`).
+- **The HUI driver** (`Hui`, id `hui`, "Control surface (HUI-compatible)"; the table at the top of
+  [hui.rs](../crates/midi-io/src/surface/hui.rs)). The older protocol of the same class of surface:
+  a switch is a pair of controller messages (a zone, then a port), a fader a pair of controllers
+  (upper and lower seven bits), the surface's ping is answered, and the four-character displays
+  and the meters are SysEx. Faders, select, mute, solo and record-ready with their lamps, touch,
+  V-pots as pans with rings, the jog wheel, the transport keys and their lamps, and the bank keys.
+  It shares the touch, echo and rounding rules of the eight-fader driver.
+- **The OSC surface** (`Osc`, id `osc`, "OSC (tablet or other software, over the network)"; the
+  address map is the table at the top of [osc.rs](../crates/midi-io/src/surface/osc.rs), the wire
+  format [osc_wire.rs](../crates/midi-io/src/surface/osc_wire.rs), a small OSC 1.0 encoder and
+  decoder with no dependency). The driver reads and writes packets like the others read and write
+  MIDI; the socket is `OscLink` ([surface.rs](../crates/app/src/surface.rs)): UDP on this computer
+  only (the loopback address) or, with `osc_lan`, on every interface, on `osc_port` (default 9000),
+  non-blocking and polled on the UI thread. It answers every client that has sent a packet (the
+  eight latest), at the address it sent from or on `osc_reply_port`, and a new client is announced
+  to the driver as `/surface/hello`, so it is shown everything. It is off until a surface with that
+  driver is in the settings, and a port that cannot be bound is reported. Strips are numbered from 1 in
+  console order; switches are set to the value sent (or flipped when it has none); feedback goes
+  out as bundles that fit one datagram, only what changed.
 - **The generic controller** (`Generic`, id `generic`, "Generic controller (mapped)"). It has no
   layout: its messages are not decoded by the driver (`feeds_mappings`) but parsed by the host and
   run through the project's MIDI mappings tagged with the surface. A mapping whose source names a

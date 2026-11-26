@@ -160,6 +160,12 @@ pub enum Choice {
     SurfaceInput(Option<String>),
     /// The control surface's output port (`None` = none).
     SurfaceOutput(Option<String>),
+    /// The UDP port an OSC surface listens on (`None` = the default).
+    OscPort(Option<u16>),
+    /// The port an OSC surface answers on (`None` = the port the client sent from).
+    OscReplyPort(Option<u16>),
+    /// An OSC surface listens on every network interface (`false` = this computer only).
+    OscLan(bool),
     /// The output port a MIDI Out device uses while it has none of its own (`None` = none).
     MidiOutPort(Option<String>),
     /// Worker threads.
@@ -1374,22 +1380,56 @@ impl SettingsDialog {
                 }
                 v
             };
-        let mut sections = vec![
-            Section {
-                title: "Control surface",
-                options: drivers,
-                chips: false,
-            },
-            Section {
+        let mut sections = vec![Section {
+            title: "Control surface",
+            options: drivers,
+            chips: true,
+        }];
+        if s.is_osc() {
+            // An OSC surface has a network port instead of the two MIDI ports.
+            let port = |p: u16| (p.to_string(), Choice::OscPort(Some(p)));
+            let mut ports = vec![(
+                format!("{} (default)", crate::surface::OSC_DEFAULT_PORT),
+                Choice::OscPort(None),
+            )];
+            ports.extend([8000, 9001, 9002, 7000, 7001].map(port));
+            let reply = |p: u16| (p.to_string(), Choice::OscReplyPort(Some(p)));
+            let mut replies = vec![(
+                "The port the client sent from".to_string(),
+                Choice::OscReplyPort(None),
+            )];
+            replies.extend([8000, 9000, 9001, 7001, 9002].map(reply));
+            sections.push(Section {
+                title: "OSC port (this computer listens here)",
+                options: ports,
+                chips: true,
+            });
+            sections.push(Section {
+                title: "OSC answers go to port",
+                options: replies,
+                chips: true,
+            });
+            sections.push(Section {
+                title: "OSC reachable from",
+                options: vec![
+                    ("This computer only".to_string(), Choice::OscLan(false)),
+                    ("The local network".to_string(), Choice::OscLan(true)),
+                ],
+                chips: true,
+            });
+        } else {
+            sections.push(Section {
                 title: "Surface MIDI input",
                 options: ports(&self.lists.midi_ports, &s.input, Choice::SurfaceInput),
                 chips: false,
-            },
-            Section {
+            });
+            sections.push(Section {
                 title: "Surface MIDI output",
                 options: ports(&self.lists.midi_outputs, &s.output, Choice::SurfaceOutput),
                 chips: false,
-            },
+            });
+        }
+        sections.extend([
             Section {
                 title: "MIDI Out device port",
                 options: ports(
@@ -1409,7 +1449,7 @@ impl SettingsDialog {
                 options: self.controller_options(),
                 chips: true,
             },
-        ];
+        ]);
         if self.edited_options().is_some() {
             sections.push(Section {
                 title: "Pick up values (a knob or fader waits until it reaches the value)",
@@ -1579,6 +1619,9 @@ impl SettingsDialog {
             Choice::SurfaceDriver(n) => self.surface().driver == *n,
             Choice::SurfaceInput(n) => self.surface().input == *n,
             Choice::SurfaceOutput(n) => self.surface().output == *n,
+            Choice::OscPort(n) => self.surface().osc_port == *n,
+            Choice::OscReplyPort(n) => self.surface().osc_reply_port == *n,
+            Choice::OscLan(on) => self.surface().osc_lan == *on,
             Choice::MidiOutPort(n) => d.midi_out_port == *n,
             Choice::Workers(w) => !d.workers_auto && d.workers == *w,
             Choice::Linger(l) => d.worker_linger_spins == *l,
@@ -1663,6 +1706,9 @@ impl SettingsDialog {
             Choice::SurfaceDriver(n) => self.surface_mut().driver = n,
             Choice::SurfaceInput(n) => self.surface_mut().input = n,
             Choice::SurfaceOutput(n) => self.surface_mut().output = n,
+            Choice::OscPort(n) => self.surface_mut().osc_port = n,
+            Choice::OscReplyPort(n) => self.surface_mut().osc_reply_port = n,
+            Choice::OscLan(on) => self.surface_mut().osc_lan = on,
             Choice::MidiOutPort(n) => self.draft.midi_out_port = n,
             Choice::Workers(w) => {
                 self.draft.workers = w;

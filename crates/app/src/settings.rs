@@ -61,7 +61,15 @@
 //! `surfaces` are the control surfaces (the Surfaces tab of the settings), each with a unique `name`,
 //! `use` (default true), a driver id (`"mcu"`, the eight-fader motor surface; `"generic"`, a
 //! controller whose controls feed the MIDI mappings) and the MIDI input and output ports it talks
-//! through; an older file with one `surface` object loads as a list of that one.
+//! through; an older file with one `surface` object loads as a list of that one. Besides
+//! `"mcu"` the drivers are `"mcu-extender"` (the second unit of an eight-fader surface: its eight
+//! strips follow the main unit's bank), `"hui"` and `"osc"`. A surface may bind commands to the
+//! function keys of its unit with `function_keys`, up to eight registry command ids (`"id"` or
+//! `"id=argument"`, an empty text for a key with none), the first being F1. The `"osc"` driver
+//! needs no MIDI port: it listens on the UDP port `osc_port` (default 9000) of this computer only,
+//! or of every network interface with `osc_lan: true`, and answers each client at the address it
+//! sent from, or on `osc_reply_port` of that client's address. It is off until a surface with that
+//! driver is in the list (the address map is in `atomik_midi_io::surface::osc`).
 //! `midi_out_port` is the output port a MIDI Out device sends to while it has no port of its own
 //! (the Surfaces tab lists it under the surface ports); `null` is none.
 //! `sync` is MIDI clock (the Sync tab and Options > Sync): `clock_out` sends 24 clocks per quarter
@@ -247,7 +255,24 @@ pub struct SurfaceSettings {
     /// The output port name (exact or unique substring), for the motors, LEDs and displays;
     /// `None` = none.
     pub output: Option<String>,
+    /// The command each function key runs (the first is F1): a registry id, or `id=argument`;
+    /// empty for a key with none. At most [`FUNCTION_KEYS`] entries.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub function_keys: Vec<String>,
+    /// The UDP port an OSC surface listens on; `None` is [`crate::surface::OSC_DEFAULT_PORT`].
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub osc_port: Option<u16>,
+    /// The port an OSC surface answers on, at the address its client sent from; `None` answers
+    /// the port the client sent from.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub osc_reply_port: Option<u16>,
+    /// An OSC surface listens on every network interface, not only on this computer.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub osc_lan: bool,
 }
+
+/// The function keys of an eight-fader surface.
+pub const FUNCTION_KEYS: usize = 8;
 
 impl Default for SurfaceSettings {
     fn default() -> Self {
@@ -257,6 +282,10 @@ impl Default for SurfaceSettings {
             driver: None,
             input: None,
             output: None,
+            function_keys: Vec::new(),
+            osc_port: None,
+            osc_reply_port: None,
+            osc_lan: false,
         }
     }
 }
@@ -270,14 +299,41 @@ impl SurfaceSettings {
         }
     }
 
-    /// True when the surface can run: in use, with a driver and at least one port.
+    /// True when the surface can run: in use, with a driver and at least one port (an OSC
+    /// surface has a network port of its own).
     pub fn runs(&self) -> bool {
-        self.enabled && self.driver.is_some() && (self.input.is_some() || self.output.is_some())
+        self.enabled
+            && self.driver.is_some()
+            && (self.input.is_some() || self.output.is_some() || self.is_osc())
+    }
+
+    /// True for a surface that speaks OSC over the network.
+    pub fn is_osc(&self) -> bool {
+        self.driver.as_deref() == Some("osc")
+    }
+
+    /// The UDP port an OSC surface listens on.
+    pub fn osc_port(&self) -> u16 {
+        self.osc_port.unwrap_or(crate::surface::OSC_DEFAULT_PORT)
     }
 }
 
 /// The most control surfaces at once.
 pub const MAX_SURFACES: usize = 8;
+
+/// The function key commands without more than [`FUNCTION_KEYS`] entries, trimmed, and without
+/// the empty ones at the end.
+fn clean_function_keys(keys: Vec<String>) -> Vec<String> {
+    let mut keys: Vec<String> = keys
+        .into_iter()
+        .take(FUNCTION_KEYS)
+        .map(|k| k.trim().to_owned())
+        .collect();
+    while keys.last().is_some_and(String::is_empty) {
+        keys.pop();
+    }
+    keys
+}
 
 /// The surface list without more than [`MAX_SURFACES`] entries, with empty ports as `None` and
 /// every surface named, uniquely (an unnamed one takes its input port's name, else `Surface n`).
@@ -305,6 +361,10 @@ fn clean_surfaces(surfaces: Vec<SurfaceSettings>) -> Vec<SurfaceSettings> {
             driver: name(s.driver),
             input,
             output: name(s.output),
+            function_keys: clean_function_keys(s.function_keys),
+            osc_port: s.osc_port.filter(|p| *p >= 1024),
+            osc_reply_port: s.osc_reply_port.filter(|p| *p != 0),
+            osc_lan: s.osc_lan,
         });
     }
     out
@@ -1278,6 +1338,7 @@ mod tests {
                 driver: Some("mcu".into()),
                 input: Some("Example Surface".into()),
                 output: Some("Example Surface Out".into()),
+                ..SurfaceSettings::default()
             }],
             midi_out_port: Some("Example Synth".into()),
             sync: SyncSettings {

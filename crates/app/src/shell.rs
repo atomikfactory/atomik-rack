@@ -11075,6 +11075,7 @@ impl<B: AudioBackend> Shell<B> {
         let heard = self.core.midi_received();
         self.core.midi_control_frame(now_seconds);
         self.core.surface_frame(now_seconds);
+        self.run_surface_commands();
         if let Some(wizard) = &mut self.controller_wizard
             && wizard.poll()
         {
@@ -11083,7 +11084,10 @@ impl<B: AudioBackend> Shell<B> {
         if self.core.midi_received() != heard {
             self.repaint = true;
         }
-        if self.console_visible() || self.core.view().shows_mix_panels() {
+        if self.console_visible()
+            || self.core.view().shows_mix_panels()
+            || self.core.surfaces_want_meters()
+        {
             self.core.update_console_meters(now_seconds);
         }
         self.core.feed_rec_input(now_seconds);
@@ -11115,17 +11119,31 @@ impl<B: AudioBackend> Shell<B> {
                     continue;
                 }
             };
-            let (link, problems) =
-                crate::surface::SystemLink::open(s.input.as_deref(), s.output.as_deref());
-            if let Some(problem) = problems.first() {
-                self.notify(format!("{}: {problem}", s.name));
-            }
-            if link.is_open() {
-                let port = s.input.as_deref().unwrap_or(&s.name);
-                hosts.push(
-                    crate::surface::SurfaceHost::new(driver, Box::new(link)).named(&s.name, port),
-                );
-            }
+            let link: Box<dyn crate::surface::SurfaceLink> = if s.is_osc() {
+                match crate::surface::OscLink::bind(s.osc_port(), s.osc_lan, s.osc_reply_port) {
+                    Ok(link) => Box::new(link),
+                    Err(problem) => {
+                        self.notify(format!("{}: {problem}", s.name));
+                        continue;
+                    }
+                }
+            } else {
+                let (link, problems) =
+                    crate::surface::SystemLink::open(s.input.as_deref(), s.output.as_deref());
+                if let Some(problem) = problems.first() {
+                    self.notify(format!("{}: {problem}", s.name));
+                }
+                if !link.is_open() {
+                    continue;
+                }
+                Box::new(link)
+            };
+            let port = s.input.as_deref().unwrap_or(&s.name);
+            hosts.push(
+                crate::surface::SurfaceHost::new(driver, link)
+                    .named(&s.name, port)
+                    .with_functions(s.function_keys.clone()),
+            );
         }
         self.core.set_surfaces(hosts);
     }
@@ -11306,6 +11324,7 @@ impl<B: AudioBackend> Shell<B> {
             driver: Some(profile.driver_id()),
             input: Some(profile.input.clone()),
             output: profile.output.clone(),
+            ..SurfaceSettings::default()
         };
         if let Some(dialog) = &mut self.dialog {
             dialog.adopt_surface(surface);
@@ -11367,6 +11386,7 @@ impl<B: AudioBackend> Shell<B> {
                     driver: Some(profile.driver_id()),
                     input: Some(profile.input.clone()),
                     output: profile.output.clone(),
+                    ..SurfaceSettings::default()
                 };
                 if let Some(dialog) = &mut self.dialog {
                     dialog.adopt_surface(surface);

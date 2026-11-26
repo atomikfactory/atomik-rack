@@ -1967,6 +1967,48 @@ fn pick(d: &mut SettingsDialog, title: &str, label: &str) {
 }
 
 #[test]
+fn an_osc_surface_has_a_network_port_in_place_of_the_midi_ports() {
+    let mut d = surfaces_dialog(AudioSettings::default());
+    goto(&mut d, Tab::Surfaces);
+    d.choose(Choice::SurfaceDriver(Some("osc".into())));
+    let titles: Vec<&str> = d.sections().iter().map(|s| s.title).collect();
+    assert_eq!(
+        titles,
+        [
+            "Control surface",
+            "OSC port (this computer listens here)",
+            "OSC answers go to port",
+            "OSC reachable from",
+            "MIDI Out device port",
+            "Surfaces",
+            "Controller profiles"
+        ]
+    );
+    d.choose(Choice::OscPort(Some(8000)));
+    d.choose(Choice::OscReplyPort(Some(9001)));
+    d.choose(Choice::OscLan(true));
+    let s = d.draft().surfaces[0].clone();
+    assert_eq!(
+        (s.osc_port, s.osc_reply_port, s.osc_lan),
+        (Some(8000), Some(9001), true)
+    );
+    assert_eq!(s.osc_port(), 8000);
+    assert!(s.runs(), "an OSC surface needs no MIDI port");
+    let sections = d.sections();
+    let chosen = |i: usize| -> Vec<bool> {
+        sections[i]
+            .options
+            .iter()
+            .map(|(_, c)| d.is_selected(c))
+            .collect()
+    };
+    assert!(chosen(1).contains(&true) && chosen(3).contains(&true));
+    // Back to a MIDI driver: the two ports return.
+    d.choose(Choice::SurfaceDriver(Some("mcu".into())));
+    assert_eq!(d.sections()[1].title, "Surface MIDI input");
+}
+
+#[test]
 fn the_surfaces_tab_offers_a_driver_and_the_two_ports() {
     let mut d = surfaces_dialog(AudioSettings::default());
     goto(&mut d, Tab::Surfaces);
@@ -1990,6 +2032,9 @@ fn the_surfaces_tab_offers_a_driver_and_the_two_ports() {
         [
             "None",
             "Control surface (MCU-compatible)",
+            "Extender of the control surface (MCU-compatible)",
+            "Control surface (HUI-compatible)",
+            "OSC (tablet or other software, over the network)",
             "Generic controller (mapped)"
         ]
     );
@@ -2328,6 +2373,7 @@ fn a_controller_that_was_set_up_joins_the_draft_and_can_be_exported() {
         driver: Some("profile:desk-in".to_owned()),
         input: Some("Example Surface".to_owned()),
         output: None,
+        ..SurfaceSettings::default()
     });
     assert_eq!(d.tab(), Tab::Surfaces, "the tab shows what was added");
     assert_eq!(d.edited_profile().as_deref(), Some("desk-in"));
@@ -2352,6 +2398,7 @@ fn a_controller_that_was_set_up_joins_the_draft_and_can_be_exported() {
         driver: Some("profile:desk-in".to_owned()),
         input: None,
         output: None,
+        ..SurfaceSettings::default()
     });
     assert_eq!(d.draft().surfaces.len(), 1);
     assert!(!d.draft().surfaces[0].enabled);
@@ -2382,6 +2429,7 @@ fn the_controllers_tab_shows_the_switches_of_the_profile_being_edited() {
         driver: Some("profile:desk-in".to_owned()),
         input: Some("Example Surface".to_owned()),
         output: None,
+        ..SurfaceSettings::default()
     });
     assert!(switches(&d));
     // A new profile picks values up and keeps no page per device.
@@ -2412,6 +2460,7 @@ fn the_controllers_tab_shows_the_switches_of_the_profile_being_edited() {
         driver: Some("profile:missing".to_owned()),
         input: None,
         output: None,
+        ..SurfaceSettings::default()
     });
     assert!(!switches(&d));
 }

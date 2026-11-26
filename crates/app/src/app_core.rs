@@ -280,6 +280,8 @@ pub struct AppCore<S: EngineSink> {
     /// The control surfaces that are set up, each with its own driver and ports (see
     /// `app_core_surface.rs`).
     surfaces: Vec<crate::surface::SurfaceHost>,
+    /// The commands the function keys of the surfaces asked for, until the shell runs them.
+    surface_commands: Vec<String>,
     /// A plain click selected exactly one strip: the shell moves the focus to the rack.
     rack_focus_request: bool,
     /// `follow_console_selection` saw a new console selection (cleared by the pane event).
@@ -673,6 +675,7 @@ impl<S: EngineSink> AppCore<S> {
             vision: vision::VisionCore::default(),
             stems: stems::StemsState::default(),
             surfaces: Vec::new(),
+            surface_commands: Vec::new(),
             rack_focus_request: false,
             selection_changed: false,
             saved: doc.clone(),
