@@ -1,6 +1,7 @@
 //! Reading the console: channels, buses, VCA groups and mixer snapshots.
 
 use super::*;
+use crate::RackDevice;
 use crate::console::{INSERT_SLOTS, OutputDest};
 use crate::console_snapshot_wiring::SnapshotWiring;
 
@@ -147,6 +148,7 @@ pub(super) fn load_snapshots(
     v: &Value,
     path: &JsonPath,
     console: &mut Console,
+    registry: &Registry,
 ) -> Result<(), ModelError> {
     let items = array(v, path)?;
     if items.len() > MAX_SNAPSHOTS {
@@ -243,7 +245,7 @@ pub(super) fn load_snapshots(
         }
         state.effects = flag(s, &p, "effects")?;
         if let Some(w) = s.get("wiring") {
-            state.wiring = Some(read_wiring(w, &p.field("wiring"))?);
+            state.wiring = Some(read_wiring(w, &p.field("wiring"), registry)?);
         }
         let note = match s.get("note") {
             Some(n) => {
@@ -285,13 +287,15 @@ pub(super) fn load_snapshots(
     Ok(())
 }
 
-/// Reads the wiring of a snapshot (version 44): an object from strip key to `{"output", "inserts"}`
-/// where the output is `master`, `bus:<key>` or `io:<pair>` and the inserts are at most
-/// [`INSERT_SLOTS`] device keys. The keys are not checked against the rack (see
-/// [`load_snapshots`]).
+/// Reads the wiring of a snapshot (version 44): an object from strip key to `{"output",
+/// "inserts"}` where the output is `master`, `bus:<key>` or `io:<pair>` and the inserts are at
+/// most [`INSERT_SLOTS`] device keys. The keys are not checked against the rack (see
+/// [`load_snapshots`]). An entry may also hold `"effects"`, the inserts as project devices (a
+/// reader that does not know the field skips it, as it skips any key of this object).
 fn read_wiring(
     v: &Value,
     path: &JsonPath,
+    registry: &Registry,
 ) -> Result<BTreeMap<DeviceKey, SnapshotWiring>, ModelError> {
     let map = v
         .as_object()
@@ -335,7 +339,50 @@ fn read_wiring(
         for (i, item) in items.iter().enumerate() {
             inserts.push(DeviceKey(string(item, &ip.index(i))?.to_owned()));
         }
-        out.insert(DeviceKey(key.clone()), SnapshotWiring { output, inserts });
+        // The states of the effects (an older build wrote none) are a bonus: a list that cannot be
+        // read, or that does not match the keys, leaves the chain as its keys only.
+        let effects = entry.get("effects").and_then(|list| {
+            read_chain_effects(list, &ep.field("effects"), &inserts, registry).ok()
+        });
+        out.insert(
+            DeviceKey(key.clone()),
+            SnapshotWiring {
+                output,
+                inserts,
+                effects,
+            },
+        );
+    }
+    Ok(out)
+}
+
+/// Reads the `"effects"` of one strip of a snapshot's wiring: the devices of its insert chain as
+/// project devices, one for each of `inserts` and in the same order.
+fn read_chain_effects(
+    v: &Value,
+    path: &JsonPath,
+    inserts: &[DeviceKey],
+    registry: &Registry,
+) -> Result<Vec<RackDevice>, ModelError> {
+    let items = array(v, path)?;
+    if items.len() != inserts.len() {
+        return Err(path.error("one device for each insert"));
+    }
+    let fmt = DeviceFormat {
+        fields: schema::fields(Obj::Device, u64::from(PROJECT_VERSION)),
+        zone_version: u64::from(PROJECT_VERSION),
+    };
+    let first_use = BTreeMap::new();
+    let mut out: Vec<RackDevice> = Vec::new();
+    for (i, item) in items.iter().enumerate() {
+        let device =
+            crate::patch::load_device(item, &path.index(i), fmt, 0, &out, registry, &first_use)?;
+        if device.key != inserts[i] {
+            return Err(path
+                .index(i)
+                .error("the device is not the insert at its place"));
+        }
+        out.push(device);
     }
     Ok(out)
 }
@@ -347,6 +394,7 @@ pub(super) fn load_console(
     path: &JsonPath,
     doc: &RackDoc,
     version: u64,
+    registry: &Registry,
 ) -> Result<Console, ModelError> {
     let obj = schema::object(v, path, Obj::Console, version)?;
     // `null`, or the key of an existing device.
@@ -452,7 +500,7 @@ pub(super) fn load_console(
         load_vcas(vcas, &path.field("vcas"), &mut console)?;
     }
     if let Some(snapshots) = obj.get("snapshots") {
-        load_snapshots(snapshots, &path.field("snapshots"), &mut console)?;
+        load_snapshots(snapshots, &path.field("snapshots"), &mut console, registry)?;
     }
 
     let returns_path = path.field("returns");
@@ -599,4 +647,44 @@ fn load_folder_routes(v: &Value, path: &JsonPath, console: &mut Console) -> Resu
         });
     }
     Ok(())
+}
+
+/// The plugin devices among the effects the snapshots of `console` kept, as stubs for the
+/// stand-in registry: the device's `type` and its `plugin` object without the saved state (which
+/// can be large and says nothing about the type).
+pub(super) fn kept_plugin_stubs(console: Option<&Value>) -> Vec<Value> {
+    let snapshots = console
+        .and_then(|c| c.get("snapshots"))
+        .and_then(Value::as_array);
+    let mut out = Vec::new();
+    for entry in snapshots
+        .into_iter()
+        .flatten()
+        .filter_map(|s| s.get("wiring")?.as_object())
+        .flat_map(|w| w.values())
+    {
+        for device in entry
+            .get("effects")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            let (Some(kind), Some(plugin)) = (
+                device.get("type").and_then(Value::as_str),
+                device.get("plugin").and_then(Value::as_object),
+            ) else {
+                continue;
+            };
+            let stub: serde_json::Map<String, Value> = plugin
+                .iter()
+                .filter(|(k, _)| k.as_str() != "state")
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect();
+            let mut o = serde_json::Map::new();
+            o.insert("type".into(), Value::String(kind.to_owned()));
+            o.insert("plugin".into(), Value::Object(stub));
+            out.push(Value::Object(o));
+        }
+    }
+    out
 }

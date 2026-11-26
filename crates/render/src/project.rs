@@ -1180,6 +1180,7 @@ pub(crate) fn render_core(
         // A bounce has no deadline: every level goes to the workers.
         realtime: false,
     };
+    let built_config = built.config;
     let (mut engine, mut handle) = new_engine_with_options(built.config, engine_options);
     // The project's master tune is in force from the first batch (no glide), as a playback that
     // loaded the same project has it.
@@ -1200,6 +1201,18 @@ pub(crate) fn render_core(
             edit: HotEdit::Transport(command),
         })
         .collect();
+    // The snapshot lane recalls its snapshots at the points the app recalls them at; a render that
+    // taps the rack or has a length of its own (a freeze, the stems) keeps the mix as it is.
+    let mut script = crate::plugin_pass::Script {
+        edits,
+        recalls: Vec::new(),
+    };
+    if extra.taps.is_empty() && extra.frames.is_none() {
+        let frames = crate::recall::recall_frames(doc, &snapshot, plan.frames, options.loop_count);
+        let recalls = crate::recall::plan(doc, registry, &built_config, &ids, &frames);
+        script.recalls = recalls.steps;
+        warnings.extend(recalls.warnings);
+    }
     // Note taps: the engine queues what the tapped devices receive; the progress callback (every
     // few batches) and the end of the render move it out, so a long song never fills a queue.
     let mut note_taps = Vec::new();
@@ -1254,7 +1267,7 @@ pub(crate) fn render_core(
                 &mut handle,
                 &job,
                 snapshot,
-                edits,
+                script,
                 &mut pass,
                 &control,
             );
@@ -1269,7 +1282,7 @@ pub(crate) fn render_core(
             &mut handle,
             &job,
             snapshot,
-            edits,
+            script,
             topology,
             &mut warnings,
             &control,

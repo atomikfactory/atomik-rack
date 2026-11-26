@@ -5,16 +5,18 @@
 //! ordinary lane of stepped points in clips, so it is drawn in the arrangement, moves with the
 //! clips (drag, copy, split, insert and remove bars, scale tempo), muted with the lane and
 //! edited with the lane gestures, each one undo step. The value of a point is the id of the
-//! snapshot (1 to [`MAX_SNAPSHOTS`]); the app recalls that snapshot when the playhead crosses
-//! the point while the song plays (see [`RackDoc::snapshot_lane_events`]). Unlike a param lane it
-//! drives no device, so the engine never sees it, and a bounce does not recall.
+//! snapshot (1 to [`MAX_LANE_SNAPSHOT_ID`]: a console holds at most [`crate::MAX_SNAPSHOTS`]
+//! snapshots, but an id is not reused while it lives, so after snapshots were deleted and
+//! stored again an id can be well past 64); the app recalls that snapshot when the playhead
+//! crosses the point while the song plays (see [`RackDoc::snapshot_lane_events`]). Unlike a
+//! param lane it drives no device, so the engine never sees it; a bounce recalls the same
+//! snapshots at the same points (the render crate applies each as the app does).
 //!
 //! As in a pattern lane, the first point of a clip acts from the start of the clip. A point
 //! recalls only when its snapshot differs from the one of the point before it, so a ramp's
 //! closing point or a run of equal points recalls once. A lane has no static value.
 
 use crate::console::MASTER_TYPE;
-use crate::console_snapshot::MAX_SNAPSHOTS;
 use crate::song::{effective_tracks, flatten_automation};
 use crate::{DeviceKey, RackDoc};
 use atomik_core::{ParamDescriptor, ParamId, Taper, Unit};
@@ -22,14 +24,17 @@ use atomik_core::{ParamDescriptor, ParamId, Taper, Unit};
 /// The param key of the snapshot lane.
 pub const SNAPSHOT_LANE_KEY: &str = "snapshot";
 
+/// The highest snapshot id a snapshot lane point can name.
+pub const MAX_LANE_SNAPSHOT_ID: u32 = 9999;
+
 /// What the snapshot lane is a lane of: the number of a snapshot, a whole number from 1 to
-/// [`MAX_SNAPSHOTS`]. It has no param id (the master has no such param).
+/// [`MAX_LANE_SNAPSHOT_ID`]. It has no param id (the master has no such param).
 pub static SNAPSHOT_LANE_PARAM: ParamDescriptor = ParamDescriptor {
     id: ParamId(0),
     key: SNAPSHOT_LANE_KEY,
     name: "Snapshot recall",
     min: 1.0,
-    max: MAX_SNAPSHOTS as f32,
+    max: MAX_LANE_SNAPSHOT_ID as f32,
     default: 1.0,
     taper: Taper::Linear,
     unit: Unit::None,
@@ -47,7 +52,7 @@ pub fn lane_snapshot(value: f32) -> u32 {
     if value.is_nan() {
         return 1;
     }
-    value.round().clamp(1.0, MAX_SNAPSHOTS as f32) as u32
+    value.round().clamp(1.0, MAX_LANE_SNAPSHOT_ID as f32) as u32
 }
 
 impl RackDoc {
@@ -98,7 +103,8 @@ mod tests {
         assert_eq!(lane_snapshot(2.6), 3);
         assert_eq!(lane_snapshot(0.0), 1);
         assert_eq!(lane_snapshot(-5.0), 1);
-        assert_eq!(lane_snapshot(500.0), MAX_SNAPSHOTS as u32);
+        assert_eq!(lane_snapshot(70.0), 70, "an id past 64 is named as it is");
+        assert_eq!(lane_snapshot(1e9), MAX_LANE_SNAPSHOT_ID);
         assert_eq!(lane_snapshot(f32::NAN), 1);
     }
 

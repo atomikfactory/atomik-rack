@@ -968,8 +968,8 @@ pub struct ArrangementView {
     /// The warped audio clips whose finished buffer is still rendering (fed by the app): their
     /// header shows the CALC chip.
     calculating: BTreeSet<ClipId>,
-    /// The mixer snapshots by id and name, for the snapshot lane (see `pattern_lane`).
-    snapshot_names: Vec<(u32, String)>,
+    /// The mixer snapshots by id, name and colour, for the snapshot lane (see `pattern_lane`).
+    snapshot_names: Vec<(u32, String, Option<[u8; 3]>)>,
     focused: bool,
     /// Something the cached layers draw changed: they are recorded again.
     repaint: bool,

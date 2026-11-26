@@ -73,6 +73,20 @@ may break APIs and the patch and project formats.
   it is unprotected (the button is off and its tooltip says why), and a failure leaves the version listed with its
   file. A right-click on a row opens a menu with Restore, Compare, Rename, Protect and Delete. The project file and the
   project format do not change; the song is never a version and is never deleted.
+- **Snapshots that change the effect chain, and a bounce that recalls them.** A mixer snapshot now keeps each
+  effect of a strip's insert chain with its state (type, parameters, a container's inside, a plugin's saved state).
+  Recalling it makes the chains match, in one undo step: an effect the rack lacks is added again from its kept
+  state (a plugin loads in the background, as any plugin you add), an effect the snapshot does not name is deleted
+  (one that has automation in the song only leaves the chain), and an effect in both stays the same instance, moved
+  into place with its parameters updated. A recall skips, and names, what it cannot do (a key another device took,
+  a plugin that is not installed). A snapshot stored by an earlier build holds no effect states and still only
+  moves cables between the devices the rack has. The snapshot lane now names ids past 64 (a console holds at most
+  64 snapshots, but an id is not reused while a higher one lives), and each block of the lane is drawn in the
+  colour of its snapshot. A bounce recalls the snapshots at the points of the snapshot lane exactly as playback
+  does, effects added or removed included (a recall that would add or remove a plugin or a container effect is left
+  out of the bounce with a warning, and so are marker recalls). A project without a snapshot lane bounces as
+  before, byte for byte, and the project format does not change: the effect states are one more key of a snapshot's
+  wiring, which an older build skips.
 - **Follow Tempo Only and Clock Lock for a followed MIDI clock.** Options > Sync (and the Sync tab of Settings) has a
   Follow Tempo Only switch for a sender that streams clocks and nothing else (no Start, no Song Position Pointer): the
   song plays from its own position when you press Play, its tempo follows the measured clock tempo, the transport

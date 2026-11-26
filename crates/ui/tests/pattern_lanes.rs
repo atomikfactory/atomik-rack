@@ -165,7 +165,9 @@ fn snapshot_view() -> (
     doc.song_mut().next_clip_id = 21;
     let mut v = arrangement(&doc, &reg);
     v.set_bounds(atomik_ui::kurbo::Rect::new(0.0, 0.0, 1200.0, 900.0));
-    v.set_snapshot_names([(2, "Intro"), (4, "Chorus"), (7, "Bridge")].into_iter());
+    v.set_snapshot_names(
+        [(2, "Intro", None), (4, "Chorus", None), (7, "Bridge", None)].into_iter(),
+    );
     v.sync(&doc, &reg);
     (doc, reg, v)
 }
@@ -235,8 +237,55 @@ fn a_rename_or_a_new_snapshot_repaints_the_lane() {
     let mut dl = atomik_ui::DisplayList::new();
     v.paint(&mut dl, &doc, &reg);
     assert!(!v.needs_repaint(), "painted");
-    v.set_snapshot_names([(2, "Intro"), (4, "Chorus"), (7, "Bridge")].into_iter());
+    v.set_snapshot_names(
+        [(2, "Intro", None), (4, "Chorus", None), (7, "Bridge", None)].into_iter(),
+    );
     assert!(!v.needs_repaint(), "the same names change nothing");
-    v.set_snapshot_names([(2, "Intro"), (4, "Hook"), (7, "Bridge")].into_iter());
+    v.set_snapshot_names([(2, "Intro", None), (4, "Hook", None), (7, "Bridge", None)].into_iter());
     assert!(v.needs_repaint());
+}
+
+/// The three snapshots of [`snapshot_view`] with `chorus` as the colour of the second.
+fn names(chorus: Option<[u8; 3]>) -> impl Iterator<Item = (u32, &'static str, Option<[u8; 3]>)> {
+    [
+        (2, "Intro", None),
+        (4, "Chorus", chorus),
+        (7, "Bridge", None),
+    ]
+    .into_iter()
+}
+
+#[test]
+fn a_block_of_the_snapshot_lane_is_drawn_in_the_colour_of_its_snapshot() {
+    let (doc, reg, mut v) = snapshot_view();
+    let mut plain = atomik_ui::DisplayList::new();
+    v.paint(&mut plain, &doc, &reg);
+    assert!(!plain.to_json().contains("c81e1e"), "no colour of its own");
+    v.set_snapshot_names(names(Some([200, 30, 30])));
+    assert!(v.needs_repaint(), "a new colour repaints the lane");
+    let mut tinted = atomik_ui::DisplayList::new();
+    v.paint(&mut tinted, &doc, &reg);
+    assert!(tinted.to_json().contains("c81e1e"), "the Chorus block");
+    // Only the block of that snapshot: the one that names a snapshot that is gone keeps the
+    // lane's accent.
+    let blocks = tinted.to_json().matches("c81e1e").count();
+    assert_eq!(blocks, 2, "the fill and the outline of one block");
+}
+
+#[test]
+fn a_snapshot_id_past_64_is_a_block_with_its_name_and_colour() {
+    let (mut doc, reg, mut v) = snapshot_view();
+    let clip = auto_clip(
+        20,
+        BAR,
+        2 * BAR,
+        vec![ap(0, 70.0, Curve::Step), ap(BAR, 9.0, Curve::Step)],
+    );
+    doc.song_mut().tracks.last_mut().unwrap().lanes[0].clips = vec![clip];
+    v.set_snapshot_names([(70, "Outro", Some([10, 200, 90])), (9, "Nine", None)].into_iter());
+    v.sync(&doc, &reg);
+    let mut dl = atomik_ui::DisplayList::new();
+    v.paint(&mut dl, &doc, &reg);
+    assert!(dl.texts().contains(&"Outro"), "{:?}", dl.texts());
+    assert!(dl.to_json().contains("0ac85a"));
 }
