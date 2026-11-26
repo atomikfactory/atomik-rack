@@ -182,7 +182,12 @@ pub(super) fn snapshot_json(s: &MixerSnapshot) -> String {
                     }
                 }
                 let inserts: Vec<String> = w.inserts.iter().map(|k| json_str(&k.0)).collect();
-                let _ = write!(entry, "\"inserts\": [{}]}}", inserts.join(", "));
+                let _ = write!(entry, "\"inserts\": [{}]", inserts.join(", "));
+                if let Some(effects) = &w.effects {
+                    let devices: Vec<String> = effects.iter().map(effect_json).collect();
+                    let _ = write!(entry, ", \"effects\": [{}]", devices.join(", "));
+                }
+                entry.push('}');
                 format!("{}: {entry}", json_str(&key.0))
             })
             .collect();
@@ -213,4 +218,21 @@ pub(super) fn snapshot_json(s: &MixerSnapshot) -> String {
     }
     out.push('}');
     out
+}
+
+/// One effect a snapshot kept, as a project device on a single line (a newline outside a string
+/// is only layout).
+fn effect_json(device: &crate::RackDevice) -> String {
+    let mut text = String::new();
+    // Every layout row of a plugin is kept: the effect may have to be built again from it.
+    let rows = device
+        .plugin
+        .iter()
+        .flat_map(|p| p.layout.params.iter().map(|r| r.id));
+    let used = crate::patch::PluginUse(BTreeMap::from([(device.key.0.clone(), rows.collect())]));
+    crate::patch::write_device(&mut text, device, "", true, &device.key.0, &used);
+    text.lines()
+        .map(str::trim_start)
+        .collect::<Vec<_>>()
+        .join(" ")
 }

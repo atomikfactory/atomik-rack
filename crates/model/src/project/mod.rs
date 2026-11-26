@@ -735,6 +735,18 @@ fn load_value(
     } else {
         None
     };
+    // The plugins of the effects a snapshot kept get their stand-ins too (the project keeps what it
+    // cannot play), best effort: a layout that cannot be read only drops that snapshot's states.
+    let kept = read_console::kept_plugin_stubs(obj.get("console"));
+    let more = if kept.is_empty() {
+        None
+    } else {
+        let base = stand_ins.as_ref().unwrap_or(registry);
+        crate::plugin_io::stand_in_registry(&Value::Array(kept), &root.field("console"), base)
+            .ok()
+            .flatten()
+    };
+    let stand_ins = more.or(stand_ins);
     let registry = stand_ins.as_ref().unwrap_or(registry);
     let mut doc = load_rack(obj, &root, fmt, registry)?;
     if let Some(v) = obj.get("rack_columns") {
@@ -760,7 +772,13 @@ fn load_value(
     if version == 1 {
         return Ok(migrate_v1(doc, registry, warnings));
     }
-    doc.console = load_console(&obj["console"], &root.field("console"), &doc, version)?;
+    doc.console = load_console(
+        &obj["console"],
+        &root.field("console"),
+        &doc,
+        version,
+        registry,
+    )?;
     // A loop cabled by hand through the master's send and return counts as that return.
     for (slot, effect) in crate::console_loop::inferred_returns(&doc) {
         doc.console.returns[slot] = Some(effect);

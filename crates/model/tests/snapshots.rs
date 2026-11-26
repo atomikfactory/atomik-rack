@@ -461,16 +461,20 @@ fn a_recall_skips_what_was_deleted_and_leaves_what_was_added() {
 }
 
 #[test]
-fn a_deleted_effect_is_skipped() {
+fn a_deleted_effect_comes_back_from_the_state_the_snapshot_kept() {
     let (mut d, r) = project();
     run(&mut d, &r, [set_param("comp", "bypass", 1.0)]);
     d.apply(store("A"), &r).unwrap();
     run(&mut d, &r, [Command::RemoveDevice { key: key("comp") }]);
+    // The snapshot holds the effect's state, so it is not named as gone.
     let notes = d.doc().snapshot_notes(1);
-    assert!(notes.iter().any(|n| n.contains("comp")), "{notes:?}");
+    assert!(!notes.iter().any(|n| n.contains("comp")), "{notes:?}");
     run(&mut d, &r, [set_param("channel", "fader", 0.2)]);
     d.apply(recall(1), &r).unwrap();
-    assert!(d.doc().device(&key("comp")).is_none());
+    assert!(d.doc().device(&key("comp")).is_some(), "the effect is back");
+    assert_eq!(value(&d, &r, "comp", "bypass"), 1.0, "with its state");
+    assert_console_invariants(d.doc());
+    assert!(d.doc().snapshot_matches(1, &r, SnapshotScope::ALL));
 }
 
 #[test]
