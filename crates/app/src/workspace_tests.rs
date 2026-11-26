@@ -1446,3 +1446,134 @@ fn closing_one_of_two_windows_with_save_closes_only_that_song() {
     assert_eq!(w.ids(), vec![DocId::FIRST]);
     let _ = std::fs::remove_dir_all(dir);
 }
+
+#[test]
+fn clips_dragged_over_another_songs_window_show_the_marker_where_the_drop_lands() {
+    use atomik_ui::kurbo::{Point, Vec2};
+    let (mut w, dir, _hash) = copied_to_a_song_at(44_100, "drag-clips-marker");
+    let (first, second) = (DocId::FIRST, w.ids()[1]);
+    w.song_mut(second)
+        .unwrap()
+        .handle(&UiEvent::Resize(atomik_ui::kurbo::Size::new(1000.0, 700.0)));
+    let clip = w.song(first).unwrap().core().doc().song.tracks[0].lanes[0].clips[0].clone();
+    let rect = w
+        .song(first)
+        .unwrap()
+        .core()
+        .arrangement()
+        .clip_rect(clip.id)
+        .unwrap();
+    let from = Point::new(rect.center().x, rect.center().y);
+    {
+        let shell = w.song_mut(first).unwrap();
+        shell.handle(&pointer_down(from));
+        shell.handle(&pointer_move(from + Vec2::new(40.0, 0.0)));
+        shell.handle(&pointer_move(from + Vec2::new(400.0, 0.0)));
+    }
+    let layout_song = w.song(second).unwrap().layout().song.expect("lower pane");
+    let target = Point::new(layout_song.x0 + 500.0, layout_song.y0 + 80.0);
+    assert!(
+        w.song(second)
+            .unwrap()
+            .core()
+            .arrangement()
+            .drop_hover()
+            .is_none()
+    );
+    // Hovering draws the marker the files show, at the snapped tick.
+    assert!(w.drag_over_song(first, second, over(WindowKind::Main, target)));
+    let hover = w.song(second).unwrap().core().arrangement().drop_hover();
+    let (_, tick) = hover.expect("the audio clip shows the track or new-track marker");
+    // Nothing was taken from the first song and nothing was dropped yet.
+    assert!(w.song(first).unwrap().song_drag().is_some());
+    assert!(
+        w.song(second)
+            .unwrap()
+            .core()
+            .doc()
+            .song
+            .tracks
+            .iter()
+            .all(|t| t.lanes.iter().all(|l| l.clips.is_empty()))
+    );
+    // Leaving takes the marker away.
+    w.drag_left_song(second);
+    assert!(
+        w.song(second)
+            .unwrap()
+            .core()
+            .arrangement()
+            .drop_hover()
+            .is_none()
+    );
+    // The drop lands at the tick the marker showed, and the marker is gone after it.
+    assert!(w.drag_over_song(first, second, over(WindowKind::Main, target)));
+    assert!(w.drag_to_song(first, second, over(WindowKind::Main, target)));
+    w.song_mut(second).unwrap().core_mut().wait_background();
+    let core = w.song(second).unwrap().core();
+    assert!(core.arrangement().drop_hover().is_none());
+    let starts: Vec<i64> = core
+        .doc()
+        .song
+        .tracks
+        .iter()
+        .flat_map(|t| t.lanes.iter().flat_map(|l| l.clips.iter().map(|c| c.start)))
+        .collect();
+    assert_eq!(starts, vec![tick]);
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn devices_dragged_over_another_songs_rack_show_the_drop_line_and_clips_over_it_show_none() {
+    use atomik_ui::kurbo::{Point, Vec2};
+    let (mut w, _backend) = workspace();
+    add_synth(&mut w, "lead");
+    let first = DocId::FIRST;
+    let tall = atomik_ui::kurbo::Size::new(1000.0, 2400.0);
+    w.song_mut(first).unwrap().handle(&UiEvent::Resize(tall));
+    let second = w.new_song();
+    w.song_mut(second).unwrap().handle(&UiEvent::Resize(tall));
+    let origin = |s: &Shell<Counting>| {
+        s.pane_rect(crate::app_core::Pane::Rack)
+            .map_or(Point::ORIGIN, |(_, r)| r.origin())
+    };
+    let plate = {
+        let s = w.song(first).unwrap();
+        let p = s
+            .core()
+            .view()
+            .plate_center(&DeviceKey("lead".into()))
+            .unwrap();
+        p + origin(s).to_vec2()
+    };
+    {
+        let shell = w.song_mut(first).unwrap();
+        shell.handle(&pointer_down(plate));
+        shell.handle(&pointer_move(plate + Vec2::new(20.0, 90.0)));
+        shell.handle(&pointer_move(plate + Vec2::new(-200.0, 200.0)));
+    }
+    let rack = w
+        .song(second)
+        .unwrap()
+        .pane_rect(crate::app_core::Pane::Rack)
+        .unwrap()
+        .1;
+    let target = Point::new(rack.x0 + 400.0, rack.y0 + 300.0);
+    assert!(!w.song(second).unwrap().core().view().drop_line_shown());
+    assert!(w.drag_over_song(first, second, over(WindowKind::Main, target)));
+    assert!(w.song(second).unwrap().core().view().drop_line_shown());
+    // The first song's own rack shows no line: the marker is the target's.
+    assert!(!w.song(first).unwrap().core().view().drop_line_shown());
+    // Off the rack (the title bar) the line goes.
+    assert!(w.drag_over_song(first, second, over(WindowKind::Main, Point::new(5.0, 5.0))));
+    assert!(!w.song(second).unwrap().core().view().drop_line_shown());
+    assert!(w.drag_over_song(first, second, over(WindowKind::Main, target)));
+    w.drag_left_song(second);
+    assert!(!w.song(second).unwrap().core().view().drop_line_shown());
+    // A drag that is not in progress, or stays in one song, shows nothing.
+    assert!(w.drag_over_song(first, second, over(WindowKind::Main, target)));
+    assert!(w.drag_to_song(first, second, over(WindowKind::Main, target)));
+    assert!(!w.song(second).unwrap().core().view().drop_line_shown());
+    assert!(!w.drag_over_song(first, second, over(WindowKind::Main, target)));
+    assert!(!w.drag_over_song(first, first, over(WindowKind::Main, target)));
+}

@@ -13,16 +13,23 @@ pub type Target = (DeviceInstanceId, SocketId);
 const PRESENT: u64 = 1 << 48;
 
 /// The current live-notes target, shared lock-free between the UI thread (writer) and the
-/// MIDI input thread (reader).
+/// MIDI input thread (reader), with the queue of a library preview that takes the keyboard
+/// (see [`crate::preview_notes`]).
 #[derive(Debug, Default)]
 pub struct NoteTarget {
     packed: AtomicU64,
+    preview: crate::preview_notes::PreviewNotes,
 }
 
 impl NoteTarget {
     /// No target.
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// The queue of the notes sent to [`crate::preview_notes::PREVIEW_TARGET`].
+    pub fn preview(&self) -> &crate::preview_notes::PreviewNotes {
+        &self.preview
     }
 
     /// Sets the target.

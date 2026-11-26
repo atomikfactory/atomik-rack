@@ -1,6 +1,7 @@
 //! The procedural dark theme: every colour and size comes from these
 //! tokens; nothing is a bitmap.
 
+use crate::glow::Glow;
 use atomik_device_sdk::SocketKind;
 use atomik_model::RackDevice;
 use vello::peniko::Color;
@@ -163,6 +164,8 @@ pub struct Theme {
     pub meter_mid: Color,
     /// Level meter, the zone at the top (-0.5 dB and above).
     pub meter_high: Color,
+    /// The glow on the level meters and the playhead line (off unless the theme sets it).
+    pub glow: Glow,
 }
 
 impl Default for Theme {
@@ -308,6 +311,7 @@ impl Theme {
             meter_low: c(0x9c, 0xd3, 0x5b),
             meter_mid: c(0xe0, 0xa8, 0x3c),
             meter_high: c(0xe8, 0x5d, 0x3f),
+            glow: Glow::OFF,
         }
     }
 
@@ -384,6 +388,7 @@ impl Theme {
             meter_low: c(0x4f, 0x8f, 0x14),
             meter_mid: c(0xb8, 0x78, 0x00),
             meter_high: c(0xc4, 0x3e, 0x1f),
+            glow: Glow::OFF,
         }
     }
 }

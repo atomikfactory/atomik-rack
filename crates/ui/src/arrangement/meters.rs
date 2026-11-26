@@ -402,6 +402,23 @@ impl ArrangementView {
                     bar.x0 + bar.width() * n
                 }
             };
+            if t.glow.active() && ballistic.level_db > METER_FLOOR_DB {
+                // The lit part glows in the colour of the zone the level reaches.
+                let (a, b) = (pos_of(METER_FLOOR_DB), pos_of(ballistic.level_db.min(6.0)));
+                let lit = if compact {
+                    Rect::new(bar.x0, b, bar.x1, a)
+                } else {
+                    Rect::new(a, bar.y0, b, bar.y1)
+                };
+                let own = if ballistic.level_db >= -0.5 {
+                    st.record
+                } else if ballistic.level_db >= -9.0 {
+                    st.mute
+                } else {
+                    st.solo
+                };
+                t.glow.halo(c, lit, own);
+            }
             for (lo, hi, color) in [
                 (METER_FLOOR_DB, -9.0, st.solo),
                 (-9.0, -0.5, st.mute),

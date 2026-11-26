@@ -297,6 +297,7 @@ impl<S: EngineSink> AppCore<S> {
             tags: Tags {
                 title: info.title.clone(),
                 author: info.author.clone(),
+                ..Tags::default()
             },
         };
         let cancel = Arc::new(AtomicBool::new(false));
@@ -325,7 +326,7 @@ impl<S: EngineSink> AppCore<S> {
             },
             lossy: None,
             film: Some(film),
-            finish: finish_for(false, loudness),
+            finish: finish_for(false, loudness, atomik_ui::DEFAULT_CEILING_TENTHS),
             also: None,
         };
         let started = export_worker::spawn(

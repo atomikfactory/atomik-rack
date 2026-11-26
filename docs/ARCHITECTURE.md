@@ -47,7 +47,7 @@ The picture shows the main arrows only; the table below is exact.
 | `atomik-download` | [crates/download](../crates/download) | none (sha2, ureq, thiserror) | none | The one-time download of model files, shared by the hand models and the stem models: `ModelFile` (name, one fixed HTTPS address, exact size and SHA-256, all constants in the crate that owns the files), `ModelStore` (`status`, `verified_paths` which checks again before a file is loaded, and `download`, which writes under temporary names, checks each file and only then renames them all into place, so a failure, a mismatch or a cancel leaves nothing behind), the `Fetcher` trait with `UreqFetcher` (rustls, HTTPS only, no redirect, a generic User-Agent, nothing about the user or the machine) and `FakeFetcher` for tests |
 | `atomik-stems` | [crates/stems](../crates/stems) | none (thiserror) | none | Stem separation by signal processing, pure and deterministic, with no model and no download: an STFT (`Stft`, 2048 points, hop 512) and `separate`: chunks of 20 s with 1 s of context and a linear crossfade, a harmonic/percussive split by median filters across time and across frequency (soft masks) for the drums, the harmonic part below a 150 Hz crossover for the bass, the centred harmonic part above it for the vocals (a mono input gets the 200 Hz to 5 kHz band at a lower weight) and the residual for the other stem, so the four add up to the mix; a progress callback, a cancel flag and a `StemSink` that receives the finished samples in order |
 | `atomik-tab` | [crates/tab](../crates/tab) | core (thiserror, quick-xml, flate2, pdf-writer) | none | Fretted-instrument tablature, pure and headless: the instrument catalogue (`instrument.rs`: strings in tab order with re-entrant tunings, the banjo drone with its start fret, doubled courses, capo and partial capo, custom tunings of 1 to 12 strings), cost-based fretting with a Viterbi pass over sequences (`fretting.rs`), the spelled chord-name grammar (`chord.rs`) and key-aware transposer with capo shapes (`transpose.rs`), the grader of a played pass (`grade.rs`: verdicts, accuracy, session, latency calibration), the chord trainer's chord sets, timed and listen drills and best scores per chord pair (`trainer.rs`, see 6zb), the voicing generator for any tuning with fingers, barres, ranking and a cache (`voicing.rs`), chord sheets in the chords-over-lyrics and bracket forms (`sheet.rs`), the neutral `TabScore` with tracks, notes and techniques (`score.rs`), ASCII tab read and write (`ascii.rs`), the Guitar Pro readers for `.gp3`, `.gp4`, `.gp5`, `.gpx` and `.gp` (`gp/`, see 6t) and MusicXML read and write (`musicxml/`, see 6v), and the PDF printouts of a tab and of a chord sheet (`pdf/`, see 6zc) |
-| `atomik-model` | [crates/model](../crates/model) | core, device-sdk, tab | none | The document: rack, cables, console, song, sample pool, sampler zones, clip step grids; commands, undo, `.atomik` files (format v45), track folders, colours and comments (`organise.rs`), the music theory of the note editors (`theory.rs`), sequencer patterns (`steps.rs`), auto-mapping, pad helpers and slicing helpers (`slices.rs`), the generated documents of the stress options and benches (`stress.rs`), the tab sidecar of note clips (`tab_data.rs`), its edit operations (`tab_edit.rs`) and the technique renderer (`tab_render.rs`), the song chord sheets (`chord_sheets.rs`) |
+| `atomik-model` | [crates/model](../crates/model) | core, device-sdk, tab | none | The document: rack, cables, console, song, sample pool, sampler zones, clip step grids; commands, undo, `.atomik` files (format v46), track folders, colours and comments (`organise.rs`), the music theory of the note editors (`theory.rs`), sequencer patterns (`steps.rs`), auto-mapping, pad helpers and slicing helpers (`slices.rs`), the generated documents of the stress options and benches (`stress.rs`), the tab sidecar of note clips (`tab_data.rs`), its edit operations (`tab_edit.rs`) and the technique renderer (`tab_render.rs`), the song chord sheets (`chord_sheets.rs`) |
 | `atomik-audio-io` | [crates/audio-io](../crates/audio-io) | core, engine | none | cpal streams driving the engine, duplex input, telemetry |
 | `atomik-midi-io` | [crates/midi-io](../crates/midi-io) | core, device-sdk, engine | none | MIDI input and exact event timing, the timed MIDI output scheduler (`out`: a queue per port, the frame-to-time conversion and the output thread), the parser of the control path (`parse_message`), raw ports for control surfaces (`ports`), the control-surface drivers (`surface`: pure, bytes in, actions out, bytes out) and the Standard MIDI File reader and writer (`smf`, pure bytes) |
 | `atomik-plugin-host` | [crates/plugin-host](../crates/plugin-host) | core, device-sdk | `src/fpenv.rs`, `src/ole.rs`, `src/procgroup.rs` | Format-neutral plugin hosting: `PluginDevice`, `PluginManager`, slot and hand-shake, scan, cache, catalog, journal, settings, stand-ins |
@@ -264,7 +264,8 @@ WAV ◄──wav::write── Vec<Vec<f32>> ◄──render_offline── Engine
   (`view.toggle_rack_navigator`, no default key) toggles it; the choice is `show_rack_navigator` in
   `ui-state.json` (default on). A new `RackView` has it off, so hosts and goldens that do not ask
   for it are unchanged.
-- **Project files** are `.atomik` JSON, format version 45 (older versions still load; version 45 files say
+- **Project files** are `.atomik` JSON, format version 46 (older versions still load; version 46 adds the console
+  `"locked"` list, ignorable and written only when a strip is locked; version 45 files say
   `"compat": 44` and list the root `"headphone"` map (the data imported into Headphone Correction devices, keyed by the device's
   path key, written only when a device has any; see `crates/model/src/headphone.rs`), the launcher, the per-note
   expression, a note clip's `"tab"`, the song's `"sheets"` (see 6s) and the song's `"key"`, `"key_changes"` and
@@ -1140,6 +1141,15 @@ AIFF or FLAC only).
   true-peak limiter of the mastering suite. The panel's bit depth and dither rows are greyed for these
   formats. `export.json` keeps the format, the MP3 quality and the AAC and Opus bitrates. The tests use the
   fake tool; one ignored test runs the real FFmpeg.
+  **Compressed stems** (`export_worker::export_stems_lossy`) are the same encoder run once per stem: the writer
+  that `export_stems_with` calls for each finished stem writes it to a temporary float WAV file at the rate of
+  the format, `encode_audio` turns that into `<NN name>.mp3`, `.m4a` or `.opus` in the folder (the same
+  bitrate choices, no shell), and the temporary file is removed at once. The tags are the stem's name as the
+  title, the song's title as the album (`Tags::album`) and its author as the artist. Progress is two shares that
+  only grow, 80 % the render's passes and 20 % the stems encoded, and one Cancel stops FFmpeg, drops the stem it
+  was on and removes every file written so far, the folder when the export made it, and the temporary folder
+  (a failed stem does the same and says why). Without FFmpeg the three buttons are greyed for stems as for a
+  song.
 - **Not replacing unasked.** The native save dialog confirms an overwrite of the name it picked, but the
   container is chosen afterwards, so the file gets the extension of the format (`export_file`). The dialog
   proposes the extension of the format used last (`Shell::export_audio_extension`), and `export_action` in
@@ -1182,14 +1192,32 @@ AIFF or FLAC only).
   device's look-ahead true-peak `Limiter` offline and raises the gain again until the limited result is within
   0.1 LU of the target (`NormaliseReport` says the loudness before and after, the gain and the limiting;
   `ExportReport::normalise`). `Loudness::Guide` changes nothing and only warns when samples reach full scale.
-  Stems are never finished. `Work::also` encodes an MP3 at 320 kbps from the same finished render next to a
-  lossless file.
+  The true-peak ceiling is a field of the panel (`ExportValues::ceiling`, tenths of a dBTP, -9.0 to 0.0, -1.0 by
+  default; buttons for -1 and -2 and a box for a number of the user's), and the loudness choices have a custom
+  target (`ExportLoudness::Custom`, tenths of a LUFS, -40.0 to -5.0), both typed in a field of the panel
+  (`ExportView::custom_rect`); `finish_for` and `stems_level_for` turn the panel's values into `Finish` and
+  `StemsLevel`. `Work::also` encodes an MP3 at 320 kbps from the same finished render next to a lossless file.
+  **Stems have a level too** (`atomik_render::stems::StemsLevel`, `export_stems_with`): with a target or a guide
+  each stem is either brought to the target on its own (`finish_render` per stem: the same gain and limiter as
+  the mix, `StemsReport::normalise` has each stem's level before and after), or, the default
+  (`ExportValues::stems_together`), every stem gets **one gain computed from the mix they add up to**
+  (`normalise::CommonGain`): the master's stem when the export has one, which is rendered first so the gain is
+  known before the first file is written and no stem is held in memory, else (a dry export has no master) the
+  sum of the stems, which a first pass over the render measures before the second one writes. The gain is the
+  one that brings the mix to the target, held back where the mix's true peak would pass the ceiling: there is no
+  limiter, because stems limited one by one would no longer sum to the limited mix (`held_db` and the toast say
+  how far short of the target the ceiling kept it, and a stem whose peaks pass full scale is flagged). A guide
+  measures and changes nothing in either mode. With the loudness off the stems are written exactly as before
+  (a test compares the bytes with `render_stems` and `write_export`).
+  `export_presets.json` keeps the custom target (`"custom-14.5"`), `ceiling_dbtp` and `stems_together`; the last
+  two are optional (an older file loads with -1 dBTP and one gain for all), and a stems preset keeps its loudness.
 - **Loudness report.** `write_export` measures the audio it writes with
   [render/src/loudness.rs](../crates/render/src/loudness.rs): integrated loudness, loudness range
   (3 s short-term windows, -70 LUFS absolute and -20 LU relative gates, 10th to 95th percentile),
   true peak and sample peak, using the K-weighting, gating and 4x true-peak detector of the
   loudness meter device. `ExportReport::loudness` carries it, `StemsReport::loudness` has one per
-  file; the app puts it in the toast and the log, and `session_export` returns it.
+  file (and `normalise` the level before and after of each stem when a loudness was asked for); the app puts it
+  in the toast and the log, and `session_export` returns it.
 - **Range of stems.** `ExportValues::locators` makes a stems export use `ExportSpan::Loop`
   (the frames between the locators, no tail) instead of the song with its tail.
 - **Time selection.** `ExportSpan::Range(start, end)` is a range in ticks, cut out like a loop with
@@ -1203,7 +1231,8 @@ AIFF or FLAC only).
   output; the render cables every tap to its own pair of extra interface outputs, as a freeze
   taps a track, so one pass reads several strips without changing a sample, at most
   `TAPS_PER_PASS` strips per pass (each stem is written as its pass ends, so memory does not grow
-  with the strip count). `StemStrip::Dry` takes the channels' sources before the strip. The tap sits
+  with the strip count; `export_stems_with` takes a writer for the finished stem, which the compressed stems
+  use, and the level of the stems). `StemStrip::Dry` takes the channels' sources before the strip. The tap sits
   in front of the master's delay compensation, so each stem is **delayed here** by the latency of
   the slowest path to the outputs minus the latency of the path to its own tap (`path_latencies`
   sums the latencies the engine published, along the flat cables, like its compensation does; none
@@ -1231,7 +1260,7 @@ AIFF or FLAC only).
   toast ("Exported mix.wav: 24-bit, 48 kHz, 1:05.3, with 2.4 s of tail"). Opening or creating a
   project cancels a running export. With plugins the worker uses the plugin sandbox when it is on,
   else it loads instances of its own in the app process, as a freeze does. The last choices (depth,
-  dither, rate, tail, container, dry stems, folder) are in
+  dither, rate, tail, container, dry stems, loudness, ceiling, stem gain, folder) are in
   `export.json` next to `settings.json`. The stems dialog picks the folder the `Bounced <song>`
   folder is made in. The QA server has `session_export` (MCP.md): the same render, synchronous,
   with a report of the file, or with `stems` of every file.
@@ -3154,6 +3183,7 @@ edit is an ordinary `UiAction::Command` (`SetModSlot`, `SetParam` on `modN_amoun
 | `atomik-browse` | file browser: folder listings, the tree's sub-folders, the recursive walk, favourite and tag places, the drives | Yes (disk) |
 | `atomik-probe` | file browser: audio header reads (`probe_file`), visible rows first | Yes (disk) |
 | `atomik-preview` | file browser: decodes the previewed file and fills the preview ring | Yes (disk) |
+| `atomik-live-preview` | file browser: a library patch or a plugin preset that follows the keyboard: builds the scratch project after the selection rested, then renders it block by block with the notes of the keyboard into the preview ring, about 30 ms ahead of the voice (rests after three silent seconds) | Yes (CPU, a plugin instance in its sandbox) |
 | `atomik-detail` | file browser: the tempo a file states and its loudness picture for the info pane (newest request only) | Yes (disk) |
 | `atomik-thumbs` | file browser: the 48-bar waveform thumbnail of each visible audio row (first thirty seconds, newest request first) | Yes (disk) |
 | `atomik-library-save` | file browser: writes `library.json` from the newest snapshot | Yes (disk) |
@@ -3533,6 +3563,25 @@ planned on a scratch copy.
   part of its sends by it, sample by sample. Pre-fader sends and the main output are untouched, and a
   strip without the link is bit for bit the old strip, so the flag off reproduces the old bounce.
   See the bus section of the device reference for the timing.
+
+### Locked strips (model, console, rack and app)
+
+- **State.** `Console::locked` holds the keys of the locked channels, buses and master (sorted, saved as the console
+  field `"locked"`, format 46, an ignorable row of the schema table). `ConsoleCommand::SetLocked` swaps the whole
+  list (`Swap::Locks`), one undo step.
+- **One enforcement point.** `Document::apply` screens the planned edit with `console_lock::screen` before it
+  performs it: an edit of a param, name, colour, plugin data or macro assignment of a locked strip or of an effect on
+  its insert chain (the chain is derived from the cables), an insert or removal, a cable at an `insert_*` socket or at
+  such an effect, a change of the strip's console entry, is refused with `ModelError::Locked` and the document is
+  unchanged. In a command that edits several strips the plain value edits of locked strips are left out instead
+  (`Document::take_lock_skips` names the strips), and `console_lock::trim_command` takes locked strips out of a paste.
+  Undo, redo, automation playback and the lane writes of recording are not edits of the strip and never come here.
+  No source writes a strip's engine params around the document: MIDI learn and the wheel apply `SetParam`, a bank
+  macro that already drives a param keeps driving it through the expansion (like automation), and assigning or
+  ranging a locked param is refused.
+- **UI.** The console name plate and the rack panel's name strip have the padlock (`paint::padlock`); locked controls
+  are drawn under a veil and the console and the rack do not react to them. The app shows "Channel <name> is locked"
+  once per gesture (`AppCore::note_locked`, cleared by `UiAction::EndMerge` or a command that goes through).
 
 ### Output buses (console, rack and app)
 
@@ -5673,7 +5722,7 @@ the context menus in the **Clipboard, selection and context menus** bullet, and 
 creation chain in the **Creation chain** bullet.
 
 - **Registry and keymap data** ([ui/src/keymap](../crates/ui/src/keymap), pure, no window system).
-  `Registry::bundled()` lists every command (664) by a stable dotted id with label, group, default
+  `Registry::bundled()` lists every command (665) by a stable dotted id with label, group, default
   context, an optional choice argument, and the flags `repeatable`, `menu` and `can_decline`.
   `default_keymap.json` (embedded) holds two profiles, `standard` and `legacy` (the keys of earlier
   versions), as `{ command, arg?, context, chords, os? }`. `Cmd` in a chord is the logical primary
@@ -5768,6 +5817,13 @@ creation chain in the **Creation chain** bullet.
   Start Screen opens it at any time. A template under the pointer or the keys has a card with its
   `TemplatePreview` (`AppCore::template_preview` loads the file without opening it, once per
   template while the box is open), and a pin button on a recent row returns `StartOutcome::TogglePin`.
+  The template card and each example card also show a small picture of the song
+  ([card_picture.rs](../crates/app/src/card_picture.rs)): `CardPicture` keeps a row per track with its clips as
+  shares of the song, `PictureStore` caches it as a text file named by a hash of the project file's content in the
+  `cards` folder beside the video proxy folder (`AppCore::card_cache_dir`), and a `PictureWorker` thread makes
+  them, so the interface thread only asks (`Shell::request_card_pictures`, from `StartScreen::pictures_wanted`)
+  and collects (`poll_card_pictures`, a frame step that does nothing while the box is closed). A placeholder
+  shows until a picture arrives, and a file with no picture leaves its card as it was.
   The genre templates of the factory `Templates` folder come first in `AppCore::templates` (then the
   user's own, sixteen in all) and open like any template.
   The headless and MCP sessions never call `start_without_project`, so they never show it. The shell
@@ -5837,7 +5893,11 @@ creation chain in the **Creation chain** bullet.
     `Shell::current_theme` is the editor's preview, else the library's theme of that id, else the choice, and
     `Shell::apply_theme` is unchanged. The Themes tab (`themes_tab.rs`) asks the shell with a `ThemeAction`;
     the theme editor is `ThemeEditorView`, a modal over the settings dialog that edits a `ThemeDoc`, asks for
-    the colour picker through `ColorTarget::ThemeToken`, and is written when it closes.
+    the colour picker through `ColorTarget::ThemeToken`, and is written when it closes. A theme may carry a
+    `glow` (`glow.rs`: enabled, accent or own colour, intensity, radius): a few stacked translucent shapes
+    drawn behind the meters (console, arrangement track meters, transport input meter, big meter, effect level
+    bars) and the playhead line (arrangement, piano roll, tab editor), with no blur pass and no allocation.
+    Synthwave has it on; `Shell::current_theme` takes it out at Low power, so no view ever draws it there.
   - **Application zoom.** The shell draws and lays out in logical units at the scale each window
     was told. The platform tells every window `Shell::ui_scale(display scale)`, the display scale
     times `Shell::app_zoom`, and works the logical size and the pointer positions out with it, so
@@ -6931,9 +6991,31 @@ items are ordinary project texts, plus one small new file type.
   the device and clip context menus; [app_core_library.rs](../crates/app/src/app_core_library.rs))
   writes the selected devices or the one selected note clip with the atomic text save under a free
   name (`Poly Synth`, `Poly Synth 2`; a clip is `<track> bar <bar>`), makes the section folder on
-  the first save and copies the audio on the `atomik-library` worker. It is not an edit: the
+  the first save and copies the audio on the `atomik-library` worker. The one selected audio clip
+  is saved as an audio loop instead: a 32-bit float WAV of the span it plays, unprocessed and at
+  the clip's gain (the speaker's span, `atomik_model::audition_span`; a clip longer than two
+  minutes is refused), written to `Clips` under the same name; the section already lists audio
+  and the file browser previews it, so no item format is involved. It is not an edit: the
   document, the undo history and the dirty flag stay as they are. The browser lists the section,
   selects the new row and opens its rename entry.
+- **Previews that follow the keyboard**
+  ([app_core_live_preview.rs](../crates/app/src/app_core_live_preview.rs),
+  [app_core_plugin_preview.rs](../crates/app/src/app_core_plugin_preview.rs)). While the panel shows and
+  the one selected row is a patch, a container or a plugin preset, the notes of a MIDI keyboard and of the
+  Piano Keys strip play through that item and go back to the track when the selection leaves it (no take is
+  recording, no other preview owns the voice, audio runs). The notes target of the app becomes
+  `PREVIEW_TARGET` (a device id no engine holds); `MidiLink::push` queues events for it in
+  `NoteTarget::preview()` ([preview_notes.rs](../crates/app/src/preview_notes.rs)) instead of in the
+  engine, so a note-off follows its note-on and nothing is recorded. The `atomik-live-preview` worker builds
+  the scratch project the phrase preview builds (`preview_doc`) into an engine of its own
+  ([live_preview.rs](../crates/render/src/live_preview.rs): no song, no workers, notes sent to the first
+  track's device, blocks rendered by the caller) and feeds the preview voice (`PreviewFeed`), keeping about
+  30 ms in the ring, so the audio thread sees only a stream of samples. An item the phrase preview refuses
+  is skipped without a message. A plugin preset gets a preview instance of the plugin (`begin_create`
+  polled on the frame, `Loading '...'` in the status line meanwhile, never in the rack or the document)
+  whose device the worker owns, in a scratch project of its own (`plugin_doc`: an instrument on its channel,
+  an effect in the insert chain of a built-in synth); presets load with `begin_load_preset`, one instance
+  serves every preset of that plugin, and it is destroyed with the worker. A bounce never hears any of it.
 - **Load** ([`AppCore::load_library_item`](../crates/app/src/app_core_library.rs) with a
   `LoadTarget`): a device row is added the way the rack's browser adds it (the creation chain at the
   top level, `AddInner` inside a container); a patch or container is pasted (`PasteDevices`,
@@ -7234,18 +7316,36 @@ winit and GPU code is not (it needs a window and a GPU).
 [`Workspace`](../crates/app/src/workspace.rs) is the application layer above the shells. It holds the open
 songs (`DocId`, ids are not reused in a run), the one calls are routed to (`Workspace::select`; everything that
 is not a workspace method reaches that song's `Shell` through `Deref`, so the platform layer reads like the
-single-song app) and the one with the **play focus**.
+single-song app), the one with the **play focus** and the one with the **input focus**.
 
-- **Audio is unique.** Only the song with the play focus has a running stream, MIDI inputs and control surfaces;
-  every other song runs on a `LiveSession` that is switched off (the state of a song whose stream failed to
-  open: sink calls are accepted and ignored, the status line says "another song has the audio"). `Workspace::focus`
-  gives the audio to another song: `Shell::release_audio` shuts the old song's stream, inputs and surfaces and
-  stops its transport, then `Shell::claim_audio` hands the new song the settings the old one ran with, enables its
+- **Audio is unique.** Only the song with the play focus has a running stream; every other song
+  runs on a `LiveSession` that is switched off (the state of a song whose stream failed to
+  open: sink calls are accepted and ignored, the status line says "another song has the audio").
+  `Workspace::set_play_focus` gives the audio to another song: `Shell::release_audio` shuts the old song's
+  stream and stops its transport, then `Shell::claim_audio` hands the new song the settings the old one ran
+  with, enables its
   session and rebuilds its engine (`AppCore::rebuild_engine`), as a change of the devices does. The old stream is
   closed before the new one opens, so a device that cannot be shared works and no song leaks a note into the
   other. Plugin instances stay loaded in the song that owns them; closing a song shuts its plugin host down.
-- **What a click does.** Giving a window the OS focus gives its song the play focus, so the keys, the MIDI
-  keyboard and the audio follow the window being used. The input focus and the play focus are one for now.
+- **Play focus and input focus.** The play focus is the song that owns the stream; the input focus is the song
+  that takes the live MIDI keyboard, the MIDI controllers and the control surfaces. Both are app state: they are
+  not saved, and the project and its format do not know them. Each song's Audio I/O panel shows two buttons
+  on its plate, a speaker (Play) and a keyboard (Input), lit for the foci the song has; a click sends
+  `UiAction::TakeFocus`, the shell turns it into `ShellRequest::TakePlayFocus` or `TakeInputFocus`, and the
+  workspace answers with `Workspace::set_play_focus` or `set_input_focus`. **Live notes:** the engine that
+  plays a live note is the one of the song that owns the stream, and the notes go to the tracks of the song
+  that took them, so a keyboard cannot play into another song's engine without a second path from the MIDI
+  thread into it. The inputs are therefore held only while one song has both foci: `LiveSession::set_midi_held`
+  opens or closes the enabled MIDI ports of a running stream without touching the engine, and
+  `Shell::set_input_focus` (the surfaces too, in `configure_surface`) calls it with "input focus and not
+  silent". A keyboard whose song has no stream is closed; it opens as that song takes the audio, or when the
+  keyboard comes back to the song that plays. The settings keep the list of inputs either way.
+- **What a click does.** Giving a window the OS focus makes its song the song you work in (`Workspace::focus`:
+  calls are routed to it) and the setting Workflow > **Focus follows the active song** (`FocusFollows`, saved in
+  `workflow.json` as `focus_follows`: Both, the default, Play only, Input only or None) says which foci go with
+  it. With Both the audio and the MIDI keyboard follow the window being used, as before. A new song takes the
+  foci the setting names; closing the song that had a focus hands it to the song next to it. Next Song and
+  Previous Song count from the song you work in.
 - **Commands.** Window > New Song Window (`window.new_song`), Open Song in New Window (`window.open_song`), Close
   Song Window, Next Song, Previous Song and the list of open songs (`window.song`, at most nine) are shell
   requests (`ShellRequest::NewSong`, `PickOpenSong`, `CloseSong`, `ShowSong`) that only a workspace answers
@@ -7301,17 +7401,22 @@ single-song app) and the one with the **play focus**.
   lane kind), devices at the rack slot there (`RackView::drop_slot_at`), tracks after the track there. Files
   dragged out of the file browser follow the same hit test (`Workspace::files_to_song`,
   `Shell::foreign_file_drag`), so a patch, a container or a device row of the shared library drops on whichever
-  song is under the pointer, with the hover outline there. Both go through the ordinary paste commands, so the
-  audio fetch and the rate conversion above apply and the drop is one undo step.
+  song is under the pointer, with the hover outline there. While clips or devices are still being dragged, the
+  same dispatch calls `Workspace::drag_over_song` on every pointer event over another song's window: what the
+  drag carries is worked out once (`Shell::song_drag_carries`, `Carried`) and the target draws the marker files
+  show at the place the drop would use, `ArrangementView::carried_clips_hover` (the lane marker over a note
+  lane that takes the clips, the track marker over an audio track, the new-track marker elsewhere in the track
+  area) and `RackView::carried_devices_hover` (the drop line at the slot `drop_slot_at` gives). Tracks show no
+  marker. `Workspace::drag_left_song` takes it away when the drag leaves, ends or is dropped. Both go through the
+  ordinary paste commands, so the audio fetch and the rate conversion above apply and the drop is one undo step.
 - **Recovery of the other songs.** A song next to the first keeps its snapshots in `recovery/song-<n>` with its own
   session marker. At start, `crashed_song_snapshots` looks in those folders for a marker whose process is gone
   (and removes it, so the copies are offered once) and `Workspace::recover_songs` opens the newest snapshot of
   each as an unsaved song in a window of its own, up to eight, without moving the audio or the focus; a message
   in the first song says how many came back. The first song's own copy is offered by its banner as before.
-- **Not done yet.** Separate Input Focus and Play Focus buttons on the interface panel (the song that has the
-  stream also has the MIDI inputs, so the two are one today: they need a way to feed a song's live notes into the
-  engine of another), a drop marker in the window under the pointer while clips or devices (not files) are dragged
-  over another song, and a session of the MCP server with several songs (it stays one song).
+- **Not done yet.** Feeding one song's live notes into the engine of another (a keyboard with the input focus
+  in a song that does not play is silent, see above), and a session of the MCP server with several songs (it
+  stays one song).
 
 ## 6n. Logs, crash reports and diagnostics
 

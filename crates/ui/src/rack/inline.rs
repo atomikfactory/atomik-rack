@@ -288,6 +288,7 @@ impl RackView {
             driven: Vec::new(),
             automated: Vec::new(),
             has_channel: false,
+            locked: false,
             plugin_status: PluginDeviceStatus::default(),
             desc_id: 0,
             socket_device: Some(strip_socket_key(&container)),

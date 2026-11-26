@@ -29,10 +29,13 @@
 //!                  "values": { "file": "flac", "bit_depth": "24", "loudness": "guide-9" } } ] }
 //! ```
 //!
-//! The values use the words of `export.json` ([`crate::export_prefs`]). Loading is lenient: a
-//! missing or unreadable file, or one of another version, is no presets; an entry with a blank
-//! or repeated name, or the name of a built-in preset, is skipped, and a field this build does
-//! not know is its default. Saving is atomic and canonical.
+//! The values use the words of `export.json` ([`crate::export_prefs`]): `loudness` may be a
+//! custom target (`"custom-14.5"`), `ceiling_dbtp` is the true-peak ceiling of a target and
+//! `stems_together` says whether a stems preset gives every stem the same gain. The last two
+//! are optional: a file written before they existed loads with -1 dBTP and one gain for all.
+//! Loading is lenient: a missing or unreadable file, or one of another version, is no presets;
+//! an entry with a blank or repeated name, or the name of a built-in preset, is skipped, and a
+//! field this build does not know is its default. Saving is atomic and canonical.
 
 use crate::export_prefs::ExportPrefs;
 use atomik_ui::{
@@ -149,6 +152,8 @@ struct Stored {
     locators: bool,
     mono: bool,
     loudness: String,
+    ceiling_dbtp: f32,
+    stems_together: bool,
     also_mp3: bool,
 }
 
@@ -174,6 +179,8 @@ impl Stored {
             locators: p.locators,
             mono: p.mono,
             loudness: p.loudness,
+            ceiling_dbtp: p.ceiling_dbtp,
+            stems_together: p.stems_together,
             also_mp3: p.also_mp3,
         }
     }
@@ -193,6 +200,8 @@ impl Stored {
             locators: self.locators,
             mono: self.mono,
             loudness: self.loudness.clone(),
+            ceiling_dbtp: self.ceiling_dbtp,
+            stems_together: self.stems_together,
             also_mp3: self.also_mp3,
             ..ExportPrefs::default()
         }
@@ -276,9 +285,8 @@ impl PresetStore {
             return Err(why);
         }
         if stems {
-            // A stems export has no mix-down, loudness or extra file: they are not kept.
+            // A stems export has no mix-down or extra file: they are not kept.
             values.mono = false;
-            values.loudness = ExportLoudness::Off;
             values.also_mp3 = false;
         }
         if values.file.is_lossy() {

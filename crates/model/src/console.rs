@@ -150,6 +150,9 @@ pub struct Console {
     /// Track folders that play into a bus (see [`crate::console_folder`]); none in a plain
     /// project.
     pub folder_routes: Vec<crate::console_folder::FolderRoute>,
+    /// The locked strips (channels, buses and the master), sorted by key and listed once: every
+    /// edit of a locked strip is refused (see [`crate::console_lock`]). None in a plain project.
+    pub locked: Vec<DeviceKey>,
 }
 
 impl Default for Console {
@@ -167,6 +170,7 @@ impl Default for Console {
             send_follow: false,
             parallels: Vec::new(),
             folder_routes: Vec::new(),
+            locked: Vec::new(),
         }
     }
 }
@@ -604,6 +608,16 @@ pub enum ConsoleCommand {
     ClearInserts {
         /// Channel or bus device key.
         strip: DeviceKey,
+    },
+    /// Lock (`locked` true) or unlock the strips: channels, buses and the master (see
+    /// [`crate::console_lock`]). A locked strip refuses every edit of its params, inserts, name
+    /// and colour from every source; automation still plays. One undo step. Rejected for an empty
+    /// list, a device that is no console strip, or when no strip would change.
+    SetLocked {
+        /// The strips to lock or unlock.
+        strips: Vec<DeviceKey>,
+        /// The new state.
+        locked: bool,
     },
     /// Enable/disable delay compensation.
     SetCompensation(bool),

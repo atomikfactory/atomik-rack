@@ -510,9 +510,17 @@ in the rack and in the strip menu of the mixer (Duck from...), and in Track > Qu
 
 The start screen (File > Start Screen, and at start-up) lists New, Open, the templates and the recent songs. The first
 six templates ship with the program: **Ambient**, **Hip-Hop Boom Bap**, **House**, **Lo-fi**, **Synthwave** and
-**Techno**. Point at one to see its card (tempo, meter and tracks), click it to start a new song from it. File > New
-from Template lists the same templates, with your own after them (at most sixteen in all). A template opens as an
-untitled song, so Save asks for a place and the template itself is never changed.
+**Techno**. Point at one to see its card (a small picture of the song, then tempo, meter and tracks), click it to
+start a new song from it. File > New from Template lists the same templates, with your own after them (at most sixteen
+in all). A template opens as an untitled song, so Save asks for a place and the template itself is never changed.
+
+The picture on a template card and on each example card is the song seen from far away: one row per track, with a
+block for every clip in the track's colour (the colour of the clip or its lane when it has one). It is made from the
+song's file in the background, so the box never waits for it: a quiet placeholder shows until it is ready, and a card
+whose file cannot be read has no picture. Pictures are kept in the `cards` folder beside the video proxies in the
+per-user cache folder, one small file for each project file, named by a hash of the file's content: a file that did
+not change finds its picture ready, a file that changed gets a new one, and the oldest are removed past two hundred.
+The folder can be deleted at any time; the pictures are made again.
 
 - **What is in one.** A tempo and a song key, eight sections on an 8-bar grid over 64 bars (Intro, Verse or Build,
   Chorus or Drop, Break, Outro), shown as ranges in the arrangement. Six named, coloured tracks: a kick and the rest of
@@ -641,8 +649,16 @@ editor closes the program goes back to the theme in use. The colour tokens:
 | Console | `io_connected`, `io_free`, `io_unavailable`, `clip` |
 
 Besides the colours a theme file can set `dark` (light type on dark surfaces), `accent_saturation` and
-`accent_lightness` (the colours the devices and tracks get when nothing names theirs; Synthwave's are neon) and
-`corner` (the panel corner radius). Keep the text readable: the built-in themes keep their body text at a contrast
+`accent_lightness` (the colours the devices and tracks get when nothing names theirs; Synthwave's are neon),
+`corner` (the panel corner radius) and `glow`.
+
+**Glow** is a soft halo behind the level meters (the mixer channels, the track meters of the arrangement, the
+recording input meter of the transport bar, the big meter and the level bars of the effect panels) and behind the
+playhead line (the arrangement, the piano roll and the tab editor). The last rows of the theme editor, under Glow,
+turn it on and off (ON / OFF), choose its colour (ACCENT, the default, glows in the colour of what glows: the zone a
+meter has reached, the playhead's own colour; or click the swatch to pick one colour for all of it), and set its
+strength and its reach with two sliders. Synthwave glows; Dark and Light do not, and a theme file that has no `glow`
+section does not glow either. In **Low power** (Settings > Interface > Performance) the glow is not drawn at all. Keep the text readable: the built-in themes keep their body text at a contrast
 of at least 4.5 to 1 against every panel, and a theme you make is not checked.
 
 The theme in use is a preference, not part of a project: songs look the same in every theme, and nothing about the

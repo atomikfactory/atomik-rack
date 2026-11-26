@@ -69,6 +69,7 @@
 //!
 //! A refusal or a failure goes to the status line.
 
+use super::audition::span_chunks;
 use super::*;
 use crate::browser_workers::{CopyAssets, CopyReport};
 use atomik_audio_file::save_text_atomic;
@@ -119,6 +120,9 @@ pub enum LoadTarget {
         tick: i64,
     },
 }
+
+/// The longest audio clip saved to the library, in seconds.
+const AUDIO_CLIP_MAX_SECONDS: u64 = 120;
 
 /// The most characters of a file name stem.
 const MAX_STEM: usize = 80;
@@ -664,15 +668,19 @@ impl<S: EngineSink> AppCore<S> {
         let root = self.library_folder()?;
         let ids = self.arrangement.selected_clips();
         let [id] = ids.as_slice() else {
-            return Err("Select exactly one note clip to save to the library".into());
+            return Err("Select exactly one note or audio clip to save to the library".into());
         };
         let doc = self.document.doc();
         let (track, _, clip) = doc
             .song
             .clip(*id)
             .ok_or_else(|| "The selected clip is gone".to_string())?;
+        if clip.content.is_audio() {
+            let id = *id;
+            return self.save_audio_clip(&root, id);
+        }
         if !clip.content.is_notes() {
-            return Err("Only a note clip can be saved to the library".into());
+            return Err("Only a note or an audio clip can be saved to the library".into());
         }
         let meters = doc.song.meter_table();
         let bar = meters.map().bar_at(clip.start);
@@ -692,6 +700,87 @@ impl<S: EngineSink> AppCore<S> {
             .map_or_else(|| track.device.0.as_str(), |d| d.name.as_str());
         let name = stem_of(&format!("{track_name} bar {bar}"), "Clip");
         let (path, stem) = write_item(&root, LibrarySection::Clips, &name, CLIP_EXT, &text)?;
+        self.library_saved(&stem, LibrarySection::Clips, path, None);
+        Ok(())
+    }
+
+    /// Saves the audio clip `id` to the **Clips** section as an audio loop: a 32-bit float WAV
+    /// file of the span the clip plays, unprocessed (the speaker's span, at the clip's gain, from
+    /// the end down for a reversed clip), named after its track and bar. The library lists
+    /// audio files in Clips already and the file browser previews them, so nothing about the
+    /// library's formats changes. The document does not change.
+    fn save_audio_clip(&mut self, root: &Path, id: ClipId) -> Result<(), String> {
+        let doc = self.document.doc();
+        let (track, _, clip) = doc
+            .song
+            .clip(id)
+            .ok_or_else(|| "The selected clip is gone".to_string())?;
+        let ClipContent::Audio(content) = &clip.content else {
+            return Err("Only a note or an audio clip can be saved to the library".into());
+        };
+        let meta = doc
+            .assets
+            .get(&content.asset)
+            .ok_or_else(|| "The audio file of the clip is missing".to_string())?;
+        let rate = meta.sample_rate;
+        let span = atomik_model::audition_span(
+            &doc.song,
+            rate,
+            clip.start,
+            content,
+            clip.length,
+            clip.start,
+            meta.frames,
+        )
+        .ok_or_else(|| "The clip plays no audio".to_string())?;
+        if span.end_frame - span.start_frame > u64::from(rate) * AUDIO_CLIP_MAX_SECONDS {
+            return Err(format!(
+                "The clip is longer than {AUDIO_CLIP_MAX_SECONDS} seconds: cut it to save it to the library"
+            ));
+        }
+        let bar = doc.song.meter_table().map().bar_at(clip.start);
+        let gain = 10f32.powf(content.gain_db.clamp(-120.0, 24.0) / 20.0);
+        let track_name = doc
+            .device(&track.device)
+            .map_or_else(|| track.device.0.as_str(), |d| d.name.as_str());
+        let name = stem_of(&format!("{track_name} bar {bar}"), "Clip");
+        let asset = self
+            .audio
+            .assets
+            .get(&content.asset)
+            .cloned()
+            .ok_or_else(|| "The audio file of the clip is missing".to_string())?;
+        let mut planes: Vec<Vec<f32>> = Vec::new();
+        span_chunks(
+            &asset,
+            span.start_frame,
+            span.end_frame,
+            span.reverse,
+            |chunk| {
+                if planes.is_empty() {
+                    planes = vec![Vec::new(); chunk.len()];
+                }
+                for (plane, part) in planes.iter_mut().zip(chunk) {
+                    plane.extend(part.into_iter().map(|s| s * gain));
+                }
+                true
+            },
+        );
+        let data = atomik_audio_file::AudioData::new(rate, planes)
+            .map_err(|e| format!("The clip's audio cannot be read: {e}"))?;
+        if data.frames() == 0 {
+            return Err("The clip plays no audio".into());
+        }
+        let dir = root.join(LibrarySection::Clips.title());
+        std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+        let path = unique_name(&dir, &name, "wav", &|p: &Path| p.exists());
+        atomik_audio_file::write_wav_f32(&path, &data).map_err(|e| {
+            let _ = std::fs::remove_file(&path);
+            format!("{}: {e}", path.display())
+        })?;
+        let stem = path
+            .file_stem()
+            .map_or(name, |s| s.to_string_lossy().into_owned());
         self.library_saved(&stem, LibrarySection::Clips, path, None);
         Ok(())
     }

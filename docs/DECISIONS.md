@@ -2365,3 +2365,75 @@ outcome would depend on the machine's speed); stopping on the UI thread and only
 as long as a hung open).
 
 **Status.** Decided by the owner on 2026-11-25.
+
+## BX. A loudness target for stems is one gain from the mix by default, with no limiter
+
+**Decision.** Export Stems takes the same loudness choices as the song (a fixed target, a custom target, a guide) with
+a true-peak ceiling of -1 dBTP, -2 dBTP or the user's. By default every stem is multiplied by the same gain, the one
+that brings the mix the stems add up to onto the target: the master's stem when the export has one (it is rendered
+first, so the gain is known before any file is written and no stem is held in memory), else the sum of the stems (a
+dry export has no master; a first pass measures the sum, so that export renders twice). The gain is held back where the
+mix's true peak would pass the ceiling and no limiter runs; the toast says how far short of the target that left it,
+and a stem whose peaks pass full scale is flagged. The other choice is each stem brought to the target on its own with
+the same limiter as the song export. A guide only measures, in both. With the loudness off nothing changes.
+
+**Why.** Stems are delivered to be summed again (for a mix, a remix, a stem player): a common gain keeps them summing
+to the mix, which is what a mixing delivery usually asks for. A limiter works on the signal it sees, so stems
+limited one at a time would not add up to the limited mix; holding the gain at the ceiling gives up some loudness
+instead, and says so. Each stem on its own is still offered because a set of
+separate files (samples, loops) wants every file at the same level.
+
+**Rejected.** A limiter on the master's stem with the same gain reduction applied to the others (it needs the whole
+reduction curve of the master kept and followed sample for sample, and the stems would still not sum when a stem has
+peaks the master does not); holding every stem in memory until the master is known (a long song with many strips would
+cost memory in proportion to both); rendering twice for every together export (the master first order needs one pass).
+
+**Status.** Default (not yet confirmed): chosen in the implementation, to be confirmed by the owner.
+
+## BY. A theme's glow is a few stacked translucent shapes, off at Low power, and only a theme that says so has it
+
+**Decision.** A theme file may have a `glow` section (enabled, `accent` or one colour, intensity 0 to 1, radius 0 to 16
+pixels). The halo is four widening translucent rounded shapes drawn behind the thing that glows (`Glow::halo`): the lit
+part of a level meter, or the playhead line. Light and Dark leave it off and a file without the section does not glow,
+so their goldens did not change; Synthwave sets it on. The shell takes the glow out of the theme at Low power, before
+any view gets the theme, so the views draw it only when it is on and never test the power level themselves. The
+project format and the theme `version` are unchanged: an older file simply has no section, and a newer one is read by
+a program that does not know the section (unknown sections are ignored like unknown colours).
+
+**Why.** The renderers have no blur pass, and a real blur means an offscreen target per frame, which is the cost Low
+power exists to avoid. Stacked shapes read as a soft glow at the sizes meters and playhead lines have, hold no heap
+(a test counts the allocations of drawing one), and the same display list draws on the GPU and on the CPU canvas of the
+screenshots. Skipping the glow at Low power is one place and one rule; a theme that draws without it at that level
+looks as it does at Full minus the halo, nothing else moves. Accent glow (the colour of what glows) is the default
+because it follows the meter zones and a recording playhead without more tokens.
+
+**Rejected.** A blurred layer (an offscreen pass for every meter and line); drawing the halo as a gradient (a gradient
+holds its stops and the CPU canvas cannot match it); a halo at Low power with fewer layers (two code paths to keep
+equal for little); giving every theme based on Synthwave its glow (a theme file that wants it writes the section; a
+copy made by the program writes it).
+
+**Status.** Default (not yet confirmed). Decided by: none yet.
+
+## BZ. The pictures on the start screen's cards are made on a worker thread and kept by the content of the file
+
+**Decision.** A card picture is the song's arrangement seen from far away: one row per track, one block per clip, the
+colours kept as "the clip's, the lane's, the track's, else the device type's accent" so the picture takes the theme in
+use. It is made by a worker thread (`PictureWorker`) that reads the project file, loads it with the registry and keeps
+only the shares of the song each clip covers. The picture is cached in a text file named by a hash of the project file's
+content (FNV-1a over the bytes, and the length) in a `cards` folder beside the video proxies; past two hundred files the
+oldest go. The interface thread asks once for each card (all the example cards, and the template card that shows) and
+collects what is done in the frame step; a placeholder shows meanwhile, and a file that gives no picture leaves its
+card without one.
+
+**Why.** Loading a project belongs off the interface thread (a template with many devices takes noticeable time), and
+a content hash is the one key that is right for a file edited in place, replaced by a newer factory file, or copied:
+the same content has the same picture. A small text file needs no dependency and can be read and checked by hand; a
+damaged or old-format file is simply made again. A hash that is not cryptographic is enough: a collision would show
+the picture of another song on a card, nothing more, and the file is the user's own.
+
+**Rejected.** A rendered bitmap of the arrangement (a second renderer to keep in step with the theme, and a file for
+every theme); keying by modification time (a copy or a restore keeps the old picture); building the pictures in the
+frame step in small slices (a slice of a project load cannot be cut); one cache file for all cards (a rewrite for each
+change).
+
+**Status.** Default (not yet confirmed). Decided by: none yet.

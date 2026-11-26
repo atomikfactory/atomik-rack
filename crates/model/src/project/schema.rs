@@ -345,6 +345,7 @@ pub(crate) static SPECS: &[FieldSpec] = &[
     field(Console, "send_follow", 39),
     field(Console, "parallels", 39),
     field(Console, "folder_routes", 44).ignorable(),
+    field(Console, "locked", 46).ignorable(),
     field(Channel, "channel", 1).req(),
     field(Channel, "source", 1).req(),
     field(Bus, "bus", 1).req(),

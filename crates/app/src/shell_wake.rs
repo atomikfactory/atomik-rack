@@ -18,6 +18,7 @@ impl<B: AudioBackend> Shell<B> {
             || self.context_menu_pending()
             || self.tooltip_pending()
             || self.any_bar_open()
+            || self.card_pictures_pending()
             || self.controller_wizard.is_some()
             || self.core.view().is_auto_scrolling()
             || self.core.view().unfold_pending()

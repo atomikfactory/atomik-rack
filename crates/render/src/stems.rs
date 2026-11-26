@@ -31,9 +31,12 @@
 //! engine sums the master's inputs in one order, this sums them in another).
 
 use crate::export::{
-    ExportFormat, ExportRender, ExportSpan, TAIL_FLOOR, span_frames, write_export,
+    ExportFormat, ExportRender, ExportReport, ExportSpan, TAIL_FLOOR, span_frames, write_export,
 };
-use crate::loudness::LoudnessReport;
+use crate::loudness::{LoudnessReport, measure};
+use crate::normalise::{
+    CommonGain, Finish, Loudness, NormaliseReport, apply_gain, finish_render, shifted,
+};
 use crate::plugin_pass::RenderControl;
 use crate::project::{Core, Extra, PluginBounce, ProjectOptions, render_core};
 use crate::{RenderError, Warning};
@@ -339,6 +342,11 @@ pub struct StemsReport {
     pub files: Vec<(PathBuf, StemSource)>,
     /// The loudness of each file's audio ([`crate::loudness`]), in the order of `files`.
     pub loudness: Vec<LoudnessReport>,
+    /// What the level of each stem was and became, in the order of `files`, when a loudness was
+    /// asked for ([`StemsLevel`]).
+    pub normalise: Vec<Option<NormaliseReport>>,
+    /// The one gain every stem got, when they were taken together ([`StemsLevel::together`]).
+    pub common: Option<CommonGain>,
     /// Frames of each file at its sample rate.
     pub frames: u64,
     /// The sample rate of the files in Hz.
@@ -355,6 +363,44 @@ pub struct StemsReport {
 pub fn stems_folder_name(song_name: &str) -> String {
     format!("Bounced {}", atomik_model::safe_file_name(song_name))
 }
+
+/// What is done to the level of the stems before they are written.
+///
+/// * **Together** (`together`): one gain for every stem, from the loudness of the mix they make
+///   up ([`CommonGain`]): the master's stem when the export has one, else the sum of the stems.
+///   The stems keep adding up to the mix, which is what a mixing delivery needs. With a master
+///   the stems are rendered master first so the gain is known before the first file is written
+///   and no stem is held in memory; without one the stems are rendered twice, once to measure
+///   their sum and once to write them.
+/// * **Each**: every stem is brought to the target on its own, as a song export is, with the
+///   same look-ahead limiter under the ceiling ([`crate::normalise`]).
+///
+/// A guide measures and reports and changes nothing, either way.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct StemsLevel {
+    /// The loudness asked for; [`Loudness::Off`] writes the stems as they are rendered.
+    pub loudness: Loudness,
+    /// One gain for all the stems instead of one each.
+    pub together: bool,
+}
+
+/// Where the files of an export of stems go.
+#[derive(Debug, Clone, Copy)]
+pub struct StemsOutput<'a> {
+    /// The folder (created when it is missing).
+    pub folder: &'a Path,
+    /// The extension of the files, without the dot.
+    pub extension: &'a str,
+    /// What is done to the level.
+    pub level: StemsLevel,
+}
+
+/// How a finished stem becomes a file: writes `render`, the audio of the strip `source`, to the
+/// file `path` and says what was written, or `None` when the render was stopped meanwhile. The
+/// writer is free to write through another file (an encoder reads a temporary one) but leaves
+/// nothing behind when it fails or is stopped.
+pub type StemWriter<'a> =
+    dyn FnMut(&Path, &StemSource, &ExportRender) -> Result<Option<ExportReport>, RenderError> + 'a;
 
 /// Renders the stems of `request` and writes each to its own file in `folder` (created when it is
 /// missing) in the container, depth, dither and rate of `format`: `01 Kick.wav`, `02 Bass.wav`,
@@ -373,38 +419,43 @@ pub fn export_stems(
     (request, format): (&StemRequest, &ExportFormat),
     (folder, control): (&Path, RenderControl<'_>),
 ) -> Result<Option<StemsReport>, RenderError> {
+    let output = StemsOutput {
+        folder,
+        extension: format.container.extension(),
+        level: StemsLevel::default(),
+    };
+    export_stems_with(
+        (doc, registry),
+        project,
+        plugins,
+        request,
+        (&output, control),
+        &mut |path, _, render| write_export(path, render, format).map(Some),
+    )
+}
+
+/// [`export_stems`] with the level of the stems ([`StemsLevel`]) and a writer of its own
+/// ([`StemWriter`]: the app's compressed stems go through one that encodes).
+///
+/// # Errors
+/// As [`export_stems`].
+pub fn export_stems_with(
+    (doc, registry): (&RackDoc, &Registry),
+    project: (&ProjectOptions, Option<&Path>),
+    plugins: &mut PluginBounce<'_>,
+    request: &StemRequest,
+    (output, control): (&StemsOutput<'_>, RenderControl<'_>),
+    write: &mut StemWriter<'_>,
+) -> Result<Option<StemsReport>, RenderError> {
+    let folder = output.folder;
+    let loudness = output.level.loudness;
+    let together = output.level.together && loudness != Loudness::Off;
     let created = !folder.exists();
     std::fs::create_dir_all(folder).map_err(|e| RenderError::Write {
         path: folder.to_path_buf(),
         source: hound::Error::from(e).into(),
     })?;
     let names = stem_file_names(&request.sources);
-    let extension = format.container.extension();
-    let mut files: Vec<(PathBuf, StemSource)> = Vec::new();
-    let mut loudness: BTreeMap<PathBuf, LoudnessReport> = BTreeMap::new();
-    let mut last: Option<(u64, u32)> = None;
-    let mut write = |stem: Stem| -> Result<(), RenderError> {
-        let path = folder.join(format!("{}.{extension}", names[stem.index]));
-        let render = ExportRender {
-            audio: stem.audio,
-            span_frames: 0,
-            tail_frames: 0,
-            warnings: Vec::new(),
-        };
-        let report = write_export(&path, &render, format)?;
-        last = Some((report.frames, report.sample_rate));
-        loudness.insert(path.clone(), report.loudness);
-        files.push((path, stem.source));
-        Ok(())
-    };
-    let rendered = render_stems(
-        doc,
-        registry,
-        project,
-        plugins,
-        request,
-        (control, &mut write),
-    );
     let cleanup = |files: &[(PathBuf, StemSource)]| {
         for (path, _) in files {
             let _ = std::fs::remove_file(path);
@@ -413,6 +464,154 @@ pub fn export_stems(
             let _ = std::fs::remove_dir(folder);
         }
     };
+    // Taken together, the gain comes from the master's stem, rendered first so that it is known
+    // before the first file is written; without a master (or for dry stems, which have none)
+    // from the sum of the stems, which a first pass measures.
+    let master = request
+        .sources
+        .iter()
+        .position(|s| s.kind == StemKind::Master)
+        .filter(|_| request.strip == StemStrip::Full);
+    let master_first = together && master.is_some();
+    let order: Vec<usize> = match master.filter(|_| master_first) {
+        Some(m) => std::iter::once(m)
+            .chain((0..request.sources.len()).filter(|&i| i != m))
+            .collect(),
+        None => (0..request.sources.len()).collect(),
+    };
+    let ordered = StemRequest {
+        sources: order.iter().map(|&i| request.sources[i].clone()).collect(),
+        ..request.clone()
+    };
+    let measure_sum = together && !master_first;
+    let mut common: Option<CommonGain> = None;
+    if measure_sum {
+        let mut sum: Vec<Vec<f32>> = Vec::new();
+        let mut rate = doc.sample_rate;
+        let first_half = |p: f32| {
+            if let Some(report) = control.progress {
+                report(p * 0.5);
+            }
+        };
+        let measuring = RenderControl {
+            cancel: control.cancel,
+            progress: control
+                .progress
+                .map(|_| &first_half as &(dyn Fn(f32) + Sync)),
+        };
+        let measured = render_stems(
+            doc,
+            registry,
+            project,
+            plugins,
+            request,
+            (measuring, &mut |stem: Stem| {
+                rate = stem.audio.sample_rate;
+                if sum.is_empty() {
+                    sum = stem.audio.channels;
+                } else {
+                    for (total, channel) in sum.iter_mut().zip(&stem.audio.channels) {
+                        for (t, x) in total.iter_mut().zip(channel) {
+                            *t += x;
+                        }
+                    }
+                }
+                Ok(())
+            }),
+        );
+        match measured {
+            Ok(Some(_)) if !control.cancelled() => {}
+            Ok(_) => {
+                cleanup(&[]);
+                return Ok(None);
+            }
+            Err(e) => {
+                cleanup(&[]);
+                return Err(e);
+            }
+        }
+        let mix = AudioData {
+            sample_rate: rate,
+            channels: sum,
+        };
+        common = CommonGain::of(measure(&mix), loudness);
+    }
+    let second_half = |p: f32| {
+        if let Some(report) = control.progress {
+            report(0.5 + p * 0.5);
+        }
+    };
+    let writing = if measure_sum {
+        RenderControl {
+            cancel: control.cancel,
+            progress: control
+                .progress
+                .map(|_| &second_half as &(dyn Fn(f32) + Sync)),
+        }
+    } else {
+        control
+    };
+    let mut files: Vec<(PathBuf, StemSource)> = Vec::new();
+    let mut reports: BTreeMap<PathBuf, (LoudnessReport, Option<NormaliseReport>)> = BTreeMap::new();
+    let mut last: Option<(u64, u32)> = None;
+    let mut write_stem = |stem: Stem| -> Result<(), RenderError> {
+        let path = folder.join(format!("{}.{}", names[order[stem.index]], output.extension));
+        let mut audio = stem.audio;
+        let mut normalise = None;
+        if together {
+            let before = measure(&audio);
+            if common.is_none() && stem.source.kind == StemKind::Master {
+                common = CommonGain::of(before, loudness);
+            }
+            if let Some(c) = &common {
+                apply_gain(&mut audio.channels, c.gain_db);
+                normalise = Some(NormaliseReport {
+                    before,
+                    after: shifted(&before, c.gain_db),
+                    gain_db: c.gain_db,
+                    limited_db: None,
+                    target_lufs: Some(c.target_lufs),
+                    ceiling_dbtp: c.ceiling_dbtp,
+                    guide: c.guide,
+                    clipped: audio.channels.iter().flatten().any(|x| x.abs() >= 1.0),
+                });
+            }
+        } else if loudness != Loudness::Off {
+            let mut render = ExportRender {
+                audio,
+                span_frames: 0,
+                tail_frames: 0,
+                warnings: Vec::new(),
+            };
+            let finish = Finish {
+                mono: false,
+                loudness,
+            };
+            normalise = finish_render(&mut render, &finish);
+            audio = render.audio;
+        }
+        let render = ExportRender {
+            audio,
+            span_frames: 0,
+            tail_frames: 0,
+            warnings: Vec::new(),
+        };
+        let Some(report) = write(&path, &stem.source, &render)? else {
+            return Ok(());
+        };
+        last = Some((report.frames, report.sample_rate));
+        reports.insert(path.clone(), (report.loudness, normalise));
+        files.push((path, stem.source));
+        Ok(())
+    };
+    let rendered = render_stems(
+        doc,
+        registry,
+        project,
+        plugins,
+        &ordered,
+        (writing, &mut write_stem),
+    );
     let rendered = match rendered {
         Ok(Some(r)) if !control.cancelled() => r,
         Ok(_) => {
@@ -425,7 +624,8 @@ pub fn export_stems(
         }
     };
     let (frames, sample_rate) = last.unwrap_or((0, doc.sample_rate));
-    // The stems of a dry request skip the strips without a source: the files keep the order.
+    // The files come in the order of the request, whatever order they were rendered in (and
+    // the stems of a dry request skip the strips without a source).
     files.sort_by_key(|(_, s)| {
         request
             .sources
@@ -433,14 +633,16 @@ pub fn export_stems(
             .position(|o| o == s)
             .unwrap_or(usize::MAX)
     });
-    let loudness = files
+    let (loudness, normalise) = files
         .iter()
-        .map(|(path, _)| loudness.get(path).copied().unwrap_or_default())
-        .collect();
+        .map(|(path, _)| reports.remove(path).unwrap_or_default())
+        .unzip();
     Ok(Some(StemsReport {
         folder: folder.to_path_buf(),
         files,
         loudness,
+        normalise,
+        common,
         frames,
         sample_rate,
         span_frames: rendered.span_frames,

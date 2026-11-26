@@ -9,6 +9,63 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Play Focus and Input Focus for several open songs.** The Audio I/O panel of each song has two buttons on its
+  plate, a speaker (Play) and a keyboard (Input), lit for the foci the song has. Play moves the audio stream to the
+  song; Input moves the MIDI keyboard, the MIDI controllers and the control surfaces. The new Workflow setting
+  "Focus follows the active song" (Both, Play only, Input only or None; saved in `workflow.json`, not in the project)
+  says which foci go to the song you work in; Both, the default, behaves as before. A keyboard sounds only while
+  its song also has the Play Focus: a song without a stream has no engine to play it into, and the button's tooltip
+  says so. Next Song and Previous Song count from the song you work in.
+- **A drop marker over another song's window.** While clips or devices are dragged out of one song and over the
+  window of another, that window draws the marker it draws for files, at the place the drop will use: the lane and
+  snapped time for clips, the drop line at the rack slot for devices.
+
+### Added
+- **Save Clip to Library takes audio clips.** The one selected audio clip is saved to the Clips section as an audio
+  loop: a 32-bit float WAV of the span the clip plays, unprocessed and at the clip's gain, named after its track and
+  bar. The section already lists audio and the file browser previews it (Space, or on selection with auto-preview), so
+  a saved audio clip is previewed like any audio file. A clip longer than two minutes is refused. No library format
+  changes.
+- **Library previews follow the keyboard.** While a patch, container or effect item is the one selected row of the file
+  browser, the notes of a MIDI keyboard and of the Piano Keys strip play through it (an effect through a built-in
+  synth) instead of through the selected track, and go back to the track when the selection leaves it. It starts after
+  the selection has rested, plays about 30 ms behind the keys, never records and changes nothing in the song. Space
+  still plays the item's built-in phrase.
+- **Previews of plugin presets.** Selecting a preset in the preset list of a plugin of the rack plays it from the
+  keyboard through a preview instance of the plugin (loaded in the background with `Loading` in the status line, kept
+  while you browse the presets of that plugin, never in the rack or the document).
+- **A glow on the meters and the playhead, as part of a theme.** A theme file can have an optional `glow` section
+  (on or off, the colour of what glows or one colour of its own, a strength from 0 to 1 and a reach in pixels). It
+  draws a soft halo behind the level meters (the mixer channels, the track meters of the arrangement, the recording
+  input meter of the transport bar, the big meter and the level bars of the effect panels) and behind the playhead
+  line (arrangement, piano roll and tab editor), with a few stacked translucent shapes: no blur pass, nothing
+  allocated per frame. Synthwave glows; Light and Dark do not and look exactly as before, and a theme file without
+  the section loads unchanged. The theme editor has a Glow group at the end of its list (ON / OFF, ACCENT or a
+  colour from the picker, strength and reach sliders) that shows at once and has undo. At Low power the glow is not
+  drawn.
+- **A picture of the song on the start screen's cards.** The template card and each example card show the song seen
+  from far away: a row for each track with a block for every clip in the track's colour. The picture is made from the
+  song's file on a background thread, so the box never waits (a quiet placeholder shows meanwhile; a file that cannot
+  be read leaves its card without a picture) and is kept in a `cards` folder in the per-user cache area, named by a
+  hash of the file's content: made once, reused while the file does not change, made again when it does.
+- **Stems as MP3, AAC and Opus.** Export Stems offers the three compressed formats next to WAV, AIFF and FLAC, with
+  the same bitrate and quality choices as the song, through the FFmpeg you install (the buttons are greyed with the
+  setup line without it). Each stem is encoded as it is rendered and written as `01 Kick.mp3`, `.m4a` or `.opus`;
+  its tags are the stem's name as the title, the song's title as the album and the song's author as the artist.
+  One progress bar and one Cancel cover all the stems, and a cancel or a failure leaves no file, no partial file and
+  no temporary file behind.
+- **A loudness target for stems.** The LOUDNESS row of Export Stems brings the stems to a target or measures them
+  against a guide. By default one gain goes to every stem, worked out from the loudness of the mix they add up to
+  (the master's stem, or the sum of the stems for a dry export), so the stems still sum to the mix; no limiter is
+  used, so a target the peaks cannot reach is held at the ceiling and the toast says how far short it stopped, and a
+  stem whose peaks pass full scale is flagged. With EACH STEM on the new STEM GAIN row, every stem is brought to the
+  target on its own with the true-peak limiter, as a song export is. The toast says what was done and the log lists
+  what each stem was and became. With the loudness off, stems are written exactly as before.
+- **A custom loudness target and a choice of ceiling.** The LOUDNESS row has a CUSTOM box that takes a target of your
+  own, from -40 to -5 LUFS with a tenth allowed, and a new CEILING row sets the true-peak ceiling of a target: -1 dBTP,
+  -2 dBTP or a number of your own from -9 to 0. Both are remembered with the other export choices and kept by the
+  export presets you save (`custom-14.5`, `ceiling_dbtp` and `stems_together` in `export.json` and
+  `export_presets.json`; a file written before them loads with -1 dBTP and one gain for all).
 - **Rename and delete a version in the version history.** In File > Versions, RENAME (or F2 on the list) puts the chosen
   version's name in the name field and Enter or RENAME keeps it; an empty name clears it, so the version is listed by
   its time again. DELETE (or the Delete key on the list) asks "Delete version ...? This cannot be undone." and then
@@ -16,6 +73,17 @@ may break APIs and the patch and project formats.
   it is unprotected (the button is off and its tooltip says why), and a failure leaves the version listed with its
   file. A right-click on a row opens a menu with Restore, Compare, Rename, Protect and Delete. The project file and the
   project format do not change; the song is never a version and is never deleted.
+- **Lock a mixer channel.** A small padlock on the name plate of each console strip (channels, buses and the master)
+  and on the name strip of the strip's rack panel locks it; a click on it unlocks. A locked strip refuses every edit
+  of its own values and structure from every source (the mouse, the keyboard, the wheel, MIDI learn, macros, paste,
+  reset, clearing inserts, snapshot recall, the MCP server): the fader, pan, width, sends, input, filters, EQ,
+  dynamics, mute and solo, the inserts (add, remove, reorder, bypass and the effects' own params), the name, the
+  colour and the strip's removal. A command on several strips (a ganged fader move, a recall, Clear Mutes, a paste,
+  Reset Channel on a selection) skips the locked ones and changes the others. Automation still plays on a locked
+  strip, and a macro that already drives one keeps driving it. The controls are drawn dimmed, the meters stay live and
+  "Channel <name> is locked" is shown once per gesture. Mixer > Channel Strip > Lock / Unlock Channel (no default key)
+  and the strip's right-click menu do the same for the selection. The lock is an undoable edit and is saved in the
+  project (a new optional field, project format 46, which older builds ignore: they open the mix unlocked).
 
 ### Changed
 - **The device CPU readout no longer allocates in a playing window.** Each pass (about five a second) rebuilt every

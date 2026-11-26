@@ -185,6 +185,17 @@ impl RackDoc {
                 }
             }
         }
+        for (i, key) in c.locked.iter().enumerate() {
+            let is_strip = c.channel_index(key).is_some()
+                || c.bus_index(key).is_some()
+                || c.master.as_ref() == Some(key);
+            if !is_strip {
+                found.add(
+                    format!("console.locked[{i}]"),
+                    format!("{key} is not a console strip"),
+                );
+            }
+        }
         for (i, (_, child)) in c.parallels.iter().enumerate() {
             if c.channel_index(child).is_none() {
                 found.add(

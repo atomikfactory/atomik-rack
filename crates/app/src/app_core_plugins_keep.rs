@@ -195,6 +195,7 @@ fn console_keeps_plugins(command: &ConsoleCommand) -> bool {
         | ConsoleCommand::ResetStrip { .. }
         | ConsoleCommand::ClearInserts { .. }
         | ConsoleCommand::SetCompensation { .. }
+        | ConsoleCommand::SetLocked { .. }
         | ConsoleCommand::SetAlignReturns { .. }
         | ConsoleCommand::ClearSolos
         | ConsoleCommand::ClearMutes

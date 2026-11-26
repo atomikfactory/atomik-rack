@@ -1,9 +1,10 @@
 {
   "format": "atomik-project",
-  "version": 45,
+  "version": 46,
   "compat": 44,
   "ignorable": {
     "camera": 45,
+    "console.locked": 46,
     "headphone": 45,
     "inserts_folded": 45,
     "song.chords": 45,

@@ -68,7 +68,7 @@ fn a_plain_clip_writes_nothing_and_a_clip_with_expression_round_trips() {
             [[PPQ / 4, 0.5], [PPQ / 2, 0.75]]
         ]])
     );
-    assert_eq!(v["version"], 45);
+    assert_eq!(v["version"], 46);
     let (loaded, warnings) = load_project_with_warnings(&text, &reg).unwrap();
     assert!(warnings.is_empty(), "{warnings:?}");
     assert_eq!(&loaded, d.doc());

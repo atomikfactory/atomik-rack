@@ -232,7 +232,7 @@
 {"text":"RESET","at":[591.00,659.50],"size":9.50,"weight":700,"align":"center","color":"#f3e9ffff"},
 {"text":"#f3e9ff","at":[630.00,660.00],"size":10.50,"weight":400,"align":"start","color":"#a99bc9ff"},
 {"pop_clip":true},
-{"fill":{"rect":[726.00,88.00,729.00,281.12]},"brush":"#5f5479ff"},
+{"fill":{"rect":[726.00,88.00,729.00,268.31]},"brush":"#5f5479ff"},
 {"pop_clip":true},
 {"pop_transform":true}
 ]}

@@ -4553,6 +4553,7 @@ impl PianoRollView {
             .and_then(|cl| seq_edit::song_to_content(cl, self.playhead))
         {
             let x = self.axis.tick_to_x(t).round() + 0.5;
+            st.base.glow.vline(c, x, g.y0, g.y1, st.playhead);
             c.stroke_with(
                 vello::kurbo::Line::new(pt(x, g.y0), pt(x, g.y1)),
                 1.5,
@@ -5018,6 +5019,7 @@ impl PianoRollView {
             .and_then(|clip| seq_edit::song_to_content(clip, self.playhead))
         {
             let x = self.axis.tick_to_x(tick).round() + 0.5;
+            st.base.glow.vline(c, x, body.y0, body.y1, st.playhead);
             sp::line(c, x, body.y0, x, body.y1, st.playhead);
         }
         sp::line(
@@ -5118,6 +5120,7 @@ impl PianoRollView {
             .and_then(|clip| seq_edit::song_to_content(clip, self.playhead))
         {
             let x = self.axis.tick_to_x(tick).round() + 0.5;
+            st.base.glow.vline(c, x, body.y0, body.y1, st.playhead);
             sp::line(c, x, body.y0, x, body.y1, st.playhead);
         }
         sp::line(

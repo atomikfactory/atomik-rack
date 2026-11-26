@@ -13,9 +13,11 @@
 //! `"cbr256"`, `"cbr320"`, `"v0"`, `"v2"` or `"v4"`), `aac_kbps` and `opus_kbps` are the bitrates
 //! of those formats in kilobits per second, `dry` takes the channels of a stems export before their strips, `locators`
 //! exports stems only between the locators, `mono` mixes every channel into one, `loudness` is
-//! `"off"`, `"target-14"` (a loudness target in LUFS, with a true-peak ceiling) or `"guide-9"`
-//! (a guide only), `also_mp3` writes an MP3 next to a lossless file, and `folder` is where the
-//! last export went. The film
+//! `"off"`, `"target-14"` (a loudness target in LUFS, with a true-peak ceiling), `"custom-14.5"`
+//! (a target of the user's, from -40 to -5 LUFS) or `"guide-9"` (a guide only), `ceiling_dbtp` is
+//! the true-peak ceiling of a target (-9 to 0, -1 when the file has none), `stems_together` gives
+//! every stem the same gain towards a loudness target (else each stem its own), `also_mp3` writes
+//! an MP3 next to a lossless file, and `folder` is where the last export went. The film
 //! export (File > Export > Film with Mix) keeps its choices in the `film_*` fields: `film_cover`
 //! (`"span"` or `"song"`), `film_picture` (`"auto"`, `"copy"` or `"encode"`), `film_quality`
 //! (`"high"`, `"standard"` or `"small"`), `film_sound` (`"aac"` or `"pcm"`), `film_aac_kbps`
@@ -25,9 +27,10 @@
 //! unchanged choice writes identical bytes. These are app preferences, not part of the project.
 
 use atomik_ui::{
-    AAC_BITRATES, EXPORT_RATES, ExportDepth, ExportDither, ExportFile, ExportLoudness,
-    ExportQuality, ExportValues, FilmCover, FilmPictureChoice, FilmQualityChoice, FilmSoundChoice,
-    FilmValues, MP3_BITRATES, MP3_VBR, OPUS_BITRATES,
+    AAC_BITRATES, CEILING_TENTHS, CUSTOM_LUFS_TENTHS, DEFAULT_CEILING_TENTHS, EXPORT_RATES,
+    ExportDepth, ExportDither, ExportFile, ExportLoudness, ExportQuality, ExportValues, FilmCover,
+    FilmPictureChoice, FilmQualityChoice, FilmSoundChoice, FilmValues, MP3_BITRATES, MP3_VBR,
+    OPUS_BITRATES, parse_tenths, tenths_text,
 };
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -66,8 +69,12 @@ pub struct ExportPrefs {
     pub locators: bool,
     /// Mix every channel into one.
     pub mono: bool,
-    /// `"off"`, `"target-14"` or `"guide-9"`: the loudness choice.
+    /// `"off"`, `"target-14"`, `"custom-14.5"` or `"guide-9"`: the loudness choice.
     pub loudness: String,
+    /// The true-peak ceiling of a loudness target in dBTP.
+    pub ceiling_dbtp: f32,
+    /// Stems only: one gain for all the stems (else one each) when a loudness target is set.
+    pub stems_together: bool,
     /// Also write an MP3 next to a lossless file.
     pub also_mp3: bool,
     /// The folder the last export went to.
@@ -131,8 +138,11 @@ impl ExportPrefs {
             loudness: match values.loudness {
                 ExportLoudness::Off => "off".to_owned(),
                 ExportLoudness::Target(l) => format!("target{l}"),
+                ExportLoudness::Custom(t) => format!("custom{}", tenths_text(t)),
                 ExportLoudness::Guide(l) => format!("guide{l}"),
             },
+            ceiling_dbtp: f32::from(values.ceiling) / 10.0,
+            stems_together: values.stems_together,
             also_mp3: values.also_mp3,
             folder: folder.map(|f| f.to_string_lossy().into_owned()),
             film_cover: "span".to_owned(),
@@ -254,7 +264,19 @@ impl ExportPrefs {
             selection: false,
             mono: self.mono,
             loudness: self.loudness_choice(),
+            ceiling: self.ceiling_choice(),
+            stems_together: self.stems_together,
             also_mp3: self.also_mp3,
+        }
+    }
+
+    /// The ceiling the file names, when it is one the panel takes (else the default).
+    fn ceiling_choice(&self) -> i16 {
+        let tenths = (self.ceiling_dbtp * 10.0).round();
+        if self.ceiling_dbtp.is_finite() && CEILING_TENTHS.contains(&(tenths as i16)) {
+            tenths as i16
+        } else {
+            DEFAULT_CEILING_TENTHS
         }
     }
 
@@ -264,6 +286,11 @@ impl ExportPrefs {
         let level = |rest: &str| rest.parse::<i8>().ok().filter(|l| (-50..=0).contains(l));
         if let Some(l) = text.strip_prefix("target").and_then(level) {
             ExportLoudness::Target(l)
+        } else if let Some(t) = text
+            .strip_prefix("custom")
+            .and_then(|rest| parse_tenths(rest, &CUSTOM_LUFS_TENTHS))
+        {
+            ExportLoudness::Custom(t)
         } else if let Some(l) = text.strip_prefix("guide").and_then(level) {
             ExportLoudness::Guide(l)
         } else {
@@ -508,6 +535,64 @@ mod tests {
         // A partial file keeps what it says.
         std::fs::write(&path, r#"{"bit_depth":"16"}"#).unwrap();
         assert_eq!(ExportPrefs::load(&path).values().depth, ExportDepth::Pcm16);
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn a_custom_target_a_ceiling_and_the_stem_gain_are_remembered() {
+        let d = dir("loudness");
+        let path = d.join(EXPORT_FILE);
+        let values = ExportValues {
+            loudness: ExportLoudness::Custom(-125),
+            ceiling: -25,
+            stems_together: false,
+            ..ExportValues::default()
+        };
+        let prefs = ExportPrefs::from_values(&values, None);
+        assert_eq!(prefs.loudness, "custom-12.5");
+        assert!((prefs.ceiling_dbtp + 2.5).abs() < 1e-6);
+        prefs.save(&path).unwrap();
+        let back = ExportPrefs::load(&path);
+        assert_eq!(back.values(), values);
+        // Whole numbers have no decimals in the word, and the fixed choices keep theirs.
+        let whole = ExportValues {
+            loudness: ExportLoudness::Custom(-120),
+            ..values
+        };
+        assert_eq!(ExportPrefs::from_values(&whole, None).loudness, "custom-12");
+        assert_eq!(ExportPrefs::from_values(&whole, None).values(), whole);
+        let fixed = ExportValues {
+            loudness: ExportLoudness::Target(-14),
+            ..ExportValues::default()
+        };
+        assert_eq!(ExportPrefs::from_values(&fixed, None).loudness, "target-14");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn an_old_file_has_the_old_ceiling_and_one_gain_for_all_and_a_bad_one_is_the_default() {
+        let d = dir("loudness-old");
+        let path = d.join(EXPORT_FILE);
+        // Written before the ceiling and the stem gain existed.
+        std::fs::write(&path, r#"{"loudness":"target-14","file":"flac"}"#).unwrap();
+        let v = ExportPrefs::load(&path).values();
+        assert_eq!(v.loudness, ExportLoudness::Target(-14));
+        assert_eq!((v.ceiling, v.stems_together), (-10, true));
+        for bad in ["4.0", "-20.0", "-0.01", "null"] {
+            std::fs::write(&path, format!(r#"{{"ceiling_dbtp":{bad}}}"#)).unwrap();
+            let v = ExportPrefs::load(&path).values();
+            // 4.0 and -20.0 are out of range; -0.01 rounds to 0.0, which is in; null is no number.
+            let want = if bad == "-0.01" { 0 } else { -10 };
+            assert_eq!(v.ceiling, want, "{bad}");
+        }
+        for bad in ["custom-3", "custom-99", "customx", "custom"] {
+            std::fs::write(&path, format!(r#"{{"loudness":"{bad}"}}"#)).unwrap();
+            assert_eq!(
+                ExportPrefs::load(&path).values().loudness,
+                ExportLoudness::Off,
+                "{bad}"
+            );
+        }
         let _ = std::fs::remove_dir_all(&d);
     }
 }

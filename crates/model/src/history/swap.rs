@@ -127,6 +127,11 @@ swaps! {
         doc.video.clone_from(new);
         Ok(vec![SyncOp::ViewChanged])
     };
+    /// The locked console strips (see [`crate::console_lock`]).
+    Locks {}: Vec<DeviceKey> => |doc, new| {
+        doc.console.locked.clone_from(new);
+        Ok(vec![SyncOp::ConsoleChanged])
+    };
     /// The master tune in cents.
     Tune {}: f32 => |doc, new| {
         doc.tune_cents = *new;

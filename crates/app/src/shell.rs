@@ -160,7 +160,7 @@ use crate::palette::Runner;
 use crate::session::{AudioBackend, LiveSession, SettingsChange};
 use crate::settings::{self, AudioSettings, LastGood, SurfaceSettings};
 use crate::settings_dialog::{DeviceLists, DialogOutcome, SettingsDialog};
-use crate::start_screen::{ExampleCard, RecentRow, StartOutcome, StartScreen};
+use crate::start_screen::{ExampleCard, PictureOf, RecentRow, StartOutcome, StartScreen};
 use crate::status::{AudioStatus, OverloadStats, status_text};
 use crate::stress::{STRESS_CABLES, STRESS_DEVICES, stress_doc, stress_song_doc};
 use crate::ui_state::UiState;
@@ -469,6 +469,12 @@ pub enum ShellRequest {
     CloseSong,
     /// Move the audio and the keys to another song (the workspace answers it).
     ShowSong(SongTarget),
+    /// The Play button of this song's Audio I/O panel: the song takes the Play Focus (the audio
+    /// stream). Only a workspace answers it.
+    TakePlayFocus,
+    /// The Input button of this song's Audio I/O panel: the song takes the Input Focus (the
+    /// live MIDI keyboard and the controllers). Only a workspace answers it.
+    TakeInputFocus,
     /// Bring the main window of a song to the front and give it the keyboard focus.
     FocusSong(DocId),
 }
@@ -482,6 +488,24 @@ pub enum SongTarget {
     Previous,
     /// The song at this place of the list of open songs.
     Place(usize),
+}
+
+/// What a drag of the selection out of one song carries over another song's window
+/// ([`Shell::song_drag_carries`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Carried {
+    /// Clips: every one is a note clip (`notes`) or every one an audio clip (`audio`); a mix
+    /// is neither.
+    Clips {
+        /// Every clip is a note clip.
+        notes: bool,
+        /// Every clip is an audio clip.
+        audio: bool,
+    },
+    /// Devices of the rack.
+    Devices,
+    /// Tracks.
+    Tracks,
 }
 
 /// What waits for the answer to the question about unsaved changes.
@@ -612,6 +636,11 @@ pub struct Shell<B: AudioBackend> {
     about: Option<AboutBox>,
     /// The start screen, while it is open.
     start_screen: Option<StartScreen>,
+    /// The thread that makes the pictures of the start screen's cards (started with the first
+    /// request and kept; it sleeps while nothing is asked).
+    card_pictures: Option<crate::card_picture::PictureWorker>,
+    /// The example and template file each picture request number stands for.
+    card_requests: Vec<(u32, PictureOf)>,
     /// The controller set-up wizard, while it is open.
     controller_wizard: Option<crate::controller_wizard_view::ControllerWizardView>,
     /// The first-run audio and MIDI setup, while it shows (see `shell_audio_setup`).
@@ -878,6 +907,9 @@ pub struct Shell<B: AudioBackend> {
     /// Another song of the workspace has the audio: this one runs without a stream, a MIDI
     /// input or a control surface until it is focused ([`Self::claim_audio`]).
     silent: bool,
+    /// This song has the Input Focus: its MIDI inputs and control surfaces are open while it
+    /// also has the audio (a song without a stream has nothing to play them into).
+    input_focus: bool,
     /// The names of the open songs and this one's place in the list (the Window menu).
     songs: Vec<String>,
     song_at: usize,
@@ -1072,6 +1104,8 @@ impl<B: AudioBackend> Shell<B> {
             sound_analyst: None,
             wavetable: None,
             start_screen: None,
+            card_pictures: None,
+            card_requests: Vec::new(),
             controller_wizard: None,
             audio_setup: None,
             first_run,
@@ -1125,6 +1159,7 @@ impl<B: AudioBackend> Shell<B> {
             tips: Tips::default(),
             help_mode: HelpMode::default(),
             silent: false,
+            input_focus: true,
             songs: Vec::new(),
             song_at: 0,
         };
@@ -2882,6 +2917,63 @@ impl<B: AudioBackend> Shell<B> {
         }
     }
 
+    /// Asks the worker for the pictures the start screen wants (once each).
+    fn request_card_pictures(&mut self) {
+        let Some(screen) = &self.start_screen else {
+            return;
+        };
+        let wanted = screen.pictures_wanted();
+        if wanted.is_empty() {
+            return;
+        }
+        if self.card_pictures.is_none() {
+            let store = crate::card_picture::PictureStore::new(self.core.card_cache_dir());
+            self.card_pictures = crate::card_picture::PictureWorker::start(store);
+        }
+        let examples = self.core.examples();
+        for of in wanted {
+            let path = match of {
+                PictureOf::Template(i) => self.core.templates().get(i).map(|t| t.path.clone()),
+                PictureOf::Example(i) => examples.get(i).map(|e| e.path.clone()),
+            };
+            let id = self.card_requests.len() as u32;
+            let (Some(path), Some(worker), Some(screen)) =
+                (path, &self.card_pictures, &mut self.start_screen)
+            else {
+                // No file or no thread: the card has no picture.
+                if let Some(screen) = &mut self.start_screen {
+                    screen.set_picture(of, None);
+                }
+                continue;
+            };
+            self.card_requests.push((id, of));
+            screen.mark_picture_asked(of);
+            worker.request(id, path);
+        }
+    }
+
+    /// Takes the pictures the worker finished into the start screen. Costs nothing while the
+    /// box is closed.
+    fn poll_card_pictures(&mut self) {
+        let (Some(worker), Some(screen)) = (&self.card_pictures, &mut self.start_screen) else {
+            return;
+        };
+        for reply in worker.poll() {
+            if let Some((_, of)) = self.card_requests.iter().find(|(id, _)| *id == reply.id) {
+                screen.set_picture(*of, reply.picture);
+                self.repaint = true;
+            }
+        }
+        self.request_card_pictures();
+    }
+
+    /// Whether a picture of a card is being made: the frames go on until it is there.
+    pub(super) fn card_pictures_pending(&self) -> bool {
+        self.start_screen
+            .as_ref()
+            .is_some_and(StartScreen::pictures_pending)
+    }
+
     /// Opens the start screen with the templates and the recent songs as they are now.
     fn open_start_screen(&mut self) {
         self.core.reload_templates();
@@ -2908,6 +3000,8 @@ impl<B: AudioBackend> Shell<B> {
             .with_cards(examples, self.workflow.show_guide_card),
         );
         self.fill_template_preview();
+        self.card_requests.clear();
+        self.request_card_pictures();
         self.repaint = true;
     }
 
@@ -2946,6 +3040,7 @@ impl<B: AudioBackend> Shell<B> {
         let outcome = screen.handle(event, size);
         if matches!(outcome, StartOutcome::Open) {
             self.fill_template_preview();
+            self.request_card_pictures();
         }
         match outcome {
             StartOutcome::Open => Vec::new(),
@@ -3992,6 +4087,13 @@ impl<B: AudioBackend> Shell<B> {
         &self.workflow
     }
 
+    /// Sets which foci follow the active song, as the Workflow tab does (tests; the tab saves
+    /// the whole preferences).
+    #[cfg(test)]
+    pub(crate) fn set_focus_follows(&mut self, follows: crate::focus_follows::FocusFollows) {
+        self.workflow.focus_follows = follows;
+    }
+
     /// The library folder in use: the run's override, else the one chosen in the Workflow tab,
     /// else the default; `None` when none of them is known.
     pub fn library_root(&self) -> Option<PathBuf> {
@@ -4233,6 +4335,7 @@ impl<B: AudioBackend> Shell<B> {
             self.auto_level = auto;
             let low = self.performance_level().is_low();
             self.core.sink_mut().set_low_power(low);
+            self.apply_theme();
             self.repaint = true;
         }
     }
@@ -8086,7 +8189,7 @@ impl<B: AudioBackend> Shell<B> {
                 !sel.is_empty() && sel.iter().all(|i| notes.get(*i).is_some_and(|n| n.muted))
             },
             save_clip: matches!(clips.as_slice(), [id]
-                if doc.song.clip(*id).is_some_and(|(_, _, c)| c.content.is_notes())),
+                if doc.song.clip(*id).is_some_and(|(_, _, c)| c.content.is_notes() || c.content.is_audio())),
             open_clip: clips.iter().any(|id| {
                 doc.song
                     .clip(*id)
@@ -8537,6 +8640,12 @@ impl<B: AudioBackend> Shell<B> {
                 UiAction::HarmonyPicker(target) => self.open_harmony_picker(*target),
                 UiAction::AuditionChord(chord) => self.core.audition_chord(chord),
                 UiAction::EditWavetable(device) => self.open_wavetable_editor(device.clone()),
+                UiAction::TakeFocus(atomik_ui::SongFocus::Play) => {
+                    self.pending.push(ShellRequest::TakePlayFocus);
+                }
+                UiAction::TakeFocus(atomik_ui::SongFocus::Input) => {
+                    self.pending.push(ShellRequest::TakeInputFocus);
+                }
                 UiAction::OpenSampleEditor(_) => self.show_sample_editor(),
                 UiAction::CloseSampleEditor => {
                     if self.focus == Pane::SampleEditor {
@@ -10278,6 +10387,10 @@ impl<B: AudioBackend> Shell<B> {
                 self.core.paste_strip_settings(self.live_pane(self.focus));
                 Vec::new()
             }
+            AppCommand::LockChannel => {
+                self.core.toggle_strip_lock(self.live_pane(self.focus));
+                Vec::new()
+            }
             AppCommand::ResetStrip => {
                 self.core.reset_strips(self.live_pane(self.focus));
                 Vec::new()
@@ -11040,6 +11153,7 @@ impl<B: AudioBackend> Shell<B> {
             self.repaint = true;
         }
         self.core.transport_frame(now_seconds);
+        self.poll_card_pictures();
         self.save_click_level();
         self.core.plugin_tick(now_seconds);
         // A plugin window closed somewhere new: the position is kept for next time.
@@ -11098,7 +11212,11 @@ impl<B: AudioBackend> Shell<B> {
     /// them. Nothing happens when the settings are the ones they already run with. A port that
     /// cannot be opened is reported, and a surface with no open port is not set up.
     fn configure_surface(&mut self) {
-        let wanted: Vec<SurfaceSettings> = self.core.sink().settings().surfaces.clone();
+        let wanted: Vec<SurfaceSettings> = if self.input_focus && !self.silent {
+            self.core.sink().settings().surfaces.clone()
+        } else {
+            Vec::new()
+        };
         if wanted == self.surface_applied {
             return;
         }
@@ -11578,10 +11696,39 @@ impl<B: AudioBackend> Shell<B> {
         session.set_settings(settings);
         session.set_enabled(false);
         self.silent = true;
-        self.configure_surface();
+        self.sync_input_hold();
         self.core.rebuild_engine();
         self.poll_status();
         self.repaint = true;
+    }
+
+    /// Whether this song has the Input Focus (the live MIDI keyboard and the controllers).
+    pub fn has_input_focus(&self) -> bool {
+        self.input_focus
+    }
+
+    /// Gives this song the Input Focus or takes it away. The MIDI inputs and the control
+    /// surfaces are open only while the song has it and also has the audio: a song without a
+    /// stream has no engine to play live notes into. A running stream keeps going; only the
+    /// ports open or close.
+    pub(crate) fn set_input_focus(&mut self, focus: bool) {
+        if self.input_focus == focus {
+            return;
+        }
+        self.input_focus = focus;
+        self.sync_input_hold();
+        self.repaint = true;
+    }
+
+    /// Brings the MIDI inputs and the control surfaces in line with the foci (see
+    /// [`Self::set_input_focus`]) and tells the panel of the interface which it has.
+    fn sync_input_hold(&mut self) {
+        let held = self.input_focus && !self.silent;
+        self.core.sink_mut().set_midi_held(held);
+        self.configure_surface();
+        self.core
+            .view_mut()
+            .set_io_focus(!self.silent, self.input_focus);
     }
 
     /// Takes the audio over with `settings` (the ones the song that gave it up ran with): the
@@ -11594,7 +11741,7 @@ impl<B: AudioBackend> Shell<B> {
         session.set_settings(settings);
         session.set_enabled(true);
         self.silent = false;
-        self.configure_surface();
+        self.sync_input_hold();
         self.core.rebuild_engine();
         if (gain - self.core.metronome_gain()).abs() > f32::EPSILON {
             self.core.set_metronome_gain(gain);
@@ -11619,7 +11766,7 @@ impl<B: AudioBackend> Shell<B> {
         let session = self.core.sink_mut();
         session.set_settings(settings);
         session.set_enabled(false);
-        self.configure_surface();
+        self.sync_input_hold();
         self.poll_status();
     }
 

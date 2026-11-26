@@ -761,7 +761,14 @@ fn the_cards_and_the_second_check_box_have_tooltips() {
     }
 }
 
+/// The cards golden, in both languages: one picture ready, one being made (the placeholder) and
+/// one whose file has none (a card without a picture).
 fn golden_cards(name: &str, theme: &Theme) {
+    golden_cards_in(name, theme);
+    atomik_ui::i18n::with_language(atomik_ui::Lang::French, || golden_cards_in(name, theme));
+}
+
+fn golden_cards_in(name: &str, theme: &Theme) {
     let mut list = DisplayList::new();
     let mut s = StartScreen::new(
         vec!["Band Rehearsal".into(), "Beat Sketch".into()],
@@ -773,6 +780,9 @@ fn golden_cards(name: &str, theme: &Theme) {
         true,
     )
     .with_cards(cards(), true);
+    s.set_picture(PictureOf::Example(0), Some(picture()));
+    s.mark_picture_asked(PictureOf::Example(1));
+    s.set_picture(PictureOf::Example(2), None);
     s.handle(&key(Key::Up), VIEW);
     s.paint(&mut list, theme, VIEW);
     check_golden(name, &list.to_json());
@@ -865,4 +875,124 @@ fn the_start_screen_in_french_has_no_untranslated_word() {
         })
         .collect();
     assert!(words.is_empty(), "no French entry: {words:?}");
+}
+
+// ------------------------------------------------------------------------------ card pictures
+
+use crate::card_picture::{CardPicture, PictureClip, PictureRow, Slot};
+use crate::start_screen::PictureOf;
+
+fn picture() -> CardPicture {
+    CardPicture {
+        rows: vec![
+            PictureRow {
+                type_id: "atomik.synth".into(),
+                color: None,
+                clips: vec![PictureClip {
+                    start: 0.0,
+                    end: 0.5,
+                    color: None,
+                }],
+            },
+            PictureRow {
+                type_id: "atomik.drums".into(),
+                color: Some([200, 40, 40]),
+                clips: vec![PictureClip {
+                    start: 0.25,
+                    end: 1.0,
+                    color: Some([10, 200, 90]),
+                }],
+            },
+        ],
+    }
+}
+
+fn painted(s: &StartScreen) -> usize {
+    let mut list = DisplayList::new();
+    s.paint(&mut list, &Theme::dark(), VIEW);
+    list.len()
+}
+
+#[test]
+fn the_cards_ask_for_their_pictures_once_and_show_a_placeholder_until_they_come() {
+    let mut s = with_cards();
+    // Every example card is wanted at once; the template card when it shows.
+    assert_eq!(
+        s.pictures_wanted(),
+        [
+            PictureOf::Example(0),
+            PictureOf::Example(1),
+            PictureOf::Example(2)
+        ]
+    );
+    assert!(!s.pictures_pending());
+    for _ in 0..6 {
+        if s.shown_template().is_some() {
+            break;
+        }
+        s.handle(&key(Key::Down), VIEW);
+    }
+    let shown = s.shown_template().expect("the keys reached a template");
+    assert!(s.pictures_wanted().contains(&PictureOf::Template(shown)));
+
+    let idle = painted(&s);
+    for of in s.pictures_wanted() {
+        s.mark_picture_asked(of);
+    }
+    assert!(s.pictures_wanted().is_empty(), "each is asked for once");
+    assert!(s.pictures_pending());
+    assert_eq!(
+        painted(&s),
+        idle,
+        "a picture being made has its placeholder"
+    );
+    assert_eq!(s.picture(PictureOf::Example(0)), &Slot::Making);
+
+    // A picture arrives: drawn in place of the placeholder; the others keep theirs.
+    s.set_picture(PictureOf::Example(0), Some(picture()));
+    assert!(matches!(s.picture(PictureOf::Example(0)), Slot::Ready(_)));
+    assert_ne!(painted(&s), idle);
+    assert!(s.pictures_pending(), "two are still being made");
+    for of in [
+        PictureOf::Example(1),
+        PictureOf::Example(2),
+        PictureOf::Template(shown),
+    ] {
+        s.set_picture(of, None);
+    }
+    assert!(!s.pictures_pending());
+    assert!(
+        s.pictures_wanted().is_empty(),
+        "a file with no picture is not asked again"
+    );
+}
+
+#[test]
+fn a_card_whose_file_has_no_picture_is_drawn_without_one() {
+    let mut s = with_cards();
+    let with_placeholders = painted(&s);
+    for i in 0..3 {
+        s.set_picture(PictureOf::Example(i), None);
+    }
+    assert!(
+        painted(&s) < with_placeholders,
+        "no placeholder, no room kept for it"
+    );
+    // The card has the same size either way: the strip does not jump when pictures fail.
+    let a = row_rect(&s, Target::Example(0));
+    let b = row_rect(&with_cards(), Target::Example(0));
+    assert_eq!(a, b);
+}
+
+#[test]
+fn the_picture_follows_the_theme_it_is_drawn_in() {
+    let mut s = with_cards();
+    s.set_picture(PictureOf::Example(0), Some(picture()));
+    let draw = |theme: &Theme| {
+        let mut list = DisplayList::new();
+        s.paint(&mut list, theme, VIEW);
+        list.to_json()
+    };
+    // A track with no colour of its own takes the accent of the theme in use.
+    assert_ne!(draw(&Theme::dark()), draw(&Theme::synthwave()));
 }

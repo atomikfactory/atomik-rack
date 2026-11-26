@@ -6551,6 +6551,8 @@ an insert loop, the fader, the main output and the control-room (`monitor_*`) ou
 - **Settings.** A click on the name plate in the console selects the master; Mixer > Channel Strip >
   Copy Channel Settings, Paste, Reset Channel and Clear Inserts then act on it. Its copy pastes onto the master
   only (of this song or another).
+- **Lock.** The master can be locked like a strip (the padlock on its name plate): its params, inserts and return
+  slots are then refused every edit; adding a track still works (the summing cables are not part of the lock).
 - **Taps.** The send and return taps are copies the master keeps per block in its own state (written
   in stages 0 and 1, read in stage 2); the stages, sockets and cables of the device did not change,
   and the audio thread still does not allocate.

@@ -1144,3 +1144,115 @@ fn edit_on_an_insert_row_shows_the_effect_in_the_rack() {
     assert_eq!(c.view().selected(), Some(&fx), "the effect is selected");
     assert!(c.view().device_rect(&fx).is_some(), "and drawn in the rack");
 }
+
+fn lock_strips(c: &mut AppCore<RecordingSink>, strips: &[&DeviceKey], locked: bool) {
+    c.apply_command(Command::Console(ConsoleCommand::SetLocked {
+        strips: strips.iter().map(|k| (*k).clone()).collect(),
+        locked,
+    }))
+    .expect("lock");
+}
+
+#[test]
+fn a_locked_strip_refuses_every_source_and_says_so_once() {
+    let mut c = two_channels();
+    let (a, b) = (channel_of(&c, "a"), channel_of(&c, "b"));
+    lock_strips(&mut c, &[&a], true);
+    c.sink_mut().take();
+    let edit = |c: &mut AppCore<RecordingSink>, key: &DeviceKey, merge| {
+        c.apply_command(Command::SetParam {
+            key: key.clone(),
+            param: "fader".into(),
+            value: 0.2,
+            merge,
+        })
+    };
+    // A drag: many refused edits, one message, nothing sent to the engine.
+    assert!(matches!(
+        edit(&mut c, &a, Some(7)),
+        Err(atomik_model::ModelError::Locked(_))
+    ));
+    let message = c.last_rejection().map(str::to_owned);
+    assert!(
+        message.as_deref().is_some_and(|m| m.ends_with("is locked")),
+        "{message:?}"
+    );
+    c.rejection = None;
+    assert!(edit(&mut c, &a, Some(7)).is_err());
+    assert!(
+        c.last_rejection().is_none(),
+        "the same message is not shown again in a gesture"
+    );
+    assert!(
+        !c.sink_mut()
+            .take()
+            .iter()
+            .any(|x| matches!(x, SinkCall::Param { .. }))
+    );
+    // The end of the gesture lets the message come back; another strip is not affected.
+    c.handle_action(UiAction::EndMerge);
+    assert!(edit(&mut c, &a, None).is_err());
+    assert!(c.last_rejection().is_some());
+    edit(&mut c, &b, None).expect("an unlocked strip still takes edits");
+    // Unlocking restores editing.
+    lock_strips(&mut c, &[&a], false);
+    edit(&mut c, &a, None).expect("unlocked");
+}
+
+#[test]
+fn locking_the_selection_and_the_menu_command_toggle_in_one_step() {
+    let mut c = two_channels();
+    let (a, b) = (channel_of(&c, "a"), channel_of(&c, "b"));
+    c.console_mut().set_selected_strips(&[a.clone(), b.clone()]);
+    assert!(c.toggle_strip_lock(Pane::Console));
+    assert_eq!(c.doc().console.locked.len(), 2);
+    assert!(
+        c.toggle_strip_lock(Pane::Console),
+        "all locked: the command unlocks"
+    );
+    assert!(c.doc().console.locked.is_empty());
+    assert!(c.undo());
+    assert_eq!(c.doc().console.locked.len(), 2, "one undo step per toggle");
+}
+
+#[test]
+fn reset_channel_on_a_selection_skips_the_locked_strip() {
+    let mut c = two_channels();
+    let (a, b) = (channel_of(&c, "a"), channel_of(&c, "b"));
+    set_param(&mut c, &a, "fader", 0.3);
+    set_param(&mut c, &b, "fader", 0.3);
+    lock_strips(&mut c, &[&a], true);
+    c.console_mut().set_selected_strips(&[a.clone(), b.clone()]);
+    assert!(c.reset_strips(Pane::Console));
+    let fader = |k: &DeviceKey| c.doc().device(k).unwrap().params.get("fader").copied();
+    assert_eq!(fader(&a), Some(0.3), "the locked strip is kept");
+    assert_ne!(fader(&b), Some(0.3), "the other one is reset");
+    assert!(c.last_rejection().is_some_and(|m| m.ends_with("is locked")));
+}
+
+#[test]
+fn automation_still_drives_a_locked_fader() {
+    let mut c = two_channels();
+    let a = channel_of(&c, "a");
+    c.apply_command(Command::Song(SongCommand::AddAutomationLane {
+        device: a.clone(),
+        param: "fader".into(),
+    }))
+    .expect("a lane");
+    lock_strips(&mut c, &[&a], true);
+    // Writing the lane is not an edit of the strip, and playback shows the lane's value.
+    c.apply_command(Command::Song(SongCommand::SetLaneStatic {
+        device: a.clone(),
+        param: "fader".into(),
+        value: Some(0.25),
+        merge: None,
+    }))
+    .expect("the lane is written on a locked strip");
+    let shown = c.doc().automation_values_at(0.0);
+    assert!(
+        shown
+            .get(&(a.clone(), "fader".to_owned()))
+            .is_some_and(|v| (*v - 0.25).abs() < 1e-3),
+        "{shown:?}"
+    );
+}
